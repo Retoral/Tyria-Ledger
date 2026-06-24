@@ -243,7 +243,8 @@ async function fetchJsonWithHeaders<T>(
         continue;
       }
 
-      throw new Error(`${response.status} ${response.statusText}${body ? `: ${body}` : ""}`);
+      const detail = formatHttpErrorBody(body);
+      throw new Error(`${response.status} ${response.statusText}${detail ? `: ${detail}` : ""}`);
     }
 
     return {
@@ -300,6 +301,41 @@ function shouldRetryGw2Response(status: number, body: string): boolean {
     status >= 500 ||
     (status === 401 && /invalid key/i.test(body))
   );
+}
+
+function formatHttpErrorBody(body: string): string {
+  const trimmed = body.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as { text?: unknown } | unknown;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      "text" in parsed &&
+      typeof parsed.text === "string"
+    ) {
+      return truncateErrorDetail(parsed.text);
+    }
+
+    return truncateErrorDetail(JSON.stringify(parsed));
+  } catch {
+    const plainText = trimmed
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    return truncateErrorDetail(plainText || "HTML error page returned by server");
+  }
+}
+
+function truncateErrorDetail(detail: string): string {
+  const normalized = detail.replace(/\s+/g, " ").trim();
+  return normalized.length > 240 ? `${normalized.slice(0, 237)}...` : normalized;
 }
 
 function getGw2RetryDelayMs(response: Response | null, attempt: number): number {

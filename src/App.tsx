@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Coins,
   Container,
   Database,
@@ -29,6 +30,7 @@ import {
 } from "lucide-react";
 import {
   createContext,
+  useDeferredValue,
   useEffect,
   useContext,
   useLayoutEffect,
@@ -483,9 +485,14 @@ interface FarmTrackerStoredState {
   dateKey: string;
   startedAt: number;
   lastUpdatedAt: number;
+  lastGainAt?: number;
+  activeStartedAt?: number | null;
+  activeElapsedMs?: number;
+  idlePausedAt?: number | null;
   baselineHoldings?: Array<[number, number]>;
   lastHoldings: Array<[number, number]>;
   gained: Array<[number, number]>;
+  removed?: Array<[number, number]>;
 }
 
 interface ActivityValueItem {
@@ -574,6 +581,8 @@ const MARKET_HISTORY_STORAGE_KEY = "tyria-ledger.market-history.v1";
 const FARM_TRACKER_STORAGE_KEY = "tyria-ledger.farm-tracker.v1";
 const FARM_TRACKER_TRACK_LOOT_STORAGE_KEY = "tyria-ledger.farm-tracker.track-loot.v1";
 const FARM_TRACKER_AUTO_SNAPSHOT_MS = 60 * 1000;
+const FARM_TRACKER_IDLE_AFTER_MS = 5 * 60 * 1000;
+const FARM_TRACKER_IDLE_SNAPSHOT_MS = 5 * 60 * 1000;
 const MARKET_AUTO_SCAN_MIN_DELAY_MS = 1000;
 const MARKET_SCAN_COOLDOWN_MS = 10 * 60 * 1000;
 const MAX_MARKET_HISTORY_POINTS_PER_ITEM = 800;
@@ -585,6 +594,8 @@ const MARKET_HISTORY_MAX_AGE_MS = 2 * 366 * 24 * 60 * 60 * 1000;
 const MARKET_PRELOAD_DELAY_MS = 500;
 const MARKET_LIST_INITIAL_ITEMS = 220;
 const MARKET_LIST_BATCH_SIZE = 360;
+const FARMING_CALCULATOR_INITIAL_ROWS = 180;
+const FARMING_CALCULATOR_ROW_BATCH_SIZE = 360;
 const OPENABLE_BAG_ANALYSIS_LIMIT = 90;
 const OPENABLE_BAG_ANALYSIS_CONCURRENCY = 3;
 const DEMAND_FILTER_OPTIONS: Array<{ id: DemandFilter; label: string }> = [
@@ -2738,6 +2749,7 @@ function App() {
   const [catalog, setCatalog] = useState<MarketItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<MarketItem | null>(null);
   const [query, setQuery] = useState(DEFAULT_QUERY);
+  const deferredQuery = useDeferredValue(query);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [progress, setProgress] = useState("Ready");
   const [progressCount, setProgressCount] = useState<{ done: number; total: number } | null>(
@@ -2957,7 +2969,7 @@ function App() {
   }, [catalog.length, loadState]);
 
   const filteredItems = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
+    const normalized = deferredQuery.trim().toLowerCase();
     const source = normalized
       ? catalog.filter((item) => {
           return (
@@ -2969,7 +2981,7 @@ function App() {
       : catalog;
 
     return source;
-  }, [catalog, query]);
+  }, [catalog, deferredQuery]);
 
   const dataImports = useMemo<DataImportRow[]>(() => {
     const hasApiKey = Boolean(apiKey.trim() || apiKeyRemembered);
@@ -3951,12 +3963,25 @@ function App() {
           accountSnapshot={accountSnapshot}
           accountItems={accountItems}
           catalog={catalog}
+          selectedItem={selectedItem}
+          listings={listings}
+          itemTransactions={itemTransactions}
+          recipes={recipes}
+          usedInRecipes={usedInRecipes}
+          recipeUsageState={recipeUsageState}
+          wikiGuide={wikiGuide}
+          detailState={detailState}
+          containerAnalysis={containerAnalysis}
+          containerState={containerState}
           apiKeyRemembered={apiKeyRemembered}
           analysisState={analysisState}
+          marketHistoryRevision={marketHistoryRevision}
           onAnalyze={() => runAnalysisForKey()}
           onRefreshSnapshot={async () => {
             await refreshAccountSnapshot(apiKey.trim(), { forceRefresh: true });
           }}
+          onCloseDetail={() => setSelectedItem(null)}
+          onSelectItem={(item) => setSelectedItem(buildMarketItemForDetail(item))}
         />
       );
     }
@@ -6118,6 +6143,15 @@ function formatAge(timestamp: number, now = Date.now()): string {
 
   const months = Math.floor(days / 30);
   return `${months} ${months === 1 ? "month" : "months"} ago`;
+}
+
+function formatTimerDuration(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 function AchievementsPage({
@@ -9594,12 +9628,14 @@ function useSortableRows<T, K extends string>(
   comparers: Record<K, (left: T, right: T) => number>,
 ) {
   const [sort, setSort] = useState<TableSort<K>>(initialSort);
+  const comparersRef = useRef(comparers);
+  comparersRef.current = comparers;
   const sortedRows = useMemo(() => {
-    const comparer = comparers[sort.key];
+    const comparer = comparersRef.current[sort.key];
     const direction = sort.direction === "asc" ? 1 : -1;
 
     return [...rows].sort((left, right) => comparer(left, right) * direction);
-  }, [comparers, rows, sort]);
+  }, [rows, sort]);
   const toggleSort = (key: K) => {
     setSort((current) => ({
       key,
@@ -11325,11 +11361,20 @@ function FarmingCalculatorPage({
   onSelectCraft: (opportunity: CraftOpportunity) => void;
 }) {
   const now = useRelativeNow();
+  const [visibleCraftCount, setVisibleCraftCount] = useState(FARMING_CALCULATOR_INITIAL_ROWS);
 
   useEffect(() => {
-    if (highValueCraftLoadState === "idle") {
-      void onLoadHighValueCrafts();
+    if (highValueCraftLoadState !== "idle") {
+      return undefined;
     }
+
+    const loadTimer = window.setTimeout(() => {
+      void onLoadHighValueCrafts();
+    }, 80);
+
+    return () => {
+      window.clearTimeout(loadTimer);
+    };
   }, [highValueCraftLoadState, onLoadHighValueCrafts]);
 
   const highestValueCrafts = useMemo(
@@ -11338,6 +11383,11 @@ function FarmingCalculatorPage({
         .sort((left, right) => right.outputValue - left.outputValue),
     [highValueCrafts],
   );
+
+  useEffect(() => {
+    setVisibleCraftCount(FARMING_CALCULATOR_INITIAL_ROWS);
+  }, [highestValueCrafts.length]);
+
   const { sortedRows: sortedHighestValueCrafts, renderHeader } = useSortableRows<
     CraftOpportunity,
     "name" | "quantity" | "sellValue" | "craftingCost" | "profit" | "source"
@@ -11353,8 +11403,19 @@ function FarmingCalculatorPage({
       source: (left, right) => compareStringValue(getRecipeSourceLabel(left.recipe), getRecipeSourceLabel(right.recipe)),
     },
   );
+  const visibleHighestValueCrafts = useMemo(
+    () => sortedHighestValueCrafts.slice(0, visibleCraftCount),
+    [sortedHighestValueCrafts, visibleCraftCount],
+  );
+  const remainingCraftCount = Math.max(
+    0,
+    sortedHighestValueCrafts.length - visibleHighestValueCrafts.length,
+  );
   const topValue = highestValueCrafts[0]?.outputValue ?? 0;
-  const mysticForgeCount = highestValueCrafts.filter((craft) => isMysticForgeCraft(craft)).length;
+  const mysticForgeCount = useMemo(
+    () => highestValueCrafts.reduce((count, craft) => count + (isMysticForgeCraft(craft) ? 1 : 0), 0),
+    [highestValueCrafts],
+  );
 
   return (
     <div className="focused-page">
@@ -11383,45 +11444,63 @@ function FarmingCalculatorPage({
       <section className="surface craft-profit-surface">
         {highValueCraftLoadState === "loading" && highestValueCrafts.length === 0 ? <SkeletonRows /> : null}
         {highestValueCrafts.length ? (
-          <div className="craft-table-wrap">
-            <table className="craft-profit-table">
-              <thead>
-                <tr>
-                  {renderHeader("name", "Name")}
-                  {renderHeader("quantity", "Qty")}
-                  {renderHeader("sellValue", "Sell Value")}
-                  {renderHeader("craftingCost", "Crafting Cost")}
-                  {renderHeader("profit", "Profit")}
-                  {renderHeader("source", "Source")}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedHighestValueCrafts.map((craft) => (
-                  <tr key={`${craft.recipe.id}-${craft.output.id}`} onClick={() => onSelectCraft(craft)}>
-                    <td>
-                      <span className="table-item-cell">
-                        <ItemIcon item={craft.output} />
-                        <span className="item-copy">
-                          <strong>{craft.output.name}</strong>
-                          <span>{craft.output.rarity} {craft.output.type}</span>
-                        </span>
-                      </span>
-                    </td>
-                    <td>{craft.recipe.output_item_count.toLocaleString()}</td>
-                    <td><Money value={craft.outputValue} /></td>
-                    <td>{craft.marketCost > 0 ? <Money value={craft.marketCost} /> : "Unknown"}</td>
-                    <td className={craft.marketProfit > 0 ? "profit" : "muted-money"}>
-                      {craft.marketCost > 0 ? <Money value={Math.abs(craft.marketProfit)} /> : "Cost needed"}
-                    </td>
-                    <td>
-                      <span>{isMysticForgeCraft(craft) ? "Mystic Forge / special" : craft.recipe.disciplines.join(", ") || "Recipe"}</span>
-                      <small>Rating {craft.recipe.min_rating}</small>
-                    </td>
+          <>
+            <div className="craft-table-wrap">
+              <table className="craft-profit-table">
+                <thead>
+                  <tr>
+                    {renderHeader("name", "Name")}
+                    {renderHeader("quantity", "Qty")}
+                    {renderHeader("sellValue", "Sell Value")}
+                    {renderHeader("craftingCost", "Crafting Cost")}
+                    {renderHeader("profit", "Profit")}
+                    {renderHeader("source", "Source")}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {visibleHighestValueCrafts.map((craft) => (
+                    <tr key={`${craft.recipe.id}-${craft.output.id}`} onClick={() => onSelectCraft(craft)}>
+                      <td>
+                        <span className="table-item-cell">
+                          <ItemIcon item={craft.output} />
+                          <span className="item-copy">
+                            <strong>{craft.output.name}</strong>
+                            <span>{craft.output.rarity} {craft.output.type}</span>
+                          </span>
+                        </span>
+                      </td>
+                      <td>{craft.recipe.output_item_count.toLocaleString()}</td>
+                      <td><Money value={craft.outputValue} /></td>
+                      <td>{craft.marketCost > 0 ? <Money value={craft.marketCost} /> : "Unknown"}</td>
+                      <td className={craft.marketProfit > 0 ? "profit" : "muted-money"}>
+                        {craft.marketCost > 0 ? <Money value={Math.abs(craft.marketProfit)} /> : "Cost needed"}
+                      </td>
+                      <td>
+                        <span>{isMysticForgeCraft(craft) ? "Mystic Forge / special" : craft.recipe.disciplines.join(", ") || "Recipe"}</span>
+                        <small>Rating {craft.recipe.min_rating}</small>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {remainingCraftCount > 0 ? (
+              <button
+                className="load-more-button"
+                type="button"
+                onClick={() =>
+                  setVisibleCraftCount((count) => count + FARMING_CALCULATOR_ROW_BATCH_SIZE)
+                }
+              >
+                <PackageSearch />
+                <span>
+                  Show next{" "}
+                  {Math.min(FARMING_CALCULATOR_ROW_BATCH_SIZE, remainingCraftCount).toLocaleString()}{" "}
+                  crafts
+                </span>
+              </button>
+            ) : null}
+          </>
         ) : highValueCraftLoadState !== "loading" ? (
           <div className="empty-detail inline-empty">
             <Database />
@@ -11438,20 +11517,46 @@ function FarmTrackerPage({
   accountSnapshot,
   accountItems,
   catalog,
+  selectedItem,
+  listings,
+  itemTransactions,
+  recipes,
+  usedInRecipes,
+  recipeUsageState,
+  wikiGuide,
+  detailState,
+  containerAnalysis,
+  containerState,
   apiKeyRemembered,
   analysisState,
+  marketHistoryRevision,
   onAnalyze,
   onRefreshSnapshot,
+  onCloseDetail,
+  onSelectItem,
 }: {
   accountSnapshot: AccountSnapshot | null;
   accountItems: Map<number, Gw2Item>;
   catalog: MarketItem[];
+  selectedItem: MarketItem | null;
+  listings: CommerceListings | null;
+  itemTransactions: ItemTransactions | null;
+  recipes: RecipeGuide[];
+  usedInRecipes: RecipeGuide[];
+  recipeUsageState: LoadState;
+  wikiGuide: WikiGuide | null;
+  detailState: LoadState;
+  containerAnalysis: ContainerAnalysis | null;
+  containerState: LoadState;
   apiKeyRemembered: boolean;
   analysisState: LoadState;
+  marketHistoryRevision: number;
   onAnalyze: () => Promise<void>;
   onRefreshSnapshot: () => Promise<void>;
+  onCloseDetail: () => void;
+  onSelectItem: (item: Gw2Item) => void;
 }) {
-  const now = useRelativeNow();
+  const now = useRelativeNow(1000);
   const [mode, setMode] = useState<FarmTrackerMode>("account");
   const [selectedCharacter, setSelectedCharacter] = useState("");
   const [revision, setRevision] = useState(0);
@@ -11472,9 +11577,17 @@ function FarmTrackerPage({
     () => getFarmTrackerHoldings(accountSnapshot, mode, selectedCharacter),
     [accountSnapshot, mode, selectedCharacter],
   );
+  const trackerState = useMemo(() => readFarmTrackerState(scopeKey), [scopeKey, revision]);
+  const trackerIsIdle = Boolean(trackLootEnabled && trackerState?.idlePausedAt);
+  const snapshotIntervalMs = trackerIsIdle
+    ? FARM_TRACKER_IDLE_SNAPSHOT_MS
+    : FARM_TRACKER_AUTO_SNAPSHOT_MS;
+  const trackingElapsedMs = trackerState
+    ? getFarmTrackerActiveElapsedMs(trackerState, now, trackLootEnabled && !trackerIsIdle)
+    : 0;
 
   useEffect(() => {
-    if (!accountSnapshot || currentHoldings.size === 0 || !trackLootEnabled) {
+    if (!accountSnapshot || !trackLootEnabled) {
       return;
     }
 
@@ -11497,14 +11610,13 @@ function FarmTrackerPage({
       }
 
       void onRefreshSnapshot().catch(() => undefined);
-    }, FARM_TRACKER_AUTO_SNAPSHOT_MS);
+    }, snapshotIntervalMs);
 
     return () => {
       window.clearInterval(interval);
     };
-  }, [accountSnapshot, analysisState, apiKeyRemembered, onRefreshSnapshot, trackLootEnabled]);
+  }, [accountSnapshot, analysisState, apiKeyRemembered, onRefreshSnapshot, snapshotIntervalMs, trackLootEnabled]);
 
-  const trackerState = useMemo(() => readFarmTrackerState(scopeKey), [scopeKey, revision]);
   useEffect(() => {
     const ids = Array.from(new Map(trackerState?.gained ?? []).keys()).filter(
       (id) => !accountItems.has(id) && !trackerItems.has(id) && !getStoredItem(id),
@@ -11572,6 +11684,12 @@ function FarmTrackerPage({
   );
   const totalValue = gainedRows.reduce((sum, row) => sum + row.value, 0);
   const totalItems = gainedRows.reduce((sum, row) => sum + row.count, 0);
+  const totalRemovedItems = Array.from(new Map(trackerState?.removed ?? []).values()).reduce(
+    (sum, count) => sum + count,
+    0,
+  );
+  const selectedTrackerItem =
+    selectedItem && sortedGainedRows.some((row) => row.id === selectedItem.id) ? selectedItem : null;
 
   function resetTracker() {
     if (!accountSnapshot) {
@@ -11587,6 +11705,9 @@ function FarmTrackerPage({
       const next = !current;
       if (next && accountSnapshot) {
         resumeFarmTrackerState(scopeKey, currentHoldings);
+        setRevision((revisionValue) => revisionValue + 1);
+      } else if (!next) {
+        pauseFarmTrackerState(scopeKey);
         setRevision((revisionValue) => revisionValue + 1);
       }
 
@@ -11615,134 +11736,189 @@ function FarmTrackerPage({
   }
 
   return (
-    <div className="focused-page">
-      <section className="page-header">
-        <div>
-          <span className="eyebrow">Daily Snapshot Tracker</span>
-          <h2>Farming Tracker</h2>
-          <p>
-            Tracks current net inventory/material gains since today&apos;s reset baseline for {accountSnapshot.tokenInfo.name}.
-          </p>
-        </div>
-        <div className="page-actions">
-          <button
-            type="button"
-            className={`track-loot-toggle ${trackLootEnabled ? "active" : ""}`}
-            onClick={toggleTrackLoot}
-            aria-pressed={trackLootEnabled}
-            title={trackLootEnabled ? "Tracking loot with one API snapshot per minute" : "Loot tracking is paused"}
-          >
-            <span className="toggle-knob" aria-hidden="true" />
-            <span>Track Loot</span>
-          </button>
-          <button className="icon-button" onClick={() => void onRefreshSnapshot()}>
-            {analysisState === "loading" ? <Loader2 className="spin" /> : <RefreshCcw />}
-            <span>Refresh API</span>
-          </button>
-          <button className="icon-button primary" onClick={resetTracker}>
-            <X />
-            <span>Reset</span>
-          </button>
-        </div>
-      </section>
+    <div className={`market-workspace farming-tracker-workspace ${selectedTrackerItem ? "" : "detail-closed"}`}>
+      <aside className="market-panel craft-table-panel">
+        <div className="focused-page">
+          <section className="page-header">
+            <div>
+              <span className="eyebrow">Daily Snapshot Tracker</span>
+              <h2>Farming Tracker</h2>
+              <p>
+                Tracks current net inventory/material gains since today&apos;s reset baseline for {accountSnapshot.tokenInfo.name}.
+              </p>
+            </div>
+            <div className="page-actions">
+              <button
+                type="button"
+                className={`track-loot-toggle ${trackLootEnabled ? "active" : ""}`}
+                onClick={toggleTrackLoot}
+                aria-pressed={trackLootEnabled}
+                title={
+                  trackLootEnabled
+                    ? trackerIsIdle
+                      ? "No new loot for 5 minutes. Checking every 5 minutes until new gains appear."
+                      : "Tracking loot with one API snapshot per minute"
+                    : "Loot tracking is paused"
+                }
+              >
+                <span className="toggle-knob" aria-hidden="true" />
+                <span>Track Loot</span>
+              </button>
+              <button className="icon-button" onClick={() => void onRefreshSnapshot()}>
+                {analysisState === "loading" ? <Loader2 className="spin" /> : <RefreshCcw />}
+                <span>Refresh API</span>
+              </button>
+              <button className="icon-button primary" onClick={resetTracker}>
+                <X />
+                <span>Reset</span>
+              </button>
+            </div>
+          </section>
 
-      <section className="surface farm-tracker-controls">
-        <label>
-          Scope
-          <select value={mode} onChange={(event) => setMode(event.target.value as FarmTrackerMode)}>
-            <option value="account">Entire account</option>
-            <option value="character">Per character</option>
-          </select>
-        </label>
-        <label>
-          Character
-          <select
-            value={selectedCharacter}
-            disabled={mode !== "character" || characters.length === 0}
-            onChange={(event) => setSelectedCharacter(event.target.value)}
-          >
-            {characters.map((character) => (
-              <option key={character.name} value={character.name}>
-                {character.name} · {character.profession}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div>
-          <span className="eyebrow">Baseline</span>
-          <strong>{trackerState ? formatAge(trackerState.startedAt, now) : "Created now"}</strong>
-        </div>
-      </section>
-
-      <section className="stat-grid">
-        <Metric icon={<Coins />} label="Tracked Profit" value={<Money value={totalValue} />} tone={totalValue ? "positive" : "muted"} />
-        <Metric icon={<Boxes />} label="Items Gained" value={totalItems.toLocaleString()} />
-        <Metric icon={<Database />} label="Stacks" value={gainedRows.length.toLocaleString()} />
-        <Metric
-          icon={<RefreshCcw />}
-          label="Last Snapshot"
-          value={trackLootEnabled
-            ? trackerState
-              ? formatAge(trackerState.lastUpdatedAt, now)
-              : "Now"
-            : "Paused"}
-        />
-      </section>
-
-      <section className="surface craft-profit-surface">
-        {gainedRows.length ? (
-          <div className="craft-table-wrap farm-tracker-table-wrap">
-            <table className="craft-profit-table">
-              <thead>
-                <tr>
-                  {renderHeader("item", "Item")}
-                  {renderHeader("gained", "Gained")}
-                  {renderHeader("value", "Est. Sell Value")}
-                  {renderHeader("salvage", "Est. Salvage")}
-                  {renderHeader("unit", "Unit")}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedGainedRows.map((row) => (
-                  <tr key={row.id}>
-                    <td>
-                      <span className="table-item-cell">
-                        <ItemIcon item={row.item ?? { name: "Item" }} />
-                        <span className="item-copy">
-                          <strong>{row.item?.name ?? `Item ${row.id}`}</strong>
-                          <span>{row.item?.rarity ?? "Tracked item"}</span>
-                        </span>
-                      </span>
-                    </td>
-                    <td>{row.count.toLocaleString()}</td>
-                    <td><Money value={row.value} /></td>
-                    <td>
-                      {row.salvageValue ? (
-                        <Money value={row.salvageValue} />
-                      ) : row.salvageModeled ? (
-                        "Unpriced"
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                    <td>{row.count ? <Money value={Math.floor(row.value / row.count)} /> : "-"}</td>
-                  </tr>
+          <section className="surface farm-tracker-controls">
+            <label>
+              Scope
+              <select value={mode} onChange={(event) => setMode(event.target.value as FarmTrackerMode)}>
+                <option value="account">Entire account</option>
+                <option value="character">Per character</option>
+              </select>
+            </label>
+            <label>
+              Character
+              <select
+                value={selectedCharacter}
+                disabled={mode !== "character" || characters.length === 0}
+                onChange={(event) => setSelectedCharacter(event.target.value)}
+              >
+                {characters.map((character) => (
+                  <option key={character.name} value={character.name}>
+                    {character.name} · {character.profession}
+                  </option>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="empty-detail inline-empty">
-            <ListChecks />
-            <h2>No gains tracked yet</h2>
-            <p>
-              {trackLootEnabled
-                ? "Farm for a while and the tracker will snapshot the account API once per minute."
-                : "Turn Track Loot on to resume automatic snapshots."}
-            </p>
-          </div>
-        )}
-      </section>
+              </select>
+            </label>
+            <div>
+              <span className="eyebrow">Baseline</span>
+              <strong>{trackerState ? formatAge(trackerState.startedAt, now) : "Created now"}</strong>
+            </div>
+          </section>
+
+          <section className="stat-grid">
+            <Metric icon={<Coins />} label="Tracked Profit" value={<Money value={totalValue} />} tone={totalValue ? "positive" : "muted"} />
+            <Metric icon={<Clock />} label="Session Timer" value={formatTimerDuration(trackingElapsedMs)} tone={trackerIsIdle || !trackLootEnabled ? "muted" : "default"} />
+            <Metric icon={<Boxes />} label="Net Items" value={totalItems.toLocaleString()} />
+            <Metric icon={<Database />} label="Removed / Used" value={totalRemovedItems.toLocaleString()} tone={totalRemovedItems ? "muted" : "default"} />
+            <Metric
+              icon={<RefreshCcw />}
+              label={trackerIsIdle ? "Idle Watch" : "Last Snapshot"}
+              value={trackLootEnabled
+                ? trackerState
+                  ? trackerIsIdle
+                    ? `Every ${Math.round(FARM_TRACKER_IDLE_SNAPSHOT_MS / 60000)}min`
+                    : formatAge(trackerState.lastUpdatedAt, now)
+                  : "Now"
+                : "Paused"}
+            />
+          </section>
+
+          <section className="surface craft-profit-surface">
+            {gainedRows.length ? (
+              <div className="craft-table-wrap farm-tracker-table-wrap">
+                <table className="craft-profit-table">
+                  <thead>
+                    <tr>
+                      {renderHeader("item", "Item")}
+                      {renderHeader("gained", "Gained")}
+                      {renderHeader("value", "Est. Sell Value")}
+                      {renderHeader("salvage", "Est. Salvage")}
+                      {renderHeader("unit", "Unit")}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedGainedRows.map((row) => (
+                      <tr
+                        key={row.id}
+                        className={selectedTrackerItem?.id === row.id ? "selected-row" : ""}
+                        onClick={() => {
+                          if (row.item) {
+                            onSelectItem(row.item);
+                          }
+                        }}
+                        onKeyDown={(event) => {
+                          if (!row.item) {
+                            return;
+                          }
+
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            onSelectItem(row.item);
+                          }
+                        }}
+                        role={row.item ? "button" : undefined}
+                        tabIndex={row.item ? 0 : undefined}
+                      >
+                        <td>
+                          <span className="table-item-cell">
+                            <ItemIcon item={row.item ?? { name: "Item" }} />
+                            <span className="item-copy">
+                              <strong>{row.item?.name ?? `Item ${row.id}`}</strong>
+                              <span>{row.item?.rarity ?? "Tracked item"}</span>
+                            </span>
+                          </span>
+                        </td>
+                        <td>{row.count.toLocaleString()}</td>
+                        <td><Money value={row.value} /></td>
+                        <td>
+                          {row.salvageValue ? (
+                            <Money value={row.salvageValue} />
+                          ) : row.salvageModeled ? (
+                            "Unpriced"
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                        <td>{row.count ? <Money value={Math.floor(row.value / row.count)} /> : "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="empty-detail inline-empty">
+                <ListChecks />
+                <h2>No gains tracked yet</h2>
+                <p>
+                  {trackLootEnabled
+                    ? "Farm for a while and the tracker will snapshot the account API once per minute."
+                    : "Turn Track Loot on to resume automatic snapshots."}
+                </p>
+              </div>
+            )}
+          </section>
+        </div>
+      </aside>
+
+      {selectedTrackerItem ? (
+        <section className="detail-panel">
+          <ItemDetail
+            item={selectedTrackerItem}
+            catalog={catalog}
+            listings={listings}
+            itemTransactions={itemTransactions}
+            recipes={recipes}
+            usedInRecipes={usedInRecipes}
+            recipeUsageState={recipeUsageState}
+            wikiGuide={wikiGuide}
+            detailState={detailState}
+            containerAnalysis={containerAnalysis}
+            containerState={containerState}
+            accountSnapshot={accountSnapshot}
+            marketHistoryRevision={marketHistoryRevision}
+            onClose={onCloseDetail}
+            onOpenDetail={(detailItem) => onSelectItem(detailItem)}
+          />
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -11888,6 +12064,7 @@ function updateFarmTrackerState(scopeKey: string, currentHoldings: Map<number, n
   const store = readFarmTrackerStore();
   const today = getLocalDateKey();
   const existing = store[scopeKey];
+  const now = Date.now();
 
   if (!existing || existing.dateKey !== today) {
     const fresh = createFarmTrackerState(scopeKey, currentHoldings);
@@ -11897,14 +12074,17 @@ function updateFarmTrackerState(scopeKey: string, currentHoldings: Map<number, n
   }
 
   const baseline = getFarmTrackerBaseline(existing);
-  const gained = calculateFarmTrackerGains(baseline, currentHoldings, new Map(existing.gained));
+  const reconciled = reconcileFarmTrackerState(existing, baseline, currentHoldings);
+  const timing = getNextFarmTrackerTiming(existing, reconciled.newGainCount > 0, now);
 
   const next: FarmTrackerStoredState = {
     ...existing,
-    lastUpdatedAt: Date.now(),
+    ...timing,
+    lastUpdatedAt: now,
     baselineHoldings: serializeHoldingMap(baseline),
     lastHoldings: serializeHoldingMap(currentHoldings),
-    gained: serializeHoldingMap(gained),
+    gained: serializeHoldingMap(reconciled.gained),
+    removed: serializeHoldingMap(reconciled.removed),
   };
   store[scopeKey] = next;
   writeFarmTrackerStore(store);
@@ -11923,6 +12103,7 @@ function resumeFarmTrackerState(scopeKey: string, currentHoldings: Map<number, n
   const store = readFarmTrackerStore();
   const today = getLocalDateKey();
   const existing = store[scopeKey];
+  const now = Date.now();
 
   if (!existing || existing.dateKey !== today) {
     const fresh = createFarmTrackerState(scopeKey, currentHoldings);
@@ -11932,12 +12113,36 @@ function resumeFarmTrackerState(scopeKey: string, currentHoldings: Map<number, n
   }
 
   const baseline = rebaseFarmTrackerBaseline(currentHoldings, new Map(existing.gained));
+  const reconciled = reconcileFarmTrackerState(existing, baseline, currentHoldings);
+  const timing = resumeFarmTrackerTiming(existing, now);
   const next: FarmTrackerStoredState = {
     ...existing,
-    lastUpdatedAt: Date.now(),
+    ...timing,
+    lastUpdatedAt: now,
     baselineHoldings: serializeHoldingMap(baseline),
     lastHoldings: serializeHoldingMap(currentHoldings),
-    gained: serializeHoldingMap(calculateFarmTrackerGains(baseline, currentHoldings, new Map(existing.gained))),
+    gained: serializeHoldingMap(reconciled.gained),
+    removed: serializeHoldingMap(reconciled.removed),
+  };
+  store[scopeKey] = next;
+  writeFarmTrackerStore(store);
+  return next;
+}
+
+function pauseFarmTrackerState(scopeKey: string): FarmTrackerStoredState | null {
+  const store = readFarmTrackerStore();
+  const existing = store[scopeKey];
+  if (!existing) {
+    return null;
+  }
+
+  const now = Date.now();
+  const next: FarmTrackerStoredState = {
+    ...existing,
+    lastUpdatedAt: now,
+    activeElapsedMs: getFarmTrackerActiveElapsedMs(existing, now, true),
+    activeStartedAt: null,
+    idlePausedAt: now,
   };
   store[scopeKey] = next;
   writeFarmTrackerStore(store);
@@ -11951,9 +12156,14 @@ function createFarmTrackerState(scopeKey: string, holdings: Map<number, number>)
     dateKey: getLocalDateKey(),
     startedAt: now,
     lastUpdatedAt: now,
+    lastGainAt: now,
+    activeStartedAt: now,
+    activeElapsedMs: 0,
+    idlePausedAt: null,
     baselineHoldings: serializeHoldingMap(holdings),
     lastHoldings: serializeHoldingMap(holdings),
     gained: [],
+    removed: [],
   };
 }
 
@@ -11994,6 +12204,128 @@ function calculateFarmTrackerGains(
   }
 
   return gained;
+}
+
+function reconcileFarmTrackerState(
+  state: FarmTrackerStoredState,
+  baseline: Map<number, number>,
+  currentHoldings: Map<number, number>,
+): { gained: Map<number, number>; removed: Map<number, number>; newGainCount: number } {
+  const lastHoldings = new Map(state.lastHoldings);
+  const gained = new Map(state.gained);
+  const removed = new Map(state.removed ?? []);
+  let newGainCount = 0;
+  const itemIds = new Set<number>([
+    ...baseline.keys(),
+    ...lastHoldings.keys(),
+    ...currentHoldings.keys(),
+    ...gained.keys(),
+    ...removed.keys(),
+  ]);
+
+  for (const id of itemIds) {
+    const change = (currentHoldings.get(id) ?? 0) - (lastHoldings.get(id) ?? 0);
+    if (change > 0) {
+      gained.set(id, (gained.get(id) ?? 0) + change);
+      newGainCount += change;
+      continue;
+    }
+
+    if (change < 0) {
+      const trackedCount = gained.get(id) ?? 0;
+      const consumedCount = Math.min(trackedCount, Math.abs(change));
+      if (consumedCount > 0) {
+        const nextGain = trackedCount - consumedCount;
+        if (nextGain > 0) {
+          gained.set(id, nextGain);
+        } else {
+          gained.delete(id);
+        }
+        removed.set(id, (removed.get(id) ?? 0) + consumedCount);
+      }
+    }
+  }
+
+  const netGains = calculateFarmTrackerGains(baseline, currentHoldings, gained);
+  for (const [id, count] of Array.from(gained.entries())) {
+    const cappedCount = Math.min(count, netGains.get(id) ?? 0);
+    if (cappedCount > 0) {
+      gained.set(id, cappedCount);
+    } else {
+      gained.delete(id);
+    }
+  }
+
+  return { gained, removed, newGainCount };
+}
+
+function getFarmTrackerActiveElapsedMs(
+  state: FarmTrackerStoredState,
+  now = Date.now(),
+  includeRunningSegment = true,
+): number {
+  const storedElapsed = Math.max(0, state.activeElapsedMs ?? 0);
+  if (!includeRunningSegment || state.idlePausedAt || !state.activeStartedAt) {
+    return storedElapsed;
+  }
+
+  return storedElapsed + Math.max(0, now - state.activeStartedAt);
+}
+
+function getNextFarmTrackerTiming(
+  state: FarmTrackerStoredState,
+  hasNewGain: boolean,
+  now: number,
+): Pick<FarmTrackerStoredState, "lastGainAt" | "activeStartedAt" | "activeElapsedMs" | "idlePausedAt"> {
+  const lastGainAt = state.lastGainAt ?? state.startedAt;
+  const activeStartedAt = state.activeStartedAt ?? state.startedAt;
+  const activeElapsedMs = Math.max(0, state.activeElapsedMs ?? 0);
+
+  if (hasNewGain) {
+    return {
+      lastGainAt: now,
+      activeStartedAt: state.idlePausedAt ? now : activeStartedAt,
+      activeElapsedMs,
+      idlePausedAt: null,
+    };
+  }
+
+  if (state.idlePausedAt) {
+    return {
+      lastGainAt,
+      activeStartedAt: null,
+      activeElapsedMs,
+      idlePausedAt: state.idlePausedAt,
+    };
+  }
+
+  if (now - lastGainAt >= FARM_TRACKER_IDLE_AFTER_MS) {
+    return {
+      lastGainAt,
+      activeStartedAt: null,
+      activeElapsedMs: activeElapsedMs + Math.max(0, now - activeStartedAt),
+      idlePausedAt: now,
+    };
+  }
+
+  return {
+    lastGainAt,
+    activeStartedAt,
+    activeElapsedMs,
+    idlePausedAt: null,
+  };
+}
+
+function resumeFarmTrackerTiming(
+  state: FarmTrackerStoredState,
+  now: number,
+): Pick<FarmTrackerStoredState, "lastGainAt" | "activeStartedAt" | "activeElapsedMs" | "idlePausedAt"> {
+  return {
+    lastGainAt: now,
+    activeStartedAt: now,
+    activeElapsedMs: getFarmTrackerActiveElapsedMs(state, now, false),
+    idlePausedAt: null,
+  };
 }
 
 function rebaseFarmTrackerBaseline(
