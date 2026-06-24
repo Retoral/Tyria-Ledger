@@ -76,6 +76,25 @@ interface DesktopAppCacheDeleteResult {
   deleted: number;
 }
 
+interface DesktopUpdateCheckResult {
+  state: "available" | "current" | "error" | "not_configured";
+  available: boolean;
+  currentVersion: string;
+  latestVersion?: string;
+  checkedAt: string;
+  releaseName?: string;
+  releaseNotes?: string;
+  releaseUrl?: string;
+  assetName?: string;
+  assetUrl?: string;
+  message?: string;
+}
+
+interface DesktopOpenUpdateResult {
+  opened: boolean;
+  target: "asset" | "release" | "cancelled";
+}
+
 declare global {
   interface Window {
     gw2Desktop?: {
@@ -99,6 +118,8 @@ declare global {
       loadAppCache: (cacheKey: string) => Promise<DesktopAppCacheResult | null>;
       saveAppCache: (cacheKey: string, value: unknown) => Promise<DesktopAppCacheSaveResult>;
       deleteAppCachePrefix: (prefix: string) => Promise<DesktopAppCacheDeleteResult>;
+      checkForUpdates: () => Promise<DesktopUpdateCheckResult>;
+      openUpdateDownload: (updateInfo: DesktopUpdateCheckResult) => Promise<DesktopOpenUpdateResult>;
     };
   }
 }

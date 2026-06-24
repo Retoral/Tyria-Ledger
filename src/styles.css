@@ -1982,6 +1982,7 @@ p {
 }
 
 .status-left,
+.status-right,
 .progress-copy,
 .history-controls {
   display: flex;
@@ -1990,6 +1991,12 @@ p {
 
 .status-left {
   gap: 12px;
+  min-width: 0;
+}
+
+.status-right {
+  justify-content: flex-end;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -2022,8 +2029,54 @@ p {
   font-weight: 900;
 }
 
+.update-status-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #cfd5cc;
+  border-radius: 8px;
+  color: #30362e;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.update-status-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.update-status-button.checking svg {
+  animation: spin 1s linear infinite;
+}
+
+.update-status-button.available {
+  border-color: #d9a322;
+  color: #3d2b00;
+  background: #ffe8a6;
+}
+
+.update-status-button.current {
+  border-color: #1c8c56;
+  color: #0b5e3a;
+  background: #e8f8ef;
+}
+
+.update-status-button.error {
+  border-color: #d9939b;
+  color: #721b25;
+  background: #fff1f2;
+}
+
 .status-strip span {
   color: #767d72;
+}
+
+.update-status-button span {
+  color: inherit;
 }
 
 .error-pill {
@@ -4654,6 +4707,7 @@ body,
 .icon-button,
 .detail-close-button,
 .mini-action,
+.update-status-button,
 .small-actions button,
 .key-row button,
 .empty-action,
@@ -4665,6 +4719,25 @@ body,
   border-color: #303b3f;
   color: #edf5ef;
   background: #141a1e;
+}
+
+.update-status-button.available {
+  border-color: #d9a322;
+  color: #ffe8a6;
+  background: rgba(217, 163, 34, 0.16);
+}
+
+.update-status-button.current {
+  border-color: #166f46;
+  color: #8ee0ae;
+  background: rgba(22, 111, 70, 0.16);
+}
+
+.update-status-button.error,
+.update-status-button.not_configured {
+  border-color: #7b4850;
+  color: #f0a7b0;
+  background: rgba(178, 59, 69, 0.14);
 }
 
 .refresh-status:hover,

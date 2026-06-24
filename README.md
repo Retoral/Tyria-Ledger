@@ -27,3 +27,16 @@ npm run package
 ```
 
 Use `npm run dist:mac` on macOS and `npm run dist:win` on Windows to create installer artifacts.
+
+## GitHub releases
+
+The app checks the latest GitHub release at startup. Publish release artifacts with:
+
+```bash
+gh auth login
+npm run release:github
+```
+
+Use `npm run release:github:dry` to verify the files before uploading. The release script uploads the macOS Intel, macOS Apple Silicon, Windows installer, Windows portable build, updater metadata, and blockmap files from `release/`.
+
+The script refuses to release from a dirty worktree so the GitHub tag matches the shipped build.

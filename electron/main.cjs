@@ -1041,6 +1041,177 @@ async function deleteApiKey() {
   return true;
 }
 
+function normalizeReleaseVersion(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/^v/i, "")
+    .split(/[+-]/)[0];
+}
+
+function compareReleaseVersions(left, right) {
+  const leftParts = normalizeReleaseVersion(left).split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const rightParts = normalizeReleaseVersion(right).split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const length = Math.max(leftParts.length, rightParts.length, 3);
+
+  for (let index = 0; index < length; index += 1) {
+    const delta = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (delta !== 0) {
+      return delta;
+    }
+  }
+
+  return 0;
+}
+
+function pickReleaseAsset(assets) {
+  if (!Array.isArray(assets)) {
+    return null;
+  }
+
+  const namedAssets = assets.filter(
+    (asset) =>
+      asset &&
+      typeof asset.name === "string" &&
+      typeof asset.browser_download_url === "string",
+  );
+  const findAsset = (matcher) => namedAssets.find((asset) => matcher(asset.name.toLowerCase()));
+
+  if (process.platform === "darwin") {
+    const isAppleSilicon = process.arch === "arm64";
+    return (
+      (isAppleSilicon
+        ? findAsset((name) => name.includes("arm64") && name.endsWith(".dmg"))
+        : findAsset((name) => name.endsWith(".dmg") && !name.includes("arm64"))) ??
+      (isAppleSilicon
+        ? findAsset((name) => name.includes("arm64") && name.endsWith(".zip"))
+        : findAsset((name) => name.endsWith(".zip") && name.includes("mac") && !name.includes("arm64"))) ??
+      null
+    );
+  }
+
+  if (process.platform === "win32") {
+    return (
+      findAsset((name) => name.includes("setup") && name.endsWith(".exe")) ??
+      findAsset((name) => name.endsWith(".exe")) ??
+      null
+    );
+  }
+
+  return namedAssets[0] ?? null;
+}
+
+async function checkForUpdates() {
+  const currentVersion = app.getVersion();
+  const checkedAt = new Date().toISOString();
+
+  try {
+    const response = await fetch(UPDATE_API_URL, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": `${app.getName()}/${currentVersion}`,
+      },
+    });
+
+    if (response.status === 404) {
+      return {
+        state: "not_configured",
+        available: false,
+        currentVersion,
+        checkedAt,
+        releaseUrl: UPDATE_RELEASES_URL,
+        message: "No GitHub release has been published yet.",
+      };
+    }
+
+    if (!response.ok) {
+      return {
+        state: "error",
+        available: false,
+        currentVersion,
+        checkedAt,
+        releaseUrl: UPDATE_RELEASES_URL,
+        message: `GitHub returned HTTP ${response.status} while checking for updates.`,
+      };
+    }
+
+    const release = await response.json();
+    const latestVersion = normalizeReleaseVersion(release.tag_name || release.name);
+    const asset = pickReleaseAsset(release.assets);
+    const available =
+      Boolean(latestVersion) &&
+      !release.draft &&
+      !release.prerelease &&
+      compareReleaseVersions(latestVersion, currentVersion) > 0;
+
+    return {
+      state: available ? "available" : "current",
+      available,
+      currentVersion,
+      latestVersion,
+      checkedAt,
+      releaseName: typeof release.name === "string" ? release.name : release.tag_name,
+      releaseNotes: typeof release.body === "string" ? release.body : "",
+      releaseUrl: typeof release.html_url === "string" ? release.html_url : UPDATE_RELEASES_URL,
+      assetName: asset?.name,
+      assetUrl: asset?.browser_download_url,
+      message: available
+        ? `Tyria Ledger ${latestVersion} is available.`
+        : `Tyria Ledger ${currentVersion} is up to date.`,
+    };
+  } catch (error) {
+    return {
+      state: "error",
+      available: false,
+      currentVersion,
+      checkedAt,
+      releaseUrl: UPDATE_RELEASES_URL,
+      message: error instanceof Error ? error.message : "Unable to check for updates.",
+    };
+  }
+}
+
+async function openUpdateDownload(_event, updateInfo) {
+  const latestVersion = normalizeReleaseVersion(updateInfo?.latestVersion);
+  const assetUrl = typeof updateInfo?.assetUrl === "string" ? updateInfo.assetUrl : "";
+  const releaseUrl = typeof updateInfo?.releaseUrl === "string" ? updateInfo.releaseUrl : UPDATE_RELEASES_URL;
+  const assetName = typeof updateInfo?.assetName === "string" ? updateInfo.assetName : "the latest installer";
+
+  const response = await dialog.showMessageBox(mainWindow, {
+    type: "question",
+    buttons: assetUrl ? ["Download installer", "Open release page", "Cancel"] : ["Open release page", "Cancel"],
+    defaultId: 0,
+    cancelId: assetUrl ? 2 : 1,
+    title: "Update available",
+    message: latestVersion
+      ? `Tyria Ledger ${latestVersion} is available.`
+      : "A Tyria Ledger update is available.",
+    detail: assetUrl
+      ? `The app will open ${assetName} from GitHub. After it downloads, run the installer to update Tyria Ledger.`
+      : "The app will open the GitHub release page so you can download the installer for your platform.",
+  });
+
+  if (response.response === 0) {
+    await shell.openExternal(assetUrl || releaseUrl);
+    return {
+      opened: true,
+      target: assetUrl ? "asset" : "release",
+    };
+  }
+
+  if (assetUrl && response.response === 1) {
+    await shell.openExternal(releaseUrl);
+    return {
+      opened: true,
+      target: "release",
+    };
+  }
+
+  return {
+    opened: false,
+    target: "cancelled",
+  };
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -1096,6 +1267,8 @@ app.whenReady().then(() => {
   ipcMain.handle("app-cache:load", loadAppCache);
   ipcMain.handle("app-cache:save", saveAppCache);
   ipcMain.handle("app-cache:delete-prefix", deleteAppCachePrefix);
+  ipcMain.handle("updates:check", checkForUpdates);
+  ipcMain.handle("updates:open-download", openUpdateDownload);
 
   createWindow();
 

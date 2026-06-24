@@ -14,7 +14,9 @@
     "start": "electron .",
     "package": "npm run build && electron-builder --dir",
     "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "npm run build && electron-builder --win"
+    "dist:win": "npm run build && electron-builder --win",
+    "release:github": "node scripts/release-github.cjs",
+    "release:github:dry": "node scripts/release-github.cjs --dry-run"
   },
   "dependencies": {
     "lucide-react": "latest",

@@ -101,6 +101,8 @@ import type {
 type LoadState = "idle" | "loading" | "ready" | "error";
 type ActivePage = string;
 type SpeedLabel = "Quickest" | "Fast" | "Moderate" | "Slowest";
+type UpdateCheckState = "idle" | "checking" | "current" | "available" | "error" | "not_configured";
+type AppUpdateInfo = Awaited<ReturnType<NonNullable<Window["gw2Desktop"]>["checkForUpdates"]>>;
 
 interface GoldSuggestion {
   title: string;
@@ -2553,6 +2555,8 @@ function App() {
   const [achievementUpdatedAt, setAchievementUpdatedAt] = useState<number | null>(null);
   const [mapsState, setMapsState] = useState<LoadState>("idle");
   const [mapsUpdatedAt, setMapsUpdatedAt] = useState<number | null>(null);
+  const [updateCheckState, setUpdateCheckState] = useState<UpdateCheckState>("idle");
+  const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [sidebarSearch, setSidebarSearch] = useState("");
   const [marketScopeId, setMarketScopeId] = useState<MarketScopeId>("global");
   const [maps, setMaps] = useState<Gw2Map[]>([]);
@@ -2569,6 +2573,7 @@ function App() {
 
   useEffect(() => {
     void migrateLocalStorageMarketHistory();
+    void checkForAppUpdates({ silent: true });
 
     const storedMarketScope = normalizeMarketScopeId(
       window.localStorage.getItem(MARKET_SCOPE_STORAGE_KEY),
@@ -2994,6 +2999,60 @@ function App() {
     } catch (statusError) {
       setApiStatusState("error");
       setError(statusError instanceof Error ? statusError.message : "Unable to check API status");
+    }
+  }
+
+  async function checkForAppUpdates(options: { silent?: boolean } = {}) {
+    if (!window.gw2Desktop?.checkForUpdates) {
+      setUpdateCheckState("not_configured");
+      return;
+    }
+
+    setUpdateCheckState("checking");
+
+    try {
+      const result = await window.gw2Desktop.checkForUpdates();
+      setUpdateInfo(result);
+      setUpdateCheckState(result.state);
+
+      if (!options.silent) {
+        if (result.state === "available") {
+          setProgress(result.message ?? "Update available");
+        } else if (result.state === "current") {
+          setProgress(result.message ?? "Tyria Ledger is up to date");
+        } else if (result.state === "not_configured") {
+          setProgress(result.message ?? "No release has been published yet");
+        } else if (result.message) {
+          setError(result.message);
+        }
+      }
+    } catch (updateError) {
+      setUpdateCheckState("error");
+      const message = updateError instanceof Error ? updateError.message : "Unable to check for updates";
+      setUpdateInfo({
+        state: "error",
+        available: false,
+        currentVersion: "",
+        checkedAt: new Date().toISOString(),
+        message,
+      });
+
+      if (!options.silent) {
+        setError(message);
+      }
+    }
+  }
+
+  async function openUpdateDownload() {
+    if (!updateInfo || updateCheckState !== "available") {
+      await checkForAppUpdates();
+      return;
+    }
+
+    try {
+      await window.gw2Desktop?.openUpdateDownload(updateInfo);
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Unable to open update download");
     }
   }
 
@@ -3786,20 +3845,70 @@ function App() {
               ) : null}
             </div>
           </div>
-          {error ? (
-            <div className="error-pill">
-              <AlertCircle />
-              {error}
-              <button onClick={() => setError(null)} aria-label="Dismiss error">
-                <X />
-              </button>
-            </div>
-          ) : null}
+          <div className="status-right">
+            <UpdateStatusButton
+              updateInfo={updateInfo}
+              updateState={updateCheckState}
+              onCheck={() => void checkForAppUpdates()}
+              onOpenUpdate={() => void openUpdateDownload()}
+            />
+            {error ? (
+              <div className="error-pill">
+                <AlertCircle />
+                {error}
+                <button onClick={() => setError(null)} aria-label="Dismiss error">
+                  <X />
+                </button>
+              </div>
+            ) : null}
+          </div>
         </section>
 
         <div className="content-main">{content}</div>
       </main>
     </div>
+  );
+}
+
+function UpdateStatusButton({
+  updateInfo,
+  updateState,
+  onCheck,
+  onOpenUpdate,
+}: {
+  updateInfo: AppUpdateInfo | null;
+  updateState: UpdateCheckState;
+  onCheck: () => void;
+  onOpenUpdate: () => void;
+}) {
+  const isChecking = updateState === "checking";
+  const isAvailable = updateState === "available";
+  const latestVersion = updateInfo?.latestVersion ? ` ${updateInfo.latestVersion}` : "";
+  const label = (() => {
+    if (isChecking) return "Checking updates";
+    if (isAvailable) return `Update Available${latestVersion}`;
+    if (updateState === "current") return "Up to date";
+    if (updateState === "not_configured") return "No releases";
+    if (updateState === "error") return "Update check failed";
+    return "Check updates";
+  })();
+  const title =
+    updateInfo?.message ??
+    (isAvailable
+      ? "A new Tyria Ledger release is available."
+      : "Check GitHub Releases for a newer Tyria Ledger build.");
+
+  return (
+    <button
+      type="button"
+      className={`update-status-button ${updateState}`}
+      onClick={isAvailable ? onOpenUpdate : onCheck}
+      disabled={isChecking}
+      title={title}
+    >
+      {isChecking ? <Loader2 /> : isAvailable ? <AlertCircle /> : updateState === "current" ? <CheckCircle2 /> : <RefreshCcw />}
+      <span>{label}</span>
+    </button>
   );
 }
 
