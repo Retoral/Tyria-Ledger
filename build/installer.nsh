@@ -29,3 +29,27 @@
 
   done:
 !macroend
+
+!macro recoverFromOldUninstallerFailure ROOT_CONTEXT
+  !define UniqueID ${__LINE__}
+  IfErrors 0 checkExitCode_${UniqueID}
+    DetailPrint "The previous Tyria Ledger uninstaller could not be launched from ${ROOT_CONTEXT}. Continuing with a repair install."
+    ClearErrors
+    StrCpy $R0 0
+    Return
+
+  checkExitCode_${UniqueID}:
+    ${if} $R0 != 0
+      DetailPrint "The previous Tyria Ledger uninstaller returned $R0 from ${ROOT_CONTEXT}. Continuing with a repair install."
+      StrCpy $R0 0
+    ${endif}
+  !undef UniqueID
+!macroend
+
+!macro customUnInstallCheck
+  !insertmacro recoverFromOldUninstallerFailure "SHELL_CONTEXT"
+!macroend
+
+!macro customUnInstallCheckCurrentUser
+  !insertmacro recoverFromOldUninstallerFailure "HKEY_CURRENT_USER"
+!macroend
