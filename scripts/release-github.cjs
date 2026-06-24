@@ -56,17 +56,17 @@ function fail(message) {
 
 function requiredArtifactNames(releaseVersion) {
   return [
-    `Tyria Ledger-${releaseVersion}.dmg`,
-    `Tyria Ledger-${releaseVersion}.dmg.blockmap`,
-    `Tyria Ledger-${releaseVersion}-mac.zip`,
-    `Tyria Ledger-${releaseVersion}-mac.zip.blockmap`,
-    `Tyria Ledger-${releaseVersion}-arm64.dmg`,
-    `Tyria Ledger-${releaseVersion}-arm64.dmg.blockmap`,
-    `Tyria Ledger-${releaseVersion}-arm64-mac.zip`,
-    `Tyria Ledger-${releaseVersion}-arm64-mac.zip.blockmap`,
-    `Tyria Ledger Setup ${releaseVersion}.exe`,
-    `Tyria Ledger Setup ${releaseVersion}.exe.blockmap`,
-    `Tyria Ledger ${releaseVersion}.exe`,
+    `Tyria-Ledger-${releaseVersion}.dmg`,
+    `Tyria-Ledger-${releaseVersion}.dmg.blockmap`,
+    `Tyria-Ledger-${releaseVersion}-mac.zip`,
+    `Tyria-Ledger-${releaseVersion}-mac.zip.blockmap`,
+    `Tyria-Ledger-${releaseVersion}-arm64.dmg`,
+    `Tyria-Ledger-${releaseVersion}-arm64.dmg.blockmap`,
+    `Tyria-Ledger-${releaseVersion}-arm64-mac.zip`,
+    `Tyria-Ledger-${releaseVersion}-arm64-mac.zip.blockmap`,
+    `Tyria-Ledger-Setup-${releaseVersion}.exe`,
+    `Tyria-Ledger-Setup-${releaseVersion}.exe.blockmap`,
+    `Tyria-Ledger-${releaseVersion}.exe`,
     "latest.yml",
     "latest-mac.yml",
   ];
