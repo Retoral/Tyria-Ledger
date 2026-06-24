@@ -9,7 +9,7 @@ interface DesktopMarketHistoryPoint {
   sellPrice: number;
   buyQuantity: number;
   sellQuantity: number;
-  rollup?: "raw" | "day" | "week" | "month";
+  rollup?: "raw" | "day" | "week" | "month" | "bimonth";
   sampleCount?: number;
 }
 

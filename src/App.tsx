@@ -23,7 +23,15 @@ import {
   TrendingUp,
   X,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import {
   analyzeAccount,
   checkApiStatuses,
@@ -174,7 +182,7 @@ interface AchievementStep {
   chatLink?: string;
 }
 
-type HistoryRangeId = "24h" | "1w" | "1m" | "3m" | "6m" | "12m" | "2y" | "5y" | "all";
+type HistoryRangeId = "24h" | "1w" | "1m" | "3m" | "6m" | "1y" | "2y";
 
 interface HistoryRange {
   id: HistoryRangeId;
@@ -194,7 +202,7 @@ interface MarketHistoryPoint {
   sampleCount?: number;
 }
 
-type MarketHistoryRollup = "raw" | "day" | "week" | "month";
+type MarketHistoryRollup = "raw" | "day" | "week" | "month" | "bimonth";
 
 interface MarketHistoryImportResult {
   added: number;
@@ -230,6 +238,38 @@ interface IngredientCraftRouteSummary {
 }
 
 const ingredientCraftRouteCache = new Map<string, Promise<IngredientCraftRouteSummary | null>>();
+
+type SortDirection = "asc" | "desc";
+type TableSort<K extends string> = {
+  key: K;
+  direction: SortDirection;
+};
+type CraftProfitSortKey =
+  | "name"
+  | "quantity"
+  | "profitPerItem"
+  | "profit"
+  | "craftingCost"
+  | "sellValue"
+  | "demand"
+  | "recipe";
+
+interface CraftProfitSort {
+  key: CraftProfitSortKey;
+  direction: SortDirection;
+}
+
+interface CraftProfitTableRow {
+  opportunity: CraftOpportunity;
+  index: number;
+  quantity: number;
+  grossPrice: number;
+  buyQuantity: number;
+  sellQuantity: number;
+  demandRatio: number;
+  profitPerItem: number;
+  recipeLabel: string;
+}
 
 type FarmTrackerMode = "account" | "character";
 
@@ -331,7 +371,8 @@ const MAX_MARKET_HISTORY_POINTS_PER_ITEM = 800;
 const MARKET_HISTORY_REPLACE_WINDOW_MS = 10 * 60 * 1000;
 const MARKET_HISTORY_RAW_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MARKET_HISTORY_DAILY_WINDOW_MS = 31 * 24 * 60 * 60 * 1000;
-const MARKET_HISTORY_WEEKLY_WINDOW_MS = 366 * 24 * 60 * 60 * 1000;
+const MARKET_HISTORY_WEEKLY_WINDOW_MS = 8 * 31 * 24 * 60 * 60 * 1000;
+const MARKET_HISTORY_MAX_AGE_MS = 2 * 366 * 24 * 60 * 60 * 1000;
 const MARKET_PRELOAD_DELAY_MS = 500;
 const MARKET_LIST_INITIAL_ITEMS = 220;
 const MARKET_LIST_BATCH_SIZE = 360;
@@ -343,10 +384,8 @@ const HISTORY_RANGES: HistoryRange[] = [
   { id: "1m", label: "1M", days: 31 },
   { id: "3m", label: "3M", days: 93 },
   { id: "6m", label: "6M", days: 186 },
-  { id: "12m", label: "12M", days: 366 },
+  { id: "1y", label: "1Y", days: 366 },
   { id: "2y", label: "2Y", days: 732 },
-  { id: "5y", label: "5Y", days: 1830 },
-  { id: "all", label: "All" },
 ];
 
 const SALVAGE_ROW_LIMIT = 300;
@@ -4541,6 +4580,20 @@ function OwnedItemTable({
   emptyText: string;
   onOpenItem: (item: Gw2Item) => void;
 }) {
+  const { sortedRows, renderHeader } = useSortableRows<
+    OwnedItemRow,
+    "item" | "count" | "source" | "value"
+  >(
+    rows,
+    { key: "item", direction: "asc" },
+    {
+      item: (left, right) => compareStringValue(left.item?.name ?? `Item ${left.id}`, right.item?.name ?? `Item ${right.id}`),
+      count: (left, right) => compareNumberValue(left.count, right.count),
+      source: (left, right) => compareStringValue(describeOwnedItemSources(left), describeOwnedItemSources(right)),
+      value: (left, right) => compareNumberValue(left.value, right.value),
+    },
+  );
+
   return (
     <div className="owned-item-section">
       <div className="owned-item-section-head">
@@ -4552,14 +4605,14 @@ function OwnedItemTable({
           <table className="craft-profit-table account-item-table">
             <thead>
               <tr>
-                <th>Item</th>
-                <th>Count</th>
-                <th>Source</th>
-                <th>Known Value</th>
+                {renderHeader("item", "Item")}
+                {renderHeader("count", "Count")}
+                {renderHeader("source", "Source")}
+                {renderHeader("value", "Known Value")}
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {sortedRows.map((row) => (
                 <tr
                   key={`${title}-${row.id}`}
                   className={row.item ? "clickable-row" : ""}
@@ -4750,6 +4803,21 @@ function WizardVaultPage({
   const [objectiveGuideState, setObjectiveGuideState] = useState<LoadState>("idle");
   const [objectiveGuideError, setObjectiveGuideError] = useState<string | null>(null);
   const key = apiKey.trim();
+  const {
+    sortedRows: sortedVaultListings,
+    renderHeader: renderVaultHeader,
+  } = useSortableRows<WizardVaultListingValue, "reward" | "type" | "cost" | "value" | "valuePerAcclaim" | "purchased">(
+    vault?.listings ?? [],
+    { key: "valuePerAcclaim", direction: "desc" },
+    {
+      reward: (left, right) => compareStringValue(left.item?.name ?? `Item ${left.listing.item_id}`, right.item?.name ?? `Item ${right.listing.item_id}`),
+      type: (left, right) => compareStringValue(left.listing.type, right.listing.type),
+      cost: (left, right) => compareNumberValue(left.listing.cost, right.listing.cost),
+      value: (left, right) => compareNumberValue(left.value, right.value),
+      valuePerAcclaim: (left, right) => compareNumberValue(left.valuePerAcclaim, right.valuePerAcclaim),
+      purchased: (left, right) => compareNumberValue(left.purchased ?? -1, right.purchased ?? -1),
+    },
+  );
 
   async function refreshVault() {
     setLoadState("loading");
@@ -5015,16 +5083,16 @@ function WizardVaultPage({
               <table className="craft-profit-table vault-store-table">
                 <thead>
                   <tr>
-                    <th>Reward</th>
-                    <th>Type</th>
-                    <th>Cost</th>
-                    <th>Sell Value</th>
-                    <th>Value / Acclaim</th>
-                    <th>Purchased</th>
+                    {renderVaultHeader("reward", "Reward")}
+                    {renderVaultHeader("type", "Type")}
+                    {renderVaultHeader("cost", "Cost")}
+                    {renderVaultHeader("value", "Sell Value")}
+                    {renderVaultHeader("valuePerAcclaim", "Value / Acclaim")}
+                    {renderVaultHeader("purchased", "Purchased")}
                   </tr>
                 </thead>
                 <tbody>
-                  {vault.listings.slice(0, 80).map((entry) => (
+                  {sortedVaultListings.slice(0, 80).map((entry) => (
                     <tr
                       key={entry.listing.id}
                       className={entry.item ? "clickable-row" : ""}
@@ -6336,6 +6404,22 @@ function ActivityGuidePage({
 }
 
 function MetaFarmTable() {
+  const { sortedRows, renderHeader } = useSortableRows<
+    MetaFarmEstimate,
+    "meta" | "map" | "gold" | "time" | "access" | "source"
+  >(
+    META_FARM_ESTIMATES,
+    { key: "gold", direction: "desc" },
+    {
+      meta: (left, right) => compareStringValue(left.name, right.name),
+      map: (left, right) => compareStringValue(left.map, right.map),
+      gold: (left, right) => compareNumberValue((left.goldMin + left.goldMax) / 2, (right.goldMin + right.goldMax) / 2),
+      time: (left, right) => compareStringValue(left.duration, right.duration),
+      access: (left, right) => compareStringValue(left.access, right.access),
+      source: (left, right) => compareStringValue(left.wikiUrl, right.wikiUrl),
+    },
+  );
+
   return (
     <section className="surface meta-farm-panel">
       <div className="section-title meta-farm-title">
@@ -6349,16 +6433,16 @@ function MetaFarmTable() {
         <table className="meta-table">
           <thead>
             <tr>
-              <th>Meta</th>
-              <th>Map</th>
-              <th>Est. gold/hour</th>
-              <th>Time</th>
-              <th>Access and payout notes</th>
-              <th>Source</th>
+              {renderHeader("meta", "Meta")}
+              {renderHeader("map", "Map")}
+              {renderHeader("gold", "Est. gold/hour")}
+              {renderHeader("time", "Time")}
+              {renderHeader("access", "Access and payout notes")}
+              {renderHeader("source", "Source")}
             </tr>
           </thead>
           <tbody>
-            {META_FARM_ESTIMATES.map((estimate) => (
+            {sortedRows.map((estimate) => (
               <tr key={`${estimate.map}-${estimate.name}`}>
                 <td>
                   <strong>{estimate.name}</strong>
@@ -6450,15 +6534,30 @@ function MarketPage({
 }) {
   const [visibleItemCount, setVisibleItemCount] = useState(MARKET_LIST_INITIAL_ITEMS);
   const importInputRef = useRef<HTMLInputElement | null>(null);
-  const visibleItems = useMemo(
-    () => filteredItems.slice(0, visibleItemCount),
-    [filteredItems, visibleItemCount],
+  const {
+    sortedRows: sortedFilteredItems,
+    sort: marketSort,
+    renderHeader,
+  } = useSortableRows<MarketItem, "name" | "sell" | "buy" | "spread" | "supply">(
+    filteredItems,
+    { key: "supply", direction: "desc" },
+    {
+      name: (left, right) => compareStringValue(left.name, right.name),
+      sell: (left, right) => compareNumberValue(left.price.sells.unit_price, right.price.sells.unit_price),
+      buy: (left, right) => compareNumberValue(left.price.buys.unit_price, right.price.buys.unit_price),
+      spread: (left, right) => compareNumberValue(left.spread, right.spread),
+      supply: (left, right) => compareNumberValue(left.price.sells.quantity, right.price.sells.quantity),
+    },
   );
-  const remainingItemCount = Math.max(0, filteredItems.length - visibleItems.length);
+  const visibleItems = useMemo(
+    () => sortedFilteredItems.slice(0, visibleItemCount),
+    [sortedFilteredItems, visibleItemCount],
+  );
+  const remainingItemCount = Math.max(0, sortedFilteredItems.length - visibleItems.length);
 
   useEffect(() => {
     setVisibleItemCount(MARKET_LIST_INITIAL_ITEMS);
-  }, [query, loadState]);
+  }, [loadState, marketSort, query]);
 
   return (
     <div className={`market-workspace ${selectedItem ? "" : "detail-closed"}`}>
@@ -6516,11 +6615,11 @@ function MarketPage({
               <table className="market-table">
                 <thead>
                   <tr>
-                    <th>Name</th>
-                    <th>Sell</th>
-                    <th>Buy</th>
-                    <th>Spread</th>
-                    <th>Supply</th>
+                    {renderHeader("name", "Name")}
+                    {renderHeader("sell", "Sell")}
+                    {renderHeader("buy", "Buy")}
+                    {renderHeader("spread", "Spread")}
+                    {renderHeader("supply", "Supply")}
                   </tr>
                 </thead>
                 <tbody>
@@ -6558,8 +6657,8 @@ function MarketPage({
             <button
               className="empty-action load-more-market"
               onClick={() => {
-                setVisibleItemCount((current) =>
-                  Math.min(filteredItems.length, current + MARKET_LIST_BATCH_SIZE),
+                  setVisibleItemCount((current) =>
+                  Math.min(sortedFilteredItems.length, current + MARKET_LIST_BATCH_SIZE),
                 );
               }}
             >
@@ -6735,7 +6834,7 @@ function OpenableBagsPage({
     () => Array.from(new Set(rows.map((row) => row.guide.sourceKind))).sort(),
     [rows],
   );
-  const visibleRows = useMemo(() => {
+  const filteredRows = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
 
     return rows
@@ -6754,9 +6853,27 @@ function OpenableBagsPage({
           row.guide.acquisition.toLowerCase().includes(normalizedQuery) ||
           row.guide.sourceKind.toLowerCase().includes(normalizedQuery)
         );
-      })
-      .sort((left, right) => right.rankValue - left.rankValue || left.item.name.localeCompare(right.item.name));
+      });
   }, [query, rows, sourceFilter]);
+  const { sortedRows: visibleRows, renderHeader } = useSortableRows<
+    (typeof rows)[number],
+    "container" | "source" | "average" | "profit" | "market"
+  >(
+    filteredRows,
+    { key: "average", direction: "desc" },
+    {
+      container: (left, right) => compareStringValue(left.item.name, right.item.name),
+      source: (left, right) =>
+        compareStringValue(`${left.guide.sourceKind} ${left.guide.expansion} ${left.guide.acquisition}`, `${right.guide.sourceKind} ${right.guide.expansion} ${right.guide.acquisition}`),
+      average: (left, right) => compareNumberValue(left.rankValue, right.rankValue),
+      profit: (left, right) => compareNumberValue(left.value.profit ?? Number.NEGATIVE_INFINITY, right.value.profit ?? Number.NEGATIVE_INFINITY),
+      market: (left, right) =>
+        compareNumberValue(
+          left.marketItem.price.sells.unit_price || left.marketItem.price.buys.unit_price,
+          right.marketItem.price.sells.unit_price || right.marketItem.price.buys.unit_price,
+        ),
+    },
+  );
   const selectedOpenableRow = rows.find((row) => row.item.id === selectedItem?.id) ?? null;
   const selectedOpenableBag = selectedOpenableRow?.marketItem ?? null;
   const analyzedCount = rows.filter((row) => row.analysisState === "ready" || row.analysisState === "error").length;
@@ -6907,11 +7024,11 @@ function OpenableBagsPage({
             <table className="craft-profit-table openable-bag-table">
               <thead>
                 <tr>
-                  <th>Container</th>
-                  <th>How to get</th>
-                  <th>Average Contents</th>
-                  <th>Profit</th>
-                  <th>Trading Post</th>
+                  {renderHeader("container", "Container")}
+                  {renderHeader("source", "How to get")}
+                  {renderHeader("average", "Average Contents")}
+                  {renderHeader("profit", "Profit")}
+                  {renderHeader("market", "Trading Post")}
                 </tr>
               </thead>
               <tbody>
@@ -7015,7 +7132,11 @@ function estimateOpenableBagValue(
   analysis: ContainerAnalysis | null,
   catalog: MarketItem[],
 ): OpenableBagValue {
-  if (!analysis?.drops.length) {
+  const effectiveAnalysis = analysis?.drops.length
+    ? analysis
+    : buildUnidentifiedGearContainerAnalysis(item, catalog) ?? analysis;
+
+  if (!effectiveAnalysis?.drops.length) {
     const fallbackRevenue = item.netSellPrice || item.price.buys.unit_price || 0;
     return {
       revenue: 0,
@@ -7023,16 +7144,18 @@ function estimateOpenableBagValue(
       bestChoice: null,
       matchedRows: fallbackRevenue ? 1 : 0,
       exactChancesAvailable: false,
-      source: fallbackRevenue ? "market" : analysis ? "unknown" : "pending",
+      source: fallbackRevenue ? "market" : effectiveAnalysis ? "unknown" : "pending",
     };
   }
 
-  const valuedDrops = analysis.drops.map((drop) => {
+  const valuedDrops = effectiveAnalysis.drops.map((drop) => {
     const marketItem = findMarketItemForDrop(drop, catalog);
     const directUnitValue = drop.coinValue ?? marketItem?.netSellPrice ?? marketItem?.price.buys.unit_price ?? 0;
     const salvageUnitValue = drop.coinValue
       ? drop.coinValue
-      : estimateSalvageUnitValue(marketItem, directUnitValue);
+      : isEstimatedSalvageDrop(drop)
+        ? directUnitValue
+        : estimateSalvageUnitValue(marketItem, directUnitValue);
 
     return {
       drop,
@@ -7064,7 +7187,7 @@ function estimateOpenableBagValue(
         }
       : null,
     matchedRows: valuedDrops.filter((row) => row.directUnitValue > 0).length,
-    exactChancesAvailable: analysis.exactChancesAvailable,
+    exactChancesAvailable: effectiveAnalysis.exactChancesAvailable,
     source: "wiki",
   };
 }
@@ -7487,29 +7610,47 @@ function SlotBagsPage({
   }, []);
 
   const catalogById = useMemo(() => new Map(catalog.map((item) => [item.id, item])), [catalog]);
-  const rows = useMemo(
-    () =>
-      slotBags.map((item) => {
-        const marketItem = catalogById.get(item.id) ?? buildMarketItemForDetail(item);
-        const acquisition = getSlotBagAcquisition(item);
-        const size = getSlotBagSize(item);
+  const rows = useMemo(() => {
+    const mappedRows = slotBags.map((item) => {
+      const marketItem = catalogById.get(item.id) ?? buildMarketItemForDetail(item);
+      const acquisition = getSlotBagAcquisition(item);
+      const size = getSlotBagSize(item);
 
-        return {
-          item,
-          marketItem,
-          acquisition,
-          size,
-          typeLabel: getSlotBagTypeLabel(item),
-          hasMarketPrice: marketItem.price.sells.unit_price > 0 || marketItem.price.buys.unit_price > 0,
-        };
-      }),
-    [catalogById, slotBags],
-  );
+      return {
+        item,
+        marketItem,
+        acquisition,
+        size,
+        typeLabel: getSlotBagTypeLabel(item),
+        hasMarketPrice: marketItem.price.sells.unit_price > 0 || marketItem.price.buys.unit_price > 0,
+      };
+    });
+    const mergedRows = new Map<string, (typeof mappedRows)[number]>();
+
+    for (const row of mappedRows) {
+      const key = row.item.name.trim().toLowerCase();
+      const current = mergedRows.get(key);
+
+      if (
+        !current ||
+        Number(row.hasMarketPrice) > Number(current.hasMarketPrice) ||
+        (row.hasMarketPrice === current.hasMarketPrice &&
+          Number(Boolean(row.item.icon)) > Number(Boolean(current.item.icon))) ||
+        (row.hasMarketPrice === current.hasMarketPrice &&
+          Boolean(row.item.icon) === Boolean(current.item.icon) &&
+          row.item.id < current.item.id)
+      ) {
+        mergedRows.set(key, row);
+      }
+    }
+
+    return Array.from(mergedRows.values());
+  }, [catalogById, slotBags]);
   const sizes = useMemo(
     () => Array.from(new Set(rows.map((row) => row.size).filter((size): size is number => size !== null))).sort((left, right) => right - left),
     [rows],
   );
-  const visibleRows = useMemo(() => {
+  const filteredRows = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
     const selectedSize = sizeFilter === "all" ? null : Number(sizeFilter);
 
@@ -7531,7 +7672,28 @@ function SlotBagsPage({
       );
     });
   }, [rows, search, sizeFilter]);
-  const selectedSlotBagRow = rows.find((row) => row.item.id === selectedItem?.id) ?? null;
+  const { sortedRows: visibleRows, renderHeader } = useSortableRows<
+    (typeof rows)[number],
+    "bag" | "slots" | "type" | "acquisition" | "market"
+  >(
+    filteredRows,
+    { key: "slots", direction: "desc" },
+    {
+      bag: (left, right) => compareStringValue(left.item.name, right.item.name),
+      slots: (left, right) => compareNumberValue(left.size ?? 0, right.size ?? 0),
+      type: (left, right) => compareStringValue(left.typeLabel, right.typeLabel),
+      acquisition: (left, right) => compareStringValue(`${left.acquisition.kind} ${left.acquisition.source}`, `${right.acquisition.kind} ${right.acquisition.source}`),
+      market: (left, right) =>
+        compareNumberValue(
+          left.marketItem.price.sells.unit_price || left.marketItem.price.buys.unit_price,
+          right.marketItem.price.sells.unit_price || right.marketItem.price.buys.unit_price,
+        ),
+    },
+  );
+  const selectedSlotBagRow =
+    rows.find((row) => row.item.id === selectedItem?.id) ??
+    rows.find((row) => row.item.name.trim().toLowerCase() === selectedItem?.name.trim().toLowerCase()) ??
+    null;
   const selectedSlotBag = selectedSlotBagRow?.marketItem ?? null;
   const maxSlots = sizes[0] ?? 0;
   const marketCount = rows.filter((row) => row.hasMarketPrice).length;
@@ -7589,11 +7751,11 @@ function SlotBagsPage({
             <table className="craft-profit-table slot-bag-table">
               <thead>
                 <tr>
-                  <th>Bag</th>
-                  <th>Slots</th>
-                  <th>Type</th>
-                  <th>Acquisition</th>
-                  <th>Market</th>
+                  {renderHeader("bag", "Bag")}
+                  {renderHeader("slots", "Slots")}
+                  {renderHeader("type", "Type")}
+                  {renderHeader("acquisition", "Acquisition")}
+                  {renderHeader("market", "Market")}
                 </tr>
               </thead>
               <tbody>
@@ -8012,6 +8174,70 @@ function CraftProfitTable({
   compact?: boolean;
   onSelectCraft: (opportunity: CraftOpportunity) => void;
 }) {
+  const [sort, setSort] = useState<CraftProfitSort | null>(null);
+  const rows = useMemo(() => {
+    const nextRows: CraftProfitTableRow[] = opportunities.map((opportunity, index) => {
+      const quantity = Math.max(1, opportunity.recipe.output_item_count);
+      const price = getStoredPrice(opportunity.output.id);
+      const grossPrice = price?.sells.unit_price ?? 0;
+      const buyQuantity = price?.buys.quantity ?? 0;
+      const sellQuantity = price?.sells.quantity ?? 0;
+      const demandRatio = getDemandRatio(buyQuantity, sellQuantity);
+
+      return {
+        opportunity,
+        index,
+        quantity,
+        grossPrice,
+        buyQuantity,
+        sellQuantity,
+        demandRatio,
+        profitPerItem: opportunity.marketProfit / quantity,
+        recipeLabel: getRecipeSourceLabel(opportunity.recipe),
+      };
+    });
+
+    if (!sort) {
+      return nextRows;
+    }
+
+    return [...nextRows].sort((left, right) => {
+      const direction = sort.direction === "asc" ? 1 : -1;
+      const result = compareCraftProfitRows(left, right, sort.key);
+      return result === 0 ? left.index - right.index : result * direction;
+    });
+  }, [opportunities, sort]);
+
+  const toggleSort = (key: CraftProfitSortKey) => {
+    setSort((current) => {
+      if (current?.key === key) {
+        return {
+          key,
+          direction: current.direction === "asc" ? "desc" : "asc",
+        };
+      }
+
+      return {
+        key,
+        direction: getDefaultCraftProfitSortDirection(key),
+      };
+    });
+  };
+  const renderHeader = (key: CraftProfitSortKey, label: string) => (
+    <th>
+      <button
+        type="button"
+        className={`table-sort-button ${sort?.key === key ? "active" : ""} ${
+          sort?.key === key && sort.direction === "asc" ? "ascending" : ""
+        }`}
+        onClick={() => toggleSort(key)}
+      >
+        <span>{label}</span>
+        <ChevronDown />
+      </button>
+    </th>
+  );
+
   if (loadState === "loading" && opportunities.length === 0) {
     return <SkeletonRows />;
   }
@@ -8031,20 +8257,18 @@ function CraftProfitTable({
       <table className="craft-profit-table">
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Qty</th>
-            <th>Profit / Item</th>
-            <th>Profit</th>
-            <th>Crafting Cost</th>
-            <th>Sell Value</th>
-            {!compact ? <th>Recipe</th> : null}
+            {renderHeader("name", "Name")}
+            {renderHeader("quantity", "Qty")}
+            {renderHeader("demand", "Demand")}
+            {renderHeader("profitPerItem", "Profit / Item")}
+            {renderHeader("profit", "Profit")}
+            {renderHeader("craftingCost", "Crafting Cost")}
+            {renderHeader("sellValue", "Sell Value")}
+            {!compact ? renderHeader("recipe", "Recipe") : null}
           </tr>
         </thead>
         <tbody>
-          {opportunities.map((opportunity) => {
-            const quantity = Math.max(1, opportunity.recipe.output_item_count);
-            const grossPrice = getStoredPrice(opportunity.output.id)?.sells.unit_price ?? 0;
-
+          {rows.map(({ opportunity, quantity, grossPrice, buyQuantity, sellQuantity, demandRatio, profitPerItem, recipeLabel }) => {
             return (
               <tr key={`${opportunity.recipe.id}-${opportunity.output.id}`} onClick={() => onSelectCraft(opportunity)}>
                 <td>
@@ -8059,7 +8283,15 @@ function CraftProfitTable({
                   </span>
                 </td>
                 <td>{quantity.toLocaleString()}</td>
-                <td className="profit"><Money value={opportunity.marketProfit / quantity} /></td>
+                <td title="Demand uses current buy-order quantity divided by current sell-listing quantity.">
+                  <span className={`demand-ratio ${demandRatio >= 1 ? "strong" : ""}`}>
+                    {formatDemandRatio(demandRatio)}
+                  </span>
+                  <small>
+                    {formatCompactQuantity(buyQuantity)} wanted / {formatCompactQuantity(sellQuantity)} listed
+                  </small>
+                </td>
+                <td className="profit"><Money value={profitPerItem} /></td>
                 <td className="profit"><Money value={opportunity.marketProfit} /></td>
                 <td><Money value={opportunity.marketCost} /></td>
                 <td>
@@ -8068,7 +8300,7 @@ function CraftProfitTable({
                 </td>
                 {!compact ? (
                   <td>
-                    <span>{getRecipeSourceLabel(opportunity.recipe)}</span>
+                    <span>{recipeLabel}</span>
                     <small>{opportunity.recipe.min_rating ? `Rating ${opportunity.recipe.min_rating}` : opportunity.recipe.sourceName ?? "Recipe"}</small>
                   </td>
                 ) : null}
@@ -8082,6 +8314,176 @@ function CraftProfitTable({
   );
 }
 
+function getDefaultCraftProfitSortDirection(key: CraftProfitSortKey): SortDirection {
+  return key === "name" || key === "recipe" ? "asc" : "desc";
+}
+
+function compareCraftProfitRows(
+  left: CraftProfitTableRow,
+  right: CraftProfitTableRow,
+  key: CraftProfitSortKey,
+): number {
+  switch (key) {
+    case "name":
+      return left.opportunity.output.name.localeCompare(right.opportunity.output.name);
+    case "quantity":
+      return left.quantity - right.quantity;
+    case "profitPerItem":
+      return left.profitPerItem - right.profitPerItem;
+    case "profit":
+      return left.opportunity.marketProfit - right.opportunity.marketProfit;
+    case "craftingCost":
+      return left.opportunity.marketCost - right.opportunity.marketCost;
+    case "sellValue":
+      return left.opportunity.outputValue - right.opportunity.outputValue;
+    case "demand":
+      return normalizeComparableNumber(left.demandRatio) - normalizeComparableNumber(right.demandRatio);
+    case "recipe":
+      return left.recipeLabel.localeCompare(right.recipeLabel);
+    default:
+      return 0;
+  }
+}
+
+function normalizeComparableNumber(value: number): number {
+  if (Number.isNaN(value)) {
+    return 0;
+  }
+
+  if (value === Number.POSITIVE_INFINITY) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  if (value === Number.NEGATIVE_INFINITY) {
+    return -Number.MAX_SAFE_INTEGER;
+  }
+
+  return value;
+}
+
+function formatDemandRatio(value: number): string {
+  if (value === Number.POSITIVE_INFINITY) {
+    return "Unlisted demand";
+  }
+
+  if (!Number.isFinite(value) || value <= 0) {
+    return "No demand";
+  }
+
+  if (value >= 100) {
+    return `${Math.round(value).toLocaleString()}x`;
+  }
+
+  if (value >= 10) {
+    return `${value.toFixed(1)}x`;
+  }
+
+  return `${value.toFixed(2)}x`;
+}
+
+function getDemandRatio(buyQuantity: number, sellQuantity: number): number {
+  if (sellQuantity > 0) {
+    return buyQuantity / sellQuantity;
+  }
+
+  return buyQuantity > 0 ? Number.POSITIVE_INFINITY : 0;
+}
+
+function formatCompactQuantity(value: number): string {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}m`;
+  }
+
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k`;
+  }
+
+  return Math.max(0, value).toLocaleString();
+}
+
+function useSortableRows<T, K extends string>(
+  rows: T[],
+  initialSort: TableSort<K>,
+  comparers: Record<K, (left: T, right: T) => number>,
+) {
+  const [sort, setSort] = useState<TableSort<K>>(initialSort);
+  const sortedRows = useMemo(() => {
+    const comparer = comparers[sort.key];
+    const direction = sort.direction === "asc" ? 1 : -1;
+
+    return [...rows].sort((left, right) => comparer(left, right) * direction);
+  }, [comparers, rows, sort]);
+  const toggleSort = (key: K) => {
+    setSort((current) => ({
+      key,
+      direction:
+        current.key === key
+          ? current.direction === "asc"
+            ? "desc"
+            : "asc"
+          : getDefaultTableSortDirection(key),
+    }));
+  };
+  const renderHeader = (key: K, label: string) => (
+    <SortableTableHeader
+      key={key}
+      label={label}
+      sortKey={key}
+      active={sort.key === key}
+      direction={sort.direction}
+      onSort={toggleSort}
+    />
+  );
+
+  return {
+    sortedRows,
+    sort,
+    toggleSort,
+    renderHeader,
+  };
+}
+
+function SortableTableHeader<K extends string>({
+  label,
+  sortKey,
+  active,
+  direction,
+  onSort,
+}: {
+  label: string;
+  sortKey: K;
+  active: boolean;
+  direction: SortDirection;
+  onSort: (key: K) => void;
+}) {
+  return (
+    <th>
+      <button
+        type="button"
+        className={`table-sort-button ${active ? "active" : ""} ${active && direction === "asc" ? "ascending" : ""}`}
+        onClick={() => onSort(sortKey)}
+      >
+        <span>{label}</span>
+        <ChevronDown />
+      </button>
+    </th>
+  );
+}
+
+function getDefaultTableSortDirection(key: string): SortDirection {
+  return /name|item|reward|container|bag|legendary|meta|map|source|type|profession|tool|recipe|route|bait|expansion|notes|acquisition|how/i.test(key)
+    ? "asc"
+    : "desc";
+}
+
+function compareStringValue(left: string | null | undefined, right: string | null | undefined): number {
+  return (left ?? "").localeCompare(right ?? "");
+}
+
+function compareNumberValue(left: number | null | undefined, right: number | null | undefined): number {
+  return (left ?? 0) - (right ?? 0);
+}
+
 function LegendaryReadinessPage({
   accountSnapshot,
   analysis,
@@ -8093,6 +8495,23 @@ function LegendaryReadinessPage({
   analysisState: LoadState;
   onAnalyze: () => Promise<void>;
 }) {
+  const legendaries = analysis?.legendaries ?? [];
+  const { sortedRows: sortedLegendaries, renderHeader } = useSortableRows<
+    (typeof legendaries)[number],
+    "legendary" | "owned" | "personalCost" | "marketCost" | "recipe" | "priority"
+  >(
+    legendaries,
+    { key: "owned", direction: "desc" },
+    {
+      legendary: (left, right) => compareStringValue(left.item.name, right.item.name),
+      owned: (left, right) => compareNumberValue(left.ownedCoverage, right.ownedCoverage),
+      personalCost: (left, right) => compareNumberValue(left.personalCost, right.personalCost),
+      marketCost: (left, right) => compareNumberValue(left.marketCost, right.marketCost),
+      recipe: (left, right) => compareStringValue(left.recipeUnlocked ? "Unlocked" : "Recipe locked", right.recipeUnlocked ? "Unlocked" : "Recipe locked"),
+      priority: (left, right) => compareNumberValue(getLegendaryPriorityRank(left), getLegendaryPriorityRank(right)),
+    },
+  );
+
   if (!accountSnapshot) {
     return (
       <div className="focused-page">
@@ -8113,8 +8532,6 @@ function LegendaryReadinessPage({
       </div>
     );
   }
-
-  const legendaries = analysis?.legendaries ?? [];
 
   return (
     <div className="focused-page">
@@ -8140,16 +8557,16 @@ function LegendaryReadinessPage({
             <table className="craft-profit-table">
               <thead>
                 <tr>
-                  <th>Legendary</th>
-                  <th>Owned</th>
-                  <th>Remaining Personal Cost</th>
-                  <th>Market Cost</th>
-                  <th>Recipe</th>
-                  <th>Priority</th>
+                  {renderHeader("legendary", "Legendary")}
+                  {renderHeader("owned", "Owned")}
+                  {renderHeader("personalCost", "Remaining Personal Cost")}
+                  {renderHeader("marketCost", "Market Cost")}
+                  {renderHeader("recipe", "Recipe")}
+                  {renderHeader("priority", "Priority")}
                 </tr>
               </thead>
               <tbody>
-                {legendaries.map((entry) => (
+                {sortedLegendaries.map((entry) => (
                   <tr key={`${entry.recipe.id}-${entry.item.id}`}>
                     <td>
                       <span className="table-item-cell">
@@ -8186,6 +8603,18 @@ function LegendaryReadinessPage({
       </section>
     </div>
   );
+}
+
+function getLegendaryPriorityRank(entry: { recipeUnlocked: boolean; ownedCoverage: number }): number {
+  if (entry.recipeUnlocked && entry.ownedCoverage >= 0.75) {
+    return 3;
+  }
+
+  if (entry.ownedCoverage >= 0.4) {
+    return 2;
+  }
+
+  return 1;
 }
 
 function SalvagingPage({
@@ -11323,6 +11752,7 @@ function ItemHistoryChart({
           <div className="history-legend">
             <span className="legend-buy">Highest buy order</span>
             <span className="legend-sell">Lowest posted listing</span>
+            <span className="legend-demand">Demand</span>
           </div>
         </>
       ) : (
@@ -11351,17 +11781,19 @@ function HistorySvg({
     time: number;
     value: number;
     quantity: number;
+    sellQuantity?: number;
     sampleCount: number;
   };
   type HistoryHoverPoint = {
     lineName: string;
     value: number;
     quantity: number;
+    sellQuantity?: number;
     sampleCount: number;
     time: number;
     x: number;
     y: number;
-    tone: "buy" | "sell";
+    tone: "buy" | "sell" | "demand";
   };
   type HistoryTooltipLayout = {
     left: number;
@@ -11371,6 +11803,22 @@ function HistorySvg({
   };
   const marketPoints = buildMarketChartPoints(snapshots);
   const points = marketPoints.filter((point) => point.value > 0);
+  const demandSeries = snapshots
+    .map((point): HistorySeriesPoint | null => {
+      const ratio = getDemandRatio(point.buyQuantity, point.sellQuantity);
+      if (!Number.isFinite(ratio) || ratio <= 0) {
+        return null;
+      }
+
+      return {
+        time: new Date(point.recordedAt).getTime(),
+        value: ratio,
+        quantity: point.buyQuantity,
+        sellQuantity: point.sellQuantity,
+        sampleCount: Math.max(1, point.sampleCount ?? 1),
+      };
+    })
+    .filter((point): point is HistorySeriesPoint => Boolean(point));
   const [hoverPoint, setHoverPoint] = useState<HistoryHoverPoint | null>(null);
   const [tooltipLayout, setTooltipLayout] = useState<HistoryTooltipLayout | null>(null);
   const chartWrapRef = useRef<HTMLDivElement | null>(null);
@@ -11386,18 +11834,18 @@ function HistorySvg({
   };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
-  const times = points.map((point) => point.time);
+  const times = [...points.map((point) => point.time), ...demandSeries.map((point) => point.time)];
   const values = points.map((point) => point.value);
   const timeMin = Math.min(...times);
   const timeMax = Math.max(...times);
   const valueMin = Math.min(...values);
   const valueMax = Math.max(...values);
   const rangeCutoff = getHistoryRangeCutoff(range);
-  const fixedRangeEnd = range.id === "all" ? null : Date.now();
+  const fixedRangeEnd = Date.now();
   const timePad = rangeCutoff ? 0 : timeMin === timeMax ? 24 * 60 * 60 * 1000 : 0;
   const valuePad = valueMin === valueMax ? Math.max(1, valueMin * 0.08) : (valueMax - valueMin) * 0.08;
   const xMin = rangeCutoff ?? timeMin - timePad;
-  const xMax = fixedRangeEnd ?? timeMax + timePad;
+  const xMax = fixedRangeEnd + timePad;
   const yMin = Math.max(0, valueMin - valuePad);
   const yMax = valueMax + valuePad;
   const shouldAverageSeries = shouldAverageHistoryRange(range);
@@ -11429,6 +11877,22 @@ function HistorySvg({
   const plottedSellSeries = shouldAverageSeries
     ? averageHistorySeriesToBuckets(sellSeries, xMin, xMax)
     : sellSeries;
+  const plottedDemandSeries = shouldAverageSeries
+    ? averageHistorySeriesToBuckets(demandSeries, xMin, xMax, false)
+    : demandSeries;
+  const demandValues = plottedDemandSeries.map((point) => point.value);
+  const demandMin = demandValues.length ? Math.min(...demandValues) : 0;
+  const demandMax = demandValues.length ? Math.max(...demandValues) : 0;
+  const demandPad = demandMin === demandMax ? Math.max(0.1, demandMin * 0.12) : (demandMax - demandMin) * 0.12;
+  const demandYMin = Math.max(0, demandMin - demandPad);
+  const demandYMax = demandMax + demandPad;
+  const yForDemand = (value: number) => {
+    if (!demandValues.length) {
+      return padding.top + plotHeight;
+    }
+
+    return padding.top + (1 - (value - demandYMin) / Math.max(0.01, demandYMax - demandYMin)) * plotHeight;
+  };
   const axisTicks = buildHistoryAxisTicks(xMin, xMax, range);
   const valueTicks = buildHistoryValueTicks(yMin, yMax, 4);
   const tooltipPlacement = tooltipLayout?.placement ?? (hoverPoint && hoverPoint.y < 82 ? "below" : "above");
@@ -11511,6 +11975,7 @@ function HistorySvg({
         })}
         <path className="history-line buy-line" d={buildChartPath(plottedBuySeries, xFor, yFor)} />
         <path className="history-line sell-line" d={buildChartPath(plottedSellSeries, xFor, yFor)} />
+        <path className="history-line demand-line" d={buildChartPath(plottedDemandSeries, xFor, yForDemand)} />
         {plottedBuySeries.map((point) => {
           const x = xFor(point.time);
           const y = yFor(point.value);
@@ -11589,6 +12054,47 @@ function HistorySvg({
             </g>
           );
         })}
+        {plottedDemandSeries.map((point) => {
+          const x = xFor(point.time);
+          const y = yForDemand(point.value);
+          return (
+            <g
+              key={`demand-${point.time}-${point.value}-${point.quantity}-${point.sellQuantity ?? 0}`}
+              onMouseEnter={() =>
+                showHoverPoint({
+                  lineName: "Demand",
+                  value: point.value,
+                  quantity: point.quantity,
+                  sellQuantity: point.sellQuantity,
+                  sampleCount: point.sampleCount,
+                  time: point.time,
+                  x,
+                  y,
+                  tone: "demand",
+                })
+              }
+              onMouseLeave={() => setHoverPoint(null)}
+              onFocus={() =>
+                showHoverPoint({
+                  lineName: "Demand",
+                  value: point.value,
+                  quantity: point.quantity,
+                  sellQuantity: point.sellQuantity,
+                  sampleCount: point.sampleCount,
+                  time: point.time,
+                  x,
+                  y,
+                  tone: "demand",
+                })
+              }
+              onBlur={() => setHoverPoint(null)}
+              tabIndex={0}
+            >
+              <circle className="history-dot-hit" cx={x} cy={y} r="12" />
+              <circle className="history-dot demand-dot" cx={x} cy={y} r="4" />
+            </g>
+          );
+        })}
       </svg>
       {hoverPoint ? (
         <div
@@ -11597,8 +12103,17 @@ function HistorySvg({
           style={tooltipStyle}
         >
           <strong>{hoverPoint.lineName}</strong>
-          <span><Money value={hoverPoint.value} /></span>
-          <small>Quantity {hoverPoint.quantity.toLocaleString()}</small>
+          <span>
+            {hoverPoint.tone === "demand" ? formatDemandRatio(hoverPoint.value) : <Money value={hoverPoint.value} />}
+          </span>
+          {hoverPoint.tone === "demand" ? (
+            <>
+              <small>Wanted {formatCompactQuantity(hoverPoint.quantity)}</small>
+              <small>Listed {formatCompactQuantity(hoverPoint.sellQuantity ?? 0)}</small>
+            </>
+          ) : (
+            <small>Quantity {hoverPoint.quantity.toLocaleString()}</small>
+          )}
           <small>{formatHistoryTooltipDate(hoverPoint.time)}</small>
           {hoverPoint.sampleCount > 1 ? (
             <small>{hoverPoint.sampleCount.toLocaleString()} averaged samples</small>
@@ -11639,10 +12154,11 @@ function shouldAverageHistoryRange(range: HistoryRange): boolean {
   return range.id !== "24h";
 }
 
-function averageHistorySeriesToBuckets<T extends { time: number; value: number; quantity: number; sampleCount: number }>(
+function averageHistorySeriesToBuckets<T extends { time: number; value: number; quantity: number; sellQuantity?: number; sampleCount: number }>(
   series: T[],
   xMin: number,
   xMax: number,
+  roundValue = true,
 ): T[] {
   if (series.length <= 1) {
     return series;
@@ -11675,13 +12191,19 @@ function averageHistorySeriesToBuckets<T extends { time: number; value: number; 
         (sum, point) => sum + point.quantity * Math.max(1, point.sampleCount),
         0,
       );
+      const hasSellQuantity = bucket.some((point) => typeof point.sellQuantity === "number");
+      const weightedSellQuantity = bucket.reduce(
+        (sum, point) => sum + (point.sellQuantity ?? 0) * Math.max(1, point.sampleCount),
+        0,
+      );
       const bucketTime = xMin + bucketIndex * bucketStep;
 
       return {
         ...bucket[0],
         time: bucketTime,
-        value: Math.round(weightedValue / Math.max(1, totalSamples)),
+        value: roundValue ? Math.round(weightedValue / Math.max(1, totalSamples)) : weightedValue / Math.max(1, totalSamples),
         quantity: Math.round(weightedQuantity / Math.max(1, totalSamples)),
+        ...(hasSellQuantity ? { sellQuantity: Math.round(weightedSellQuantity / Math.max(1, totalSamples)) } : {}),
         sampleCount: totalSamples,
       };
     });
@@ -11949,10 +12471,11 @@ function trimMarketHistoryStore(points: MarketHistoryPoint[]): MarketHistoryPoin
 
 function compactMarketHistoryStore(points: MarketHistoryPoint[], now = Date.now()): MarketHistoryPoint[] {
   const byItem = new Map<number, MarketHistoryPoint[]>();
+  const cutoff = now - MARKET_HISTORY_MAX_AGE_MS;
 
   for (const point of points) {
     const time = new Date(point.recordedAt).getTime();
-    if (!Number.isFinite(time)) {
+    if (!Number.isFinite(time) || time < cutoff) {
       continue;
     }
 
@@ -12021,7 +12544,7 @@ function getMarketHistoryRollup(time: number, now: number): MarketHistoryRollup 
     return "week";
   }
 
-  return "month";
+  return "bimonth";
 }
 
 function getMarketHistoryBucketStart(time: number, rollup: Exclude<MarketHistoryRollup, "raw">): number {
@@ -12037,7 +12560,12 @@ function getMarketHistoryBucketStart(time: number, rollup: Exclude<MarketHistory
     return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + mondayOffset);
   }
 
-  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+  const month =
+    rollup === "bimonth"
+      ? Math.floor(date.getUTCMonth() / 2) * 2
+      : date.getUTCMonth();
+
+  return Date.UTC(date.getUTCFullYear(), month, 1);
 }
 
 function getMarketHistoryBucketRecordedAt(
@@ -12049,7 +12577,9 @@ function getMarketHistoryBucketRecordedAt(
       ? 12 * 60 * 60 * 1000
       : rollup === "week"
         ? 3.5 * 24 * 60 * 60 * 1000
-        : 15 * 24 * 60 * 60 * 1000;
+        : rollup === "bimonth"
+          ? 31 * 24 * 60 * 60 * 1000
+          : 15 * 24 * 60 * 60 * 1000;
 
   return new Date(bucketStart + offset).toISOString();
 }
@@ -12110,7 +12640,8 @@ function isMarketHistoryPoint(value: unknown): value is MarketHistoryPoint {
       point.rollup === "raw" ||
       point.rollup === "day" ||
       point.rollup === "week" ||
-      point.rollup === "month") &&
+      point.rollup === "month" ||
+      point.rollup === "bimonth") &&
     (point.sampleCount === undefined ||
       (typeof point.sampleCount === "number" && Number.isFinite(point.sampleCount) && point.sampleCount > 0))
   );
@@ -12431,6 +12962,53 @@ function findDetailItemForDrop(drop: ContainerDrop, marketItem: MarketItem | und
   };
 }
 
+function findUnidentifiedGearDefinition(item: Pick<Gw2Item, "id" | "name">): UnidentifiedGearDefinition | null {
+  const itemName = normalizeItemName(item.name);
+  return (
+    UNIDENTIFIED_GEAR_DEFINITIONS.find(
+      (definition) =>
+        definition.itemId === item.id ||
+        definition.aliases.some((alias) => normalizeItemName(alias) === itemName),
+    ) ?? null
+  );
+}
+
+function buildUnidentifiedGearContainerAnalysis(
+  container: MarketItem,
+  catalog: MarketItem[],
+): ContainerAnalysis | null {
+  const definition = findUnidentifiedGearDefinition(container);
+  if (!definition) {
+    return null;
+  }
+
+  return {
+    title: definition.label,
+    sourceUrl: getWikiPageUrl(definition.label),
+    drops: definition.outputs.map((output) => {
+      const marketItem = findMarketItemByName(catalog, output.name);
+      return {
+        name: output.name,
+        itemId: marketItem?.id,
+        officialName: marketItem?.name ?? output.name,
+        quantityMin: output.averageCount,
+        quantityMax: output.averageCount,
+        chancePct: 100,
+        note: "Estimated salvage output",
+      };
+    }),
+    exactChancesAvailable: false,
+    parserNotes: [
+      `${definition.tier} unidentified gear uses local salvage-output estimates because the wiki does not expose exact structured drop chances.`,
+      definition.note,
+    ],
+  };
+}
+
+function isEstimatedSalvageDrop(drop: ContainerDrop): boolean {
+  return drop.note === "Estimated salvage output";
+}
+
 function hasTradingPostPrice(item: MarketItem): boolean {
   return item.price.sells.unit_price > 0 || item.price.buys.unit_price > 0;
 }
@@ -12529,15 +13107,22 @@ function ContainerSimulator({
   onOpenDetail?: (item: Gw2Item) => void;
 }) {
   const [openingCount, setOpeningCount] = useState(100);
+  const estimatedAnalysis = useMemo(
+    () => buildUnidentifiedGearContainerAnalysis(container, catalog),
+    [container, catalog],
+  );
+  const effectiveAnalysis = analysis?.drops.length ? analysis : estimatedAnalysis ?? analysis;
   const valuedDrops = useMemo(() => {
-    const drops = analysis?.drops ?? [];
+    const drops = effectiveAnalysis?.drops ?? [];
     return drops.map((drop) => {
       const marketItem = findMarketItemForDrop(drop, catalog);
       const detailItem = findDetailItemForDrop(drop, marketItem);
       const directUnitValue = drop.coinValue ?? marketItem?.netSellPrice ?? marketItem?.price.buys.unit_price ?? 0;
       const salvageUnitValue = drop.coinValue
         ? drop.coinValue
-        : estimateSalvageUnitValue(marketItem, directUnitValue);
+        : isEstimatedSalvageDrop(drop)
+          ? directUnitValue
+          : estimateSalvageUnitValue(marketItem, directUnitValue);
 
       return {
         drop,
@@ -12547,7 +13132,7 @@ function ContainerSimulator({
         salvageUnitValue,
       };
     });
-  }, [analysis, catalog]);
+  }, [effectiveAnalysis, catalog]);
   const directStats = summarizeDropValues(valuedDrops, openingCount, "direct");
   const salvageStats = summarizeDropValues(valuedDrops, openingCount, "salvage");
   const pricedRows = valuedDrops.filter((row) => row.directUnitValue > 0).length;
@@ -12562,13 +13147,13 @@ function ContainerSimulator({
 
       {state === "loading" ? (
         <SkeletonRows />
-      ) : analysis ? (
+      ) : effectiveAnalysis ? (
         <>
           <div className="simulator-head">
             <div>
-              <strong>{analysis.title}</strong>
+              <strong>{effectiveAnalysis.title}</strong>
               <span>
-                {analysis.exactChancesAvailable
+                {effectiveAnalysis.exactChancesAvailable
                   ? "Some drop chances were parsed from the wiki."
                   : "Exact chances were not available; averages use listed market-matched drops."}
               </span>
@@ -12594,7 +13179,7 @@ function ContainerSimulator({
                 {count.toLocaleString()}
               </button>
             ))}
-            <a href={analysis.sourceUrl} target="_blank" rel="noreferrer">
+            <a href={effectiveAnalysis.sourceUrl} target="_blank" rel="noreferrer">
               Wiki source
               <ExternalLink />
             </a>
@@ -12657,7 +13242,7 @@ function ContainerSimulator({
           </div>
 
           <div className="parser-notes">
-            {analysis.parserNotes.map((note) => (
+            {effectiveAnalysis.parserNotes.map((note) => (
               <span key={note}>{note}</span>
             ))}
           </div>

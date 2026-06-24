@@ -1964,6 +1964,18 @@ async function loadWikiItemIdsByTitles(
 ): Promise<Map<string, number>> {
   const uniqueTitles = Array.from(new Set(titles.map((title) => title.trim()).filter(Boolean)));
   const titleToId = new Map<string, number>();
+  if (uniqueTitles.length === 0) {
+    return titleToId;
+  }
+
+  const cacheKey = getNamedCacheKey(
+    "wiki:item-id-batch",
+    [...uniqueTitles].sort((left, right) => left.localeCompare(right)).join("|"),
+  );
+  const cachedPairs = await loadSqlCache(cacheKey, SQL_CACHE_TTL.wikiDerived, isWikiItemIdPairCache);
+  if (cachedPairs) {
+    return new Map(cachedPairs);
+  }
 
   const titleChunks = chunk(uniqueTitles, 8);
   await mapWithConcurrency(titleChunks, 3, async (titleChunk, index) => {
@@ -1987,7 +1999,22 @@ async function loadWikiItemIdsByTitles(
     }
   });
 
+  void saveSqlCache(cacheKey, Array.from(titleToId.entries()));
   return titleToId;
+}
+
+function isWikiItemIdPairCache(value: unknown): value is Array<[string, number]> {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (entry): entry is [string, number] =>
+        Array.isArray(entry) &&
+        entry.length === 2 &&
+        typeof entry[0] === "string" &&
+        typeof entry[1] === "number" &&
+        Number.isFinite(entry[1]),
+    )
+  );
 }
 
 export async function loadItemsByWikiTitles(
@@ -2180,6 +2207,16 @@ async function loadWikiMysticForgeRecipesForItem(
 }
 
 async function loadWikiMysticForgeRecipePageTitlesForItem(itemName: string): Promise<string[]> {
+  const cacheKey = getNamedCacheKey("wiki:mystic-forge-page-titles", itemName);
+  const cachedTitles = await loadSqlCache(
+    cacheKey,
+    SQL_CACHE_TTL.wikiDerived,
+    (value): value is string[] => isArrayOf(value, (item): item is string => typeof item === "string"),
+  );
+  if (cachedTitles) {
+    return cachedTitles;
+  }
+
   const titles = new Set<string>([itemName]);
   const queries = buildWikiMysticForgeItemSearchQueries(itemName);
 
@@ -2221,7 +2258,9 @@ async function loadWikiMysticForgeRecipePageTitlesForItem(itemName: string): Pro
     }
   }
 
-  return Array.from(titles).slice(0, MYSTIC_FORGE_ITEM_SEARCH_LIMIT);
+  const result = Array.from(titles).slice(0, MYSTIC_FORGE_ITEM_SEARCH_LIMIT);
+  void saveSqlCache(cacheKey, result);
+  return result;
 }
 
 function buildWikiMysticForgeItemSearchQueries(itemName: string): string[] {
@@ -2931,6 +2970,15 @@ function saveFilteredBagCache(
 }
 
 async function loadWikiSlotBagItemIds(onProgress?: ProgressCallback): Promise<Set<number>> {
+  const cachedIds = await loadSqlCache(
+    "wiki:slot-bag-item-ids",
+    SQL_CACHE_TTL.wikiDerived,
+    (value): value is number[] => isArrayOf(value, (item): item is number => typeof item === "number" && Number.isFinite(item)),
+  );
+  if (cachedIds) {
+    return new Set(cachedIds);
+  }
+
   const ids = new Set<number>();
   let offset = 0;
   let page = 1;
@@ -2960,6 +3008,7 @@ async function loadWikiSlotBagItemIds(onProgress?: ProgressCallback): Promise<Se
     page += 1;
   }
 
+  void saveSqlCache("wiki:slot-bag-item-ids", Array.from(ids));
   return ids;
 }
 
@@ -3039,6 +3088,15 @@ function isOpenableContainerItem(item: Gw2Item): boolean {
 }
 
 async function loadWikiOpenableContainerIds(onProgress?: ProgressCallback): Promise<Set<number>> {
+  const cachedIds = await loadSqlCache(
+    "wiki:openable-container-item-ids",
+    SQL_CACHE_TTL.wikiDerived,
+    (value): value is number[] => isArrayOf(value, (item): item is number => typeof item === "number" && Number.isFinite(item)),
+  );
+  if (cachedIds) {
+    return new Set(cachedIds);
+  }
+
   const ids = new Set<number>();
   let offset = 0;
   let page = 1;
@@ -3068,6 +3126,7 @@ async function loadWikiOpenableContainerIds(onProgress?: ProgressCallback): Prom
     page += 1;
   }
 
+  void saveSqlCache("wiki:openable-container-item-ids", Array.from(ids));
   return ids;
 }
 
@@ -5130,7 +5189,22 @@ async function loadAccountWizardVaultSection(
   apiKey: string,
   id: WizardVaultObjectiveSection["id"],
 ): Promise<{ raw: unknown; objectiveIds: number[] }> {
-  const raw = await fetchJson<unknown>(gw2AuthenticatedUrl(`/account/wizardsvault/${id}`, apiKey));
+  const cacheKey = `account:wizard-vault-section:${stableHash(apiKey)}:${id}`;
+  let raw: unknown;
+
+  try {
+    raw = await fetchJson<unknown>(gw2AuthenticatedUrl(`/account/wizardsvault/${id}`, apiKey));
+    if (isCacheableApiPayload(raw)) {
+      void saveSqlCache(cacheKey, raw);
+    }
+  } catch {
+    const cachedSection = await loadSqlCache(cacheKey, SQL_CACHE_TTL.accountSnapshot, isCacheableApiPayload);
+    if (!cachedSection) {
+      throw new Error(`Unable to load ${id} Wizard's Vault section.`);
+    }
+    raw = cachedSection;
+  }
+
   return {
     raw,
     objectiveIds: extractWizardVaultObjectiveRows(raw)
@@ -5673,6 +5747,24 @@ async function saveCachedWizardVaultPurchases(
   await saveSqlCache(`account:wizard-vault-purchases:${accountId}`, Array.from(entries.values()));
 }
 
+function isCacheableApiPayload(value: unknown): value is Record<string, unknown> | unknown[] {
+  return Array.isArray(value) || isRecord(value);
+}
+
+async function loadAccountWizardVaultListingsRaw(apiKey: string): Promise<unknown> {
+  const cacheKey = `account:wizard-vault-listings:${stableHash(apiKey)}`;
+
+  try {
+    const raw = await fetchJson<unknown>(gw2AuthenticatedUrl("/account/wizardsvault/listings", apiKey));
+    if (isCacheableApiPayload(raw)) {
+      void saveSqlCache(cacheKey, raw);
+    }
+    return raw;
+  } catch {
+    return (await loadSqlCache(cacheKey, SQL_CACHE_TTL.accountSnapshot, isCacheableApiPayload)) ?? [];
+  }
+}
+
 export async function loadWizardVault(
   apiKey: string,
   onProgress?: ProgressCallback,
@@ -5692,7 +5784,7 @@ export async function loadWizardVault(
       loadAccountWizardVaultSection(trimmedKey, "daily"),
       loadAccountWizardVaultSection(trimmedKey, "weekly"),
       loadAccountWizardVaultSection(trimmedKey, "special"),
-      fetchJson<unknown>(gw2AuthenticatedUrl("/account/wizardsvault/listings", trimmedKey)).catch(() => []),
+      loadAccountWizardVaultListingsRaw(trimmedKey),
       fetchJson<TokenInfo>(gw2AuthenticatedUrl("/tokeninfo", trimmedKey)).catch(() => null),
     ]);
 

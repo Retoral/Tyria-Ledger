@@ -17,9 +17,10 @@ let database;
 const MARKET_HISTORY_REPLACE_WINDOW_MS = 10 * 60 * 1000;
 const MARKET_HISTORY_RAW_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MARKET_HISTORY_DAILY_WINDOW_MS = 31 * 24 * 60 * 60 * 1000;
-const MARKET_HISTORY_WEEKLY_WINDOW_MS = 366 * 24 * 60 * 60 * 1000;
+const MARKET_HISTORY_WEEKLY_WINDOW_MS = 8 * 31 * 24 * 60 * 60 * 1000;
+const MARKET_HISTORY_MAX_AGE_MS = 2 * 366 * 24 * 60 * 60 * 1000;
 const MAX_MARKET_HISTORY_POINTS_PER_ITEM = 800;
-const VALID_ROLLUPS = new Set(["raw", "day", "week", "month"]);
+const VALID_ROLLUPS = new Set(["raw", "day", "week", "month", "bimonth"]);
 
 function apiKeyPath() {
   return path.join(app.getPath("userData"), "gw2-api-key.bin");
@@ -311,7 +312,7 @@ function getMarketHistoryRollup(time, now) {
   if (age <= MARKET_HISTORY_RAW_WINDOW_MS) return "raw";
   if (age <= MARKET_HISTORY_DAILY_WINDOW_MS) return "day";
   if (age <= MARKET_HISTORY_WEEKLY_WINDOW_MS) return "week";
-  return "month";
+  return "bimonth";
 }
 
 function getMarketHistoryBucketStart(time, rollup) {
@@ -327,7 +328,12 @@ function getMarketHistoryBucketStart(time, rollup) {
     return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + mondayOffset);
   }
 
-  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+  const month =
+    rollup === "bimonth"
+      ? Math.floor(date.getUTCMonth() / 2) * 2
+      : date.getUTCMonth();
+
+  return Date.UTC(date.getUTCFullYear(), month, 1);
 }
 
 function getMarketHistoryBucketRecordedAt(bucketStart, rollup) {
@@ -336,7 +342,9 @@ function getMarketHistoryBucketRecordedAt(bucketStart, rollup) {
       ? 12 * 60 * 60 * 1000
       : rollup === "week"
         ? 3.5 * 24 * 60 * 60 * 1000
-        : 15 * 24 * 60 * 60 * 1000;
+        : rollup === "bimonth"
+          ? 31 * 24 * 60 * 60 * 1000
+          : 15 * 24 * 60 * 60 * 1000;
 
   return new Date(bucketStart + offset).toISOString();
 }
@@ -377,10 +385,16 @@ function averageMarketHistoryBucket(itemId, bucketStart, rollup, points) {
 
 function compactMarketHistoryPoints(points, now = Date.now()) {
   const byItem = new Map();
+  const cutoff = now - MARKET_HISTORY_MAX_AGE_MS;
 
   for (const input of points) {
     const point = normalizeMarketHistoryPoint(input);
     if (!point) {
+      continue;
+    }
+
+    const time = new Date(point.recordedAt).getTime();
+    if (!Number.isFinite(time) || time < cutoff) {
       continue;
     }
 

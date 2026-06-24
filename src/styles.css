@@ -2230,6 +2230,38 @@ p {
   text-transform: uppercase;
 }
 
+.table-sort-button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  font: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.table-sort-button svg {
+  width: 13px;
+  height: 13px;
+  opacity: 0.35;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.table-sort-button.active svg {
+  opacity: 1;
+}
+
+.table-sort-button.ascending svg {
+  transform: rotate(180deg);
+}
+
 .market-table tbody tr,
 .craft-profit-table tbody tr {
   cursor: pointer;
@@ -2263,6 +2295,17 @@ p {
   display: block;
   color: #687064;
   font-size: 12px;
+}
+
+.demand-ratio {
+  display: block;
+  color: #687064;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.demand-ratio.strong {
+  color: #0b7a3b;
 }
 
 .output-list {
@@ -3309,6 +3352,11 @@ p {
   stroke: #b8860b;
 }
 
+.demand-line {
+  stroke: #8a7dff;
+  stroke-dasharray: 6 6;
+}
+
 .history-dot {
   stroke: #fff;
   stroke-width: 2;
@@ -3328,6 +3376,11 @@ p {
 .sell-dot,
 .history-dot.sell {
   fill: #b8860b;
+}
+
+.demand-dot,
+.history-dot.demand {
+  fill: #8a7dff;
 }
 
 .history-dot.purchase {
@@ -3427,6 +3480,10 @@ p {
   border-color: rgba(184, 134, 11, 0.8);
 }
 
+.history-tooltip.demand {
+  border-color: rgba(138, 125, 255, 0.82);
+}
+
 .history-tooltip strong {
   font-size: 12px;
 }
@@ -3449,6 +3506,10 @@ p {
 
 .legend-sell::before {
   background: #b8860b;
+}
+
+.legend-demand::before {
+  background: #8a7dff;
 }
 
 .legend-purchase::before {
@@ -4762,6 +4823,14 @@ body,
 .craft-profit-table td {
   color: #edf5ef;
   background: #141a1e;
+}
+
+.craft-profit-table .demand-ratio {
+  color: #9aa7a2;
+}
+
+.craft-profit-table .demand-ratio.strong {
+  color: #10c982;
 }
 
 .meta-table tbody tr:hover td,
