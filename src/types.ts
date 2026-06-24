@@ -208,11 +208,17 @@ export interface WikiVendorOffer {
   sourceUrl: string;
 }
 
+export interface WikiRecipeUnlock {
+  title: string;
+  url: string;
+}
+
 export interface WikiItemAcquisition {
   itemName: string;
   sourceUrl: string;
   vendorOffers: WikiVendorOffer[];
   acquisitionNotes: string[];
+  teachesRecipe?: WikiRecipeUnlock;
 }
 
 export interface ContainerDrop {

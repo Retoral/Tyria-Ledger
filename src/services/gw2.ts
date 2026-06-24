@@ -36,6 +36,7 @@ import type {
   TokenInfo,
   WikiGuide,
   WikiItemAcquisition,
+  WikiRecipeUnlock,
   WikiVendorOffer,
   WizardVaultListing,
   WizardVaultListingValue,
@@ -3618,7 +3619,7 @@ export async function loadWikiItemAcquisition(itemName: string): Promise<WikiIte
     return wikiAcquisitionCache.get(cacheKey) ?? null;
   }
 
-  const persistentCacheKey = getNamedCacheKey("wiki:item-acquisition", itemName);
+  const persistentCacheKey = getNamedCacheKey("wiki:item-acquisition:v2", itemName);
   const cached = await loadSqlCache(
     persistentCacheKey,
     SQL_CACHE_TTL.wikiDerived,
@@ -3645,12 +3646,15 @@ export async function loadWikiItemAcquisition(itemName: string): Promise<WikiIte
     ...parseWikitextVendorOffers(wikitext, wikiPage.url),
   ]);
   const acquisitionNotes = parseWikitextAcquisitionNotes(wikitext);
+  const teachesRecipe =
+    parseRenderedTeachesRecipe(document) ?? parseWikitextTeachesRecipe(wikitext);
 
   const acquisition: WikiItemAcquisition = {
     itemName: wikiPage.title,
     sourceUrl: wikiPage.url,
     vendorOffers,
     acquisitionNotes,
+    teachesRecipe,
   };
 
   wikiAcquisitionCache.set(cacheKey, acquisition);
@@ -3740,6 +3744,35 @@ function parseWikitextAcquisitionNotes(wikitext: string): string[] {
     .map((line) => stripWikiMarkup(line.replace(/^\*+\s*/, "")))
     .filter((line) => line.length > 0)
     .slice(0, 6);
+}
+
+function parseRenderedTeachesRecipe(document: Document): WikiRecipeUnlock | undefined {
+  const elements = sectionAfterHeadline(document, "Teaches_recipe", { stopAtSubheading: true });
+  for (const element of elements) {
+    const link = getFirstUsefulWikiLink(element);
+    if (link) {
+      return {
+        title: link.title,
+        url: link.url,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function parseWikitextTeachesRecipe(wikitext: string): WikiRecipeUnlock | undefined {
+  const section = getWikitextSection(wikitext, "Teaches recipe");
+  const linkMatch = section.match(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?]]/);
+  const title = linkMatch?.[1]?.replace(/\s+/g, " ").trim();
+  if (!title) {
+    return undefined;
+  }
+
+  return {
+    title,
+    url: wikiPageUrl(title),
+  };
 }
 
 function getWikitextSection(wikitext: string, heading: string): string {
@@ -5500,6 +5533,14 @@ function isWikiGuide(value: unknown): value is WikiGuide {
   );
 }
 
+function isWikiRecipeUnlock(value: unknown): value is WikiRecipeUnlock {
+  return Boolean(
+    isRecord(value) &&
+      typeof value.title === "string" &&
+      typeof value.url === "string",
+  );
+}
+
 function isWizardVaultEasyObjectiveRoute(value: unknown): value is WizardVaultEasyObjectiveRoute {
   return Boolean(
     isRecord(value) &&
@@ -5535,7 +5576,8 @@ function isWikiItemAcquisition(value: unknown): value is WikiItemAcquisition {
       typeof value.itemName === "string" &&
       typeof value.sourceUrl === "string" &&
       Array.isArray(value.vendorOffers) &&
-      Array.isArray(value.acquisitionNotes),
+      Array.isArray(value.acquisitionNotes) &&
+      (value.teachesRecipe === undefined || isWikiRecipeUnlock(value.teachesRecipe)),
   );
 }
 

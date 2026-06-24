@@ -18,6 +18,7 @@ import {
   RefreshCcw,
   Search,
   ShieldCheck,
+  Toilet,
   Trophy,
   TrendingUp,
   X,
@@ -92,6 +93,7 @@ import type {
   RecipeGuide,
   WikiGuide,
   WikiItemAcquisition,
+  WikiRecipeUnlock,
   WikiVendorOffer,
   WizardVaultObjectiveDefinition,
   WizardVaultObjectiveGuide,
@@ -188,6 +190,8 @@ interface AchievementStep {
 }
 
 type HistoryRangeId = "24h" | "1w" | "1m" | "3m" | "6m" | "1y" | "2y";
+type DemandFilter = "none" | "unlisted" | "listed";
+type DemandCategory = DemandFilter;
 
 interface HistoryRange {
   id: HistoryRangeId;
@@ -391,6 +395,11 @@ const MARKET_LIST_INITIAL_ITEMS = 220;
 const MARKET_LIST_BATCH_SIZE = 360;
 const OPENABLE_BAG_ANALYSIS_LIMIT = 90;
 const OPENABLE_BAG_ANALYSIS_CONCURRENCY = 3;
+const DEMAND_FILTER_OPTIONS: Array<{ id: DemandFilter; label: string }> = [
+  { id: "none", label: "No demand" },
+  { id: "unlisted", label: "Unlisted demand" },
+  { id: "listed", label: "Demand" },
+];
 const HISTORY_RANGES: HistoryRange[] = [
   { id: "24h", label: "24H", hours: 24 },
   { id: "1w", label: "1W", days: 7 },
@@ -888,7 +897,7 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
       { id: "market", label: "Trading Post", icon: <PackageSearch /> },
       { id: "crafting", label: "Crafting Planner", icon: <Hammer /> },
       { id: "profitable-crafts", label: "Profitable Crafts", icon: <TrendingUp /> },
-      { id: "mystic-forge", label: "Mystic Forge", icon: <Coins /> },
+      { id: "mystic-forge", label: "Mystic Forge", icon: <Toilet /> },
       { id: "legendary-readiness", label: "Legendary Readiness", icon: <ShieldCheck /> },
     ],
   },
@@ -6777,13 +6786,32 @@ function MarketPage({
   onLoadMarket: () => void;
 }) {
   const [visibleItemCount, setVisibleItemCount] = useState(MARKET_LIST_INITIAL_ITEMS);
+  const [demandFilter, setDemandFilter] = useState<DemandFilter>("listed");
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const demandCounts = useMemo(
+    () =>
+      filteredItems.reduce<Record<DemandFilter, number>>(
+        (counts, item) => {
+          counts[getDemandCategory(item.price.buys.quantity, item.price.sells.quantity)] += 1;
+          return counts;
+        },
+        { none: 0, unlisted: 0, listed: 0 },
+      ),
+    [filteredItems],
+  );
+  const demandFilteredItems = useMemo(
+    () =>
+      filteredItems.filter(
+        (item) => getDemandCategory(item.price.buys.quantity, item.price.sells.quantity) === demandFilter,
+      ),
+    [demandFilter, filteredItems],
+  );
   const {
     sortedRows: sortedFilteredItems,
     sort: marketSort,
     renderHeader,
   } = useSortableRows<MarketItem, "name" | "demand" | "sell" | "buy" | "spread" | "supply">(
-    filteredItems,
+    demandFilteredItems,
     { key: "supply", direction: "desc" },
     {
       name: (left, right) => compareStringValue(left.name, right.name),
@@ -6806,7 +6834,7 @@ function MarketPage({
 
   useEffect(() => {
     setVisibleItemCount(MARKET_LIST_INITIAL_ITEMS);
-  }, [loadState, marketSort, query]);
+  }, [demandFilter, loadState, marketSort, query]);
 
   return (
     <div className={`market-workspace ${selectedItem ? "" : "detail-closed"}`}>
@@ -6857,6 +6885,20 @@ function MarketPage({
             placeholder="Search item, rarity, type"
           />
         </label>
+
+        <div className="market-demand-filter" aria-label="Filter by Trading Post demand">
+          {DEMAND_FILTER_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className={demandFilter === option.id ? "active" : ""}
+              onClick={() => setDemandFilter(option.id)}
+            >
+              <span>{option.label}</span>
+              <strong>{demandCounts[option.id].toLocaleString()}</strong>
+            </button>
+          ))}
+        </div>
 
         <div className="item-list">
           {visibleItems.length > 0 ? (
@@ -6923,6 +6965,12 @@ function MarketPage({
               <PackageSearch />
               Show next {Math.min(MARKET_LIST_BATCH_SIZE, remainingItemCount).toLocaleString()} items
             </button>
+          ) : null}
+
+          {loadState !== "loading" && sortedFilteredItems.length === 0 ? (
+            <p className="market-list-note">
+              No items match the current search and demand filter.
+            </p>
           ) : null}
 
           {loadState === "loading" && catalog.length > 0 ? (
@@ -8377,6 +8425,39 @@ function ProfitableCraftsPage({
   );
 }
 
+interface MysticForgeRecipeRow {
+  guide: RecipeGuide;
+  output: Gw2Item;
+  marketItem: MarketItem;
+  tradable: boolean;
+  ingredientCount: number;
+  source: string;
+}
+
+function chooseMysticForgeRecipeRow(left: MysticForgeRecipeRow, right: MysticForgeRecipeRow): MysticForgeRecipeRow {
+  if (left.tradable !== right.tradable) {
+    return left.tradable ? left : right;
+  }
+
+  if (left.guide.outputValue !== right.guide.outputValue) {
+    return left.guide.outputValue > right.guide.outputValue ? left : right;
+  }
+
+  const leftCost = left.guide.marketCost > 0 ? left.guide.marketCost : Number.POSITIVE_INFINITY;
+  const rightCost = right.guide.marketCost > 0 ? right.guide.marketCost : Number.POSITIVE_INFINITY;
+  if (leftCost !== rightCost) {
+    return leftCost < rightCost ? left : right;
+  }
+
+  const leftResolvedIngredients = left.guide.ingredients.filter((ingredient) => ingredient.item).length;
+  const rightResolvedIngredients = right.guide.ingredients.filter((ingredient) => ingredient.item).length;
+  if (leftResolvedIngredients !== rightResolvedIngredients) {
+    return leftResolvedIngredients > rightResolvedIngredients ? left : right;
+  }
+
+  return left.ingredientCount >= right.ingredientCount ? left : right;
+}
+
 function MysticForgePage({
   catalog,
   recipes,
@@ -8421,31 +8502,32 @@ function MysticForgePage({
   const now = useRelativeNow();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<"all" | "tradable" | "not-tradable">("all");
-  const rows = useMemo(
-    () =>
-      recipes
-        .map((guide) => {
-          const output = guide.recipe.output_item_id ? getStoredItem(guide.recipe.output_item_id) : undefined;
-          if (!output) {
-            return null;
-          }
+  const rows = useMemo(() => {
+    const rowsByOutputId = new Map<number, MysticForgeRecipeRow>();
 
-          const marketItem = buildMarketItemForDetail(output);
-          const tradable = hasTradingPostPrice(marketItem);
-          const ingredientCount = guide.ingredients.reduce((sum, ingredient) => sum + ingredient.count, 0);
+    for (const guide of recipes) {
+      const output = guide.recipe.output_item_id ? getStoredItem(guide.recipe.output_item_id) : undefined;
+      if (!output) {
+        continue;
+      }
 
-          return {
-            guide,
-            output,
-            marketItem,
-            tradable,
-            ingredientCount,
-            source: guide.recipe.sourceName ?? getRecipeSourceLabel(guide.recipe),
-          };
-        })
-        .filter((row): row is NonNullable<typeof row> => Boolean(row)),
-    [recipes],
-  );
+      const marketItem = buildMarketItemForDetail(output);
+      const tradable = hasTradingPostPrice(marketItem);
+      const ingredientCount = guide.ingredients.reduce((sum, ingredient) => sum + ingredient.count, 0);
+      const row: MysticForgeRecipeRow = {
+        guide,
+        output,
+        marketItem,
+        tradable,
+        ingredientCount,
+        source: guide.recipe.sourceName ?? getRecipeSourceLabel(guide.recipe),
+      };
+      const existingRow = rowsByOutputId.get(output.id);
+      rowsByOutputId.set(output.id, existingRow ? chooseMysticForgeRecipeRow(existingRow, row) : row);
+    }
+
+    return Array.from(rowsByOutputId.values());
+  }, [recipes]);
   const filteredRows = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
 
@@ -8470,7 +8552,7 @@ function MysticForgePage({
     });
   }, [category, query, rows]);
   const { sortedRows, renderHeader } = useSortableRows<
-    (typeof rows)[number],
+    MysticForgeRecipeRow,
     "output" | "category" | "ingredients" | "value" | "cost" | "profit" | "source"
   >(
     filteredRows,
@@ -8569,7 +8651,7 @@ function MysticForgePage({
               <tbody>
                 {sortedRows.map((row) => (
                   <tr
-                    key={row.guide.recipe.id}
+                    key={row.output.id}
                     className={selectedItem?.id === row.output.id ? "selected-row" : ""}
                     onClick={() => onSelectItem(row.output)}
                   >
@@ -8911,6 +8993,18 @@ function formatDemandRatio(value: number): string {
   }
 
   return `${value.toFixed(2)}x`;
+}
+
+function getDemandCategory(buyQuantity: number, sellQuantity: number): DemandCategory {
+  if (buyQuantity <= 0) {
+    return "none";
+  }
+
+  if (sellQuantity <= 0) {
+    return "unlisted";
+  }
+
+  return "listed";
 }
 
 function getDemandRatio(buyQuantity: number, sellQuantity: number): number {
@@ -12005,6 +12099,14 @@ function ItemDetail({
 
       {extraInfo}
 
+      {wikiAcquisition?.teachesRecipe ? (
+        <TeachesRecipePanel
+          unlock={wikiAcquisition.teachesRecipe}
+          catalog={catalog}
+          onOpenDetail={onOpenDetail}
+        />
+      ) : null}
+
       {!isTradable ? (
         <section className="surface tradeability-note">
           <ShieldCheck />
@@ -12182,6 +12284,43 @@ function ItemDetail({
         </section>
       ) : null}
     </div>
+  );
+}
+
+function TeachesRecipePanel({
+  unlock,
+  catalog,
+  onOpenDetail,
+}: {
+  unlock: WikiRecipeUnlock;
+  catalog: MarketItem[];
+  onOpenDetail?: (item: Gw2Item) => void;
+}) {
+  const taughtItem = findMarketItemByName(catalog, unlock.title);
+
+  return (
+    <section className="surface teaches-recipe-note">
+      <BookOpen />
+      <div>
+        <span>Teaches recipe</span>
+        <strong>{unlock.title}</strong>
+        <div className="teaches-recipe-actions">
+          {taughtItem && onOpenDetail ? (
+            <button
+              type="button"
+              className="text-link-button"
+              onClick={() => onOpenDetail(taughtItem)}
+            >
+              Open item detail
+            </button>
+          ) : null}
+          <a href={unlock.url} target="_blank" rel="noreferrer">
+            Open wiki
+            <ExternalLink />
+          </a>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -14928,6 +15067,10 @@ function IngredientMindMap({
     event.stopPropagation();
     suppressNextMapClickRef.current = false;
   };
+  const openCraftMapNodeDetail = (node: PositionedCraftMapNode) => {
+    onOpenDetail?.(node.item);
+    setSelectedNode(null);
+  };
 
   return (
     <section className="surface mind-map-section">
@@ -14983,14 +15126,26 @@ function IngredientMindMap({
                     }`}
                     style={{ left: node.x, top: node.y }}
                     onClick={() => setSelectedNode(node)}
+                    onDoubleClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      openCraftMapNodeDetail(node);
+                    }}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        openCraftMapNodeDetail(node);
+                      }
+
+                      if (event.key === " ") {
                         event.preventDefault();
                         setSelectedNode(node);
                       }
                     }}
                     role="button"
                     tabIndex={0}
+                    title={`Click for quick info. Double-click to open ${node.item.name}.`}
+                    aria-label={`${node.item.name}. Click for quick info. Double-click or press Enter to open the detail page.`}
                   >
                     <ItemIcon item={node.item} />
                     <strong>{node.item.name}</strong>
@@ -15057,6 +15212,7 @@ function IngredientMindMap({
 }
 
 const CRAFT_MAP_MAX_DEPTH = 5;
+const CRAFT_MAP_RECIPE_LOAD_CONCURRENCY = 6;
 const CRAFT_MAP_NODE_WIDTH = 154;
 const CRAFT_MAP_NODE_HEIGHT = 122;
 const CRAFT_MAP_NODE_VERTICAL_EXTRA = 32;
@@ -15094,6 +15250,12 @@ interface CraftMapLayout {
 interface CraftMapViewportSize {
   width: number;
   height: number;
+}
+
+interface CraftRecipeQueueEntry {
+  itemId: number;
+  depth: number;
+  path: Set<number>;
 }
 
 function buildCraftMapTree(
@@ -15185,7 +15347,7 @@ async function loadNestedCraftRecipes(
 ): Promise<Map<number, RecipeGuide[]>> {
   const holdings = accountSnapshot?.holdings;
   const loadedRecipes = new Map<number, RecipeGuide[]>();
-  const queue = rootRecipe.ingredients.map((ingredient) => ({
+  let currentLevel: CraftRecipeQueueEntry[] = rootRecipe.ingredients.map((ingredient) => ({
     itemId: ingredient.item_id,
     depth: 1,
     path: new Set<number>([
@@ -15195,38 +15357,73 @@ async function loadNestedCraftRecipes(
   }));
   const visited = new Set<number>();
 
-  while (queue.length > 0) {
-    const next = queue.shift()!;
-    if (visited.has(next.itemId) || next.depth >= CRAFT_MAP_MAX_DEPTH) {
-      continue;
+  while (currentLevel.length > 0) {
+    const entries = currentLevel.filter((entry) => {
+      if (visited.has(entry.itemId) || entry.depth >= CRAFT_MAP_MAX_DEPTH) {
+        return false;
+      }
+
+      visited.add(entry.itemId);
+      return true;
+    });
+    if (entries.length === 0) {
+      break;
     }
 
-    visited.add(next.itemId);
-    const guides = await loadRecipesForOutput(next.itemId, holdings).catch(() => []);
-    if (guides.length === 0) {
-      continue;
-    }
+    const nextLevel: CraftRecipeQueueEntry[] = [];
+    const results = await loadCraftMapRecipeBatch(entries, holdings);
 
-    loadedRecipes.set(next.itemId, guides);
-    const bestGuide = selectBestRecipeGuide(guides, accountSnapshot);
-    if (!bestGuide) {
-      continue;
-    }
-
-    for (const ingredient of bestGuide.ingredients) {
-      if (next.path.has(ingredient.item_id)) {
+    for (const { entry, guides } of results) {
+      if (guides.length === 0) {
         continue;
       }
 
-      queue.push({
-        itemId: ingredient.item_id,
-        depth: next.depth + 1,
-        path: new Set([...next.path, ingredient.item_id]),
-      });
+      loadedRecipes.set(entry.itemId, guides);
+      const bestGuide = selectBestRecipeGuide(guides, accountSnapshot);
+      if (!bestGuide) {
+        continue;
+      }
+
+      for (const ingredient of bestGuide.ingredients) {
+        if (entry.path.has(ingredient.item_id)) {
+          continue;
+        }
+
+        nextLevel.push({
+          itemId: ingredient.item_id,
+          depth: entry.depth + 1,
+          path: new Set([...entry.path, ingredient.item_id]),
+        });
+      }
     }
+
+    currentLevel = nextLevel;
   }
 
   return loadedRecipes;
+}
+
+async function loadCraftMapRecipeBatch(
+  entries: CraftRecipeQueueEntry[],
+  holdings: Map<number, number> | undefined,
+): Promise<Array<{ entry: CraftRecipeQueueEntry; guides: RecipeGuide[] }>> {
+  const results: Array<{ entry: CraftRecipeQueueEntry; guides: RecipeGuide[] }> = [];
+  let nextIndex = 0;
+  const workerCount = Math.min(CRAFT_MAP_RECIPE_LOAD_CONCURRENCY, entries.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < entries.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        const entry = entries[index];
+        const guides = await loadRecipesForOutput(entry.itemId, holdings).catch(() => []);
+        results[index] = { entry, guides };
+      }
+    }),
+  );
+
+  return results.filter((result): result is { entry: CraftRecipeQueueEntry; guides: RecipeGuide[] } => Boolean(result));
 }
 
 function selectBestRecipeGuide(

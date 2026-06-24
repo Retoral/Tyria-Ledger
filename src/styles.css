@@ -2320,6 +2320,39 @@ p {
   background: transparent;
 }
 
+.market-demand-filter {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.market-demand-filter button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid #cfd5cc;
+  border-radius: 8px;
+  color: #3e463d;
+  background: #fff;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.market-demand-filter button.active {
+  border-color: #007c7a;
+  color: #003d3b;
+  background: #dff8f5;
+}
+
+.market-demand-filter strong {
+  color: inherit;
+  font-size: 12px;
+}
+
 .item-list {
   display: grid;
   align-content: start;
@@ -2635,6 +2668,58 @@ p {
 .tradeability-note span {
   color: #aab7b2;
   font-size: 13px;
+}
+
+.teaches-recipe-note {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.teaches-recipe-note > svg {
+  width: 18px;
+  height: 18px;
+  color: #7ee9e2;
+}
+
+.teaches-recipe-note > div {
+  display: grid;
+  gap: 4px;
+}
+
+.teaches-recipe-note span {
+  color: #aab7b2;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.teaches-recipe-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.teaches-recipe-actions a,
+.text-link-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  color: #7ee9e2;
+  background: transparent;
+  font: inherit;
+  font-weight: 900;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.teaches-recipe-actions a svg {
+  width: 14px;
+  height: 14px;
 }
 
 .recipe-source-note {
@@ -4701,6 +4786,7 @@ body,
 	.nav-search,
 	.key-row input,
 	.search-box,
+	.market-demand-filter button,
 	.opening-input input,
 	.build-filter-panel select,
 	.craft-filter-panel select,
@@ -4716,6 +4802,12 @@ body,
 .search-box input,
 .key-row input {
   color: #eef7f2;
+}
+
+.market-demand-filter button.active {
+  border-color: #22d9cf;
+  color: #f3fffb;
+  background: #06423f;
 }
 
 .nav-search input::placeholder,
