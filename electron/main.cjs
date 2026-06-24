@@ -22,7 +22,7 @@ const MARKET_HISTORY_MAX_AGE_MS = 2 * 366 * 24 * 60 * 60 * 1000;
 const MAX_MARKET_HISTORY_POINTS_PER_ITEM = 800;
 const VALID_ROLLUPS = new Set(["raw", "day", "week", "month", "bimonth"]);
 const UPDATE_REPOSITORY_OWNER = "QAEddie";
-const UPDATE_REPOSITORY_NAME = "GW2-App";
+const UPDATE_REPOSITORY_NAME = "Tyria-Ledger";
 const UPDATE_API_URL = `https://api.github.com/repos/${UPDATE_REPOSITORY_OWNER}/${UPDATE_REPOSITORY_NAME}/releases/latest`;
 const UPDATE_RELEASES_URL = `https://github.com/${UPDATE_REPOSITORY_OWNER}/${UPDATE_REPOSITORY_NAME}/releases`;
 

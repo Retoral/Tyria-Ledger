@@ -11,8 +11,10 @@ const dryRun = args.has("--dry-run");
 const allowDirty = args.has("--allow-dirty") || process.env.ALLOW_DIRTY_RELEASE === "1";
 const versionArg = process.argv.slice(2).find((arg) => /^--version=/.test(arg));
 const tagArg = process.argv.slice(2).find((arg) => /^--tag=/.test(arg));
+const repoArg = process.argv.slice(2).find((arg) => /^--repo=/.test(arg));
 const version = versionArg ? versionArg.split("=")[1] : pkg.version;
 const tag = tagArg ? tagArg.split("=")[1] : `v${version}`;
+const releaseRepo = repoArg ? repoArg.split("=")[1] : process.env.GITHUB_RELEASE_REPO;
 const releaseDir = path.join(root, "release");
 
 function run(command, commandArgs, options = {}) {
@@ -125,13 +127,14 @@ function getReleaseNotes() {
 function main() {
   validateEnvironment();
   const artifacts = collectArtifacts();
-  const releaseExists = run("gh", ["release", "view", tag], {
+  const repoArgs = releaseRepo ? ["--repo", releaseRepo] : [];
+  const releaseExists = run("gh", ["release", "view", tag, ...repoArgs], {
     capture: true,
     allowFailure: true,
   }).status === 0;
 
   const commandArgs = releaseExists
-    ? ["release", "upload", tag, ...artifacts, "--clobber"]
+    ? ["release", "upload", tag, ...artifacts, "--clobber", ...repoArgs]
     : [
         "release",
         "create",
@@ -141,10 +144,11 @@ function main() {
         `Tyria Ledger ${version}`,
         "--notes",
         getReleaseNotes(),
+        ...repoArgs,
       ];
 
   if (dryRun) {
-    console.log(`${releaseExists ? "Would update" : "Would create"} GitHub release ${tag}`);
+    console.log(`${releaseExists ? "Would update" : "Would create"} GitHub release ${tag}${releaseRepo ? ` in ${releaseRepo}` : ""}`);
     artifacts.forEach((artifact) => console.log(`- ${path.relative(root, artifact)}`));
     return;
   }

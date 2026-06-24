@@ -39,4 +39,10 @@ npm run release:github
 
 Use `npm run release:github:dry` to verify the files before uploading. The release script uploads the macOS Intel, macOS Apple Silicon, Windows installer, Windows portable build, updater metadata, and blockmap files from `release/`.
 
+To publish to a repo that is not the current `origin`, pass the target explicitly:
+
+```bash
+node scripts/release-github.cjs --repo=YOUR_ACCOUNT/Tyria-Ledger
+```
+
 The script refuses to release from a dirty worktree so the GitHub tag matches the shipped build.
