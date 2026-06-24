@@ -27,6 +27,12 @@
   done:
 !macroend
 
+!macro customInstall
+  DetailPrint "Updating Windows Installed Apps metadata."
+  WriteRegStr SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" "DisplayName" "Tyria Ledger"
+  WriteRegStr SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" "DisplayVersion" "${VERSION}"
+!macroend
+
 !macro recoverFromOldUninstallerFailure ROOT_CONTEXT
   !define UniqueID ${__LINE__}
   IfErrors 0 checkExitCode_${UniqueID}

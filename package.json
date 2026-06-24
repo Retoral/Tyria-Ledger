@@ -65,6 +65,7 @@
     },
     "nsis": {
       "include": "build/installer.nsh",
+      "uninstallDisplayName": "Tyria Ledger",
       "artifactName": "Tyria-Ledger-Setup-${version}.${ext}"
     },
     "portable": {

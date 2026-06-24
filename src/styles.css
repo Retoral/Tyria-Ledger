@@ -218,13 +218,12 @@ svg {
 
 .account-settings-panel {
   display: grid;
-  grid-template-columns: minmax(260px, 0.75fr) minmax(420px, 1.25fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-items: stretch;
 }
 
-.account-settings-panel .api-key-dock,
-.account-settings-panel .market-scope-dock {
+.account-settings-panel .api-key-dock {
   min-height: 100%;
 }
 
@@ -357,31 +356,13 @@ svg {
   transform: translateY(0);
 }
 
-.api-key-dock,
-.market-scope-dock {
+.api-key-dock {
   display: grid;
   gap: 10px;
   padding: 12px;
   border: 1px solid #2b3536;
   border-radius: 8px;
   background: #1b2024;
-}
-
-.market-scope-dock select {
-  width: 100%;
-  min-height: 38px;
-  padding: 0 10px;
-  border: 1px solid #303b3e;
-  border-radius: 8px;
-  outline: 0;
-  color: #f7faf7;
-  background: #101416;
-}
-
-.market-scope-dock p {
-  color: #8f9b97;
-  font-size: 12px;
-  line-height: 1.35;
 }
 
 .dock-title {
@@ -1979,13 +1960,12 @@ svg {
 .brand-block,
 .topbar-actions,
 .status-strip,
-.panel-heading,
-.item-title-row,
-.section-title,
-.key-row,
-.small-actions,
-.recipe-head,
-.cost-line {
+  .panel-heading,
+  .item-title-row,
+  .section-title,
+  .key-row,
+  .recipe-head,
+  .cost-line {
   display: flex;
   align-items: center;
 }
@@ -2059,7 +2039,6 @@ p {
 }
 
 .icon-button,
-.small-actions button,
 .key-row button,
 .empty-action {
   display: inline-flex;
@@ -4644,6 +4623,7 @@ p {
 
 .key-row {
   gap: 8px;
+  flex-wrap: nowrap;
 }
 
 .key-row input {
@@ -4655,17 +4635,10 @@ p {
 }
 
 .key-row button {
-  width: 68px;
-}
-
-.small-actions {
-  gap: 8px;
-}
-
-.small-actions button {
-  flex: 1;
-  padding: 0 10px;
-  font-size: 13px;
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 80px;
+  padding: 0 12px;
 }
 
 .insight-panel {
@@ -4719,14 +4692,12 @@ body,
 }
 
 .nav-group,
-.api-key-dock,
-.market-scope-dock {
+.api-key-dock {
   border-color: #273034;
   background: #151b1f;
 }
 
 	.nav-search,
-	.market-scope-dock select,
 	.key-row input,
 	.search-box,
 	.opening-input input,
@@ -4783,7 +4754,6 @@ body,
 .page-header p,
 .brand-block p,
 .muted-copy,
-.market-scope-dock p,
 .earning-row span,
 .holding-row span,
 .general-card span,
@@ -4878,7 +4848,6 @@ body,
 .detail-close-button,
 .mini-action,
 .update-status-button,
-.small-actions button,
 .key-row button,
 .empty-action,
 .history-controls button,
@@ -4914,7 +4883,6 @@ body,
 .icon-button:hover,
 .detail-close-button:hover,
 .mini-action:hover,
-.small-actions button:hover,
 .history-controls button:hover,
 .range-tabs button:hover,
 .segment-row button:hover,
@@ -5401,10 +5369,6 @@ body,
   .account-panel {
     grid-column: 1 / -1;
     grid-template-columns: 360px minmax(0, 1fr);
-  }
-
-  .account-settings-panel {
-    grid-template-columns: minmax(240px, 0.8fr) minmax(360px, 1.2fr);
   }
 
   .insight-stack {

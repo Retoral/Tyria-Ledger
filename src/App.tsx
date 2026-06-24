@@ -17,7 +17,6 @@ import {
   PackageSearch,
   RefreshCcw,
   Search,
-  Server,
   ShieldCheck,
   Trophy,
   TrendingUp,
@@ -371,12 +370,12 @@ interface BuildSource {
   note: string;
 }
 
-type MarketScopeId = "global" | "region:north-america" | "region:europe";
+const GLOBAL_MARKET_SCOPE_ID = "global";
+type MarketScopeId = typeof GLOBAL_MARKET_SCOPE_ID;
 type WizardVaultSectionFilter = WizardVaultObjectiveSection["id"];
 type WizardVaultTrackFilter = "all" | "PvE" | "PvP" | "WvW";
 
 const DEFAULT_QUERY = "";
-const MARKET_SCOPE_STORAGE_KEY = "tyria-ledger.market-scope.v1";
 const MARKET_HISTORY_STORAGE_KEY = "tyria-ledger.market-history.v1";
 const FARM_TRACKER_STORAGE_KEY = "tyria-ledger.farm-tracker.v1";
 const MARKET_AUTO_SCAN_MIN_DELAY_MS = 1000;
@@ -2590,7 +2589,6 @@ function App() {
   const [updateCheckState, setUpdateCheckState] = useState<UpdateCheckState>("idle");
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [sidebarSearch, setSidebarSearch] = useState("");
-  const [marketScopeId, setMarketScopeId] = useState<MarketScopeId>("global");
   const [maps, setMaps] = useState<Gw2Map[]>([]);
   const [error, setError] = useState<string | null>(null);
   const activePage = pageHistory[pageHistoryIndex] ?? "account";
@@ -2600,20 +2598,11 @@ function App() {
   const marketPreloadStartedRef = useRef(false);
   const catalogRef = useRef(catalog);
   const marketUpdatedAtRef = useRef(marketUpdatedAt);
-  const marketScopeIdRef = useRef(marketScopeId);
   const loadStateRef = useRef(loadState);
 
   useEffect(() => {
     void migrateLocalStorageMarketHistory();
     void checkForAppUpdates({ silent: true });
-
-    const storedMarketScope = normalizeMarketScopeId(
-      window.localStorage.getItem(MARKET_SCOPE_STORAGE_KEY),
-    );
-    if (storedMarketScope) {
-      setMarketScopeId(storedMarketScope);
-      window.localStorage.setItem(MARKET_SCOPE_STORAGE_KEY, storedMarketScope);
-    }
 
     setMapsState("loading");
     loadMaps()
@@ -2652,10 +2641,6 @@ function App() {
       refreshApiStatuses("");
     }
   }, []);
-
-  useEffect(() => {
-    marketScopeIdRef.current = marketScopeId;
-  }, [marketScopeId]);
 
   useEffect(() => {
     loadStateRef.current = loadState;
@@ -2708,7 +2693,7 @@ function App() {
           return;
         }
 
-        void loadCatalog(marketScopeIdRef.current, { preload: true })
+        void loadCatalog(GLOBAL_MARKET_SCOPE_ID, { preload: true })
           .catch(() => undefined)
           .finally(scheduleNextHourlyScan);
       }, getDelayToNextMarketHour());
@@ -2731,13 +2716,13 @@ function App() {
 
     const preloadTimer = window.setTimeout(() => {
       marketPreloadStartedRef.current = true;
-      void loadCatalog(marketScopeId, { preload: true });
+      void loadCatalog(GLOBAL_MARKET_SCOPE_ID, { preload: true });
     }, MARKET_PRELOAD_DELAY_MS);
 
     return () => {
       window.clearTimeout(preloadTimer);
     };
-  }, [catalog.length, loadState, marketScopeId]);
+  }, [catalog.length, loadState]);
 
   const filteredItems = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -3179,7 +3164,7 @@ function App() {
   }
 
   async function loadCatalog(
-    scopeId = marketScopeId,
+    scopeId: MarketScopeId = GLOBAL_MARKET_SCOPE_ID,
     options: { preload?: boolean } = {},
   ): Promise<MarketItem[]> {
     const scopeLabel = getMarketScopeLabel(scopeId);
@@ -3538,15 +3523,6 @@ function App() {
     }
   }
 
-  function updateMarketScope(nextScopeId: MarketScopeId) {
-    setMarketScopeId(nextScopeId);
-    window.localStorage.setItem(MARKET_SCOPE_STORAGE_KEY, nextScopeId);
-
-    if (catalog.length > 0 && loadState !== "loading") {
-      void loadCatalog(nextScopeId);
-    }
-  }
-
   async function saveApiKey() {
     const trimmedKey = apiKey.trim();
     if (!trimmedKey) {
@@ -3635,11 +3611,9 @@ function App() {
           apiStatusState={apiStatusState}
           catalog={catalog}
           dataImports={dataImports}
-          marketScopeId={marketScopeId}
           onAnalyze={() => runAnalysisForKey()}
           onApiKeyChange={setApiKey}
           onForgetApiKey={forgetApiKey}
-          onMarketScopeChange={updateMarketScope}
           onOpenActivity={openActivityGuide}
           onOpenItemSearch={openItemSearch}
           onLoadMarket={loadCatalog}
@@ -4170,68 +4144,25 @@ function Sidebar({
   );
 }
 
-function MarketScopeSelector({
-  marketScopeId,
-  onMarketScopeChange,
-}: {
-  marketScopeId: MarketScopeId;
-  onMarketScopeChange: (scopeId: MarketScopeId) => void;
-}) {
-  return (
-    <section className="market-scope-dock">
-      <div className="dock-title">
-        <Server />
-        <span>Market Scope</span>
-      </div>
-      <select
-        value={marketScopeId}
-        onChange={(event) => {
-          const nextScope = event.target.value;
-          if (isMarketScopeId(nextScope)) {
-            onMarketScopeChange(nextScope);
-          }
-        }}
-      >
-        <option value="global">Global Trading Post</option>
-        <option value="region:north-america">North America</option>
-        <option value="region:europe">Europe</option>
-      </select>
-      <p>
-        The official Trading Post API exposes shared market data. The region scope is saved for
-        filtering, notes, and future region-aware data.
-      </p>
-    </section>
-  );
-}
-
 function AccountSettingsPanel({
   apiKey,
   apiKeyRemembered,
   analysisState,
-  marketScopeId,
   onAnalyze,
   onApiKeyChange,
   onForgetApiKey,
-  onMarketScopeChange,
   onSaveApiKey,
 }: {
   apiKey: string;
   apiKeyRemembered: boolean;
   analysisState: LoadState;
-  marketScopeId: MarketScopeId;
   onAnalyze: () => void;
   onApiKeyChange: (value: string) => void;
   onForgetApiKey: () => void;
-  onMarketScopeChange: (scopeId: MarketScopeId) => void;
   onSaveApiKey: () => void;
 }) {
   return (
     <section className="account-settings-panel">
-      <MarketScopeSelector
-        marketScopeId={marketScopeId}
-        onMarketScopeChange={onMarketScopeChange}
-      />
-
       <section className="api-key-dock">
         <div className="dock-title">
           <KeyRound />
@@ -4248,8 +4179,6 @@ function AccountSettingsPanel({
           <button onClick={onSaveApiKey} disabled={!apiKey.trim()}>
             Save
           </button>
-        </div>
-        <div className="small-actions">
           <button onClick={onAnalyze} disabled={analysisState === "loading" || !apiKey.trim()}>
             {analysisState === "loading" ? <Loader2 className="spin" /> : <TrendingUp />}
             Analyze
@@ -4264,48 +4193,7 @@ function AccountSettingsPanel({
   );
 }
 
-function isMarketScopeId(value: string | null): value is MarketScopeId {
-  if (!value) {
-    return false;
-  }
-
-  return (
-    value === "global" ||
-    value === "region:north-america" ||
-    value === "region:europe"
-  );
-}
-
-function normalizeMarketScopeId(value: string | null): MarketScopeId | null {
-  if (isMarketScopeId(value)) {
-    return value;
-  }
-
-  const worldId = value?.startsWith("world:") ? Number(value.replace("world:", "")) : NaN;
-  if (worldId >= 1000 && worldId < 2000) {
-    return "region:north-america";
-  }
-
-  if (worldId >= 2000 && worldId < 3000) {
-    return "region:europe";
-  }
-
-  return null;
-}
-
-function getMarketScopeLabel(scopeId: MarketScopeId): string {
-  if (scopeId === "global") {
-    return "Global Trading Post";
-  }
-
-  if (scopeId === "region:north-america") {
-    return "North America";
-  }
-
-  if (scopeId === "region:europe") {
-    return "Europe";
-  }
-
+function getMarketScopeLabel(_scopeId: MarketScopeId): string {
   return "Global Trading Post";
 }
 
@@ -4316,26 +4204,36 @@ async function loadCachedMarketCatalog(
     return null;
   }
 
-  try {
-    const cached = await window.gw2Desktop.loadMarketCatalog(scopeId);
-    if (!cached) {
-      return null;
-    }
+  const candidateScopeIds = [
+    scopeId,
+    "region:europe",
+    "region:north-america",
+  ].filter((candidate, index, candidates) => candidates.indexOf(candidate) === index);
 
-    const items = cached.items.filter(isCachedMarketItem);
-    if (items.length === 0) {
-      return null;
-    }
+  for (const candidateScopeId of candidateScopeIds) {
+    try {
+      const cached = await window.gw2Desktop.loadMarketCatalog(candidateScopeId);
+      if (!cached) {
+        continue;
+      }
 
-    hydrateTradingPostCatalogCache(items);
-    const updatedAt = new Date(cached.updatedAt).getTime();
-    return {
-      items,
-      updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
-    };
-  } catch {
-    return null;
+      const items = cached.items.filter(isCachedMarketItem);
+      if (items.length === 0) {
+        continue;
+      }
+
+      hydrateTradingPostCatalogCache(items);
+      const updatedAt = new Date(cached.updatedAt).getTime();
+      return {
+        items,
+        updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
+      };
+    } catch {
+      // Try the next legacy scope if a previous build saved market data there.
+    }
   }
+
+  return null;
 }
 
 async function saveCachedMarketCatalog(scopeId: MarketScopeId, items: MarketItem[]) {
@@ -4552,11 +4450,9 @@ function AccountDashboard({
   apiStatusState,
   catalog,
   dataImports,
-  marketScopeId,
   onAnalyze,
   onApiKeyChange,
   onForgetApiKey,
-  onMarketScopeChange,
   onOpenActivity,
   onOpenItemSearch,
   onLoadMarket,
@@ -4573,11 +4469,9 @@ function AccountDashboard({
   apiStatusState: LoadState;
   catalog: MarketItem[];
   dataImports: DataImportRow[];
-  marketScopeId: MarketScopeId;
   onAnalyze: () => void;
   onApiKeyChange: (value: string) => void;
   onForgetApiKey: () => void;
-  onMarketScopeChange: (scopeId: MarketScopeId) => void;
   onOpenActivity: (suggestion: GoldSuggestion) => void;
   onOpenItemSearch: (itemName: string) => void;
   onLoadMarket: () => void;
@@ -4671,11 +4565,9 @@ function AccountDashboard({
         apiKey={apiKey}
         apiKeyRemembered={apiKeyRemembered}
         analysisState={analysisState}
-        marketScopeId={marketScopeId}
         onAnalyze={onAnalyze}
         onApiKeyChange={onApiKeyChange}
         onForgetApiKey={onForgetApiKey}
-        onMarketScopeChange={onMarketScopeChange}
         onSaveApiKey={onSaveApiKey}
       />
 
