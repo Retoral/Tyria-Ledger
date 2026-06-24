@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  Backpack,
   BookOpen,
   Boxes,
   CheckCircle2,
@@ -7,8 +8,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Coins,
+  Container,
   Database,
   ExternalLink,
+  Fish,
   Hammer,
   Home,
   KeyRound,
@@ -18,13 +21,16 @@ import {
   RefreshCcw,
   Search,
   ShieldCheck,
+  Star,
   Toilet,
   Trophy,
   TrendingUp,
   X,
 } from "lucide-react";
 import {
+  createContext,
   useEffect,
+  useContext,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -39,6 +45,7 @@ import {
   checkApiStatuses,
   ensureCommercePricesForItems,
   getStoredItem,
+  getStoredItemByName,
   getStoredPrice,
   hydrateTradingPostCatalogCache,
   loadAchievementCatalog,
@@ -193,6 +200,12 @@ type HistoryRangeId = "24h" | "1w" | "1m" | "3m" | "6m" | "1y" | "2y";
 type DemandFilter = "none" | "unlisted" | "listed";
 type DemandCategory = DemandFilter;
 
+interface FavoriteItemsContextValue {
+  favoriteItemIds: Set<number>;
+  toggleFavoriteItem: (item: { id?: number }) => void;
+  isFavoriteItem: (item: { id?: number } | number | null | undefined) => boolean;
+}
+
 interface HistoryRange {
   id: HistoryRangeId;
   label: string;
@@ -254,6 +267,182 @@ interface IngredientCraftRouteSummary {
 }
 
 const ingredientCraftRouteCache = new Map<string, Promise<IngredientCraftRouteSummary | null>>();
+const FAVORITE_ITEM_IDS_STORAGE_KEY = "tyria-ledger:favorites:item-ids:v1";
+const TABLE_DRAG_SCROLL_SELECTOR = ".market-table-wrap, .craft-table-wrap, .meta-table-wrap";
+const TABLE_DRAG_SCROLL_THRESHOLD_PX = 6;
+const TABLE_DRAG_SCROLL_START_DELAY_MS = 50;
+const TABLE_DRAG_SCROLL_CLICK_BLOCK_MS = 220;
+const FavoriteItemsContext = createContext<FavoriteItemsContextValue>({
+  favoriteItemIds: new Set<number>(),
+  toggleFavoriteItem: () => undefined,
+  isFavoriteItem: () => false,
+});
+
+function useFavoriteItems() {
+  return useContext(FavoriteItemsContext);
+}
+
+function readStoredFavoriteItemIds(): Set<number> {
+  if (typeof window === "undefined") {
+    return new Set<number>();
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(FAVORITE_ITEM_IDS_STORAGE_KEY);
+    if (!rawValue) {
+      return new Set<number>();
+    }
+
+    const parsedValue = JSON.parse(rawValue);
+    if (!Array.isArray(parsedValue)) {
+      return new Set<number>();
+    }
+
+    return new Set(
+      parsedValue
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0),
+    );
+  } catch {
+    return new Set<number>();
+  }
+}
+
+function useWideTableDragPanning() {
+  useEffect(() => {
+    let dragState:
+      | {
+          element: HTMLElement;
+          startX: number;
+          startY: number;
+          scrollLeft: number;
+          scrollTop: number;
+          startedAt: number;
+          dragging: boolean;
+        }
+      | null = null;
+
+    const getScrollableElement = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) {
+        return null;
+      }
+
+      return target.closest(TABLE_DRAG_SCROLL_SELECTOR) as HTMLElement | null;
+    };
+
+    const isInteractiveTarget = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) {
+        return false;
+      }
+
+      return Boolean(target.closest("button, a, input, textarea, select, label, summary"));
+    };
+
+    const clearDragState = () => {
+      if (dragState) {
+        dragState.element.classList.remove("drag-panning");
+      }
+
+      dragState = null;
+    };
+
+    const handleMouseDown = (event: MouseEvent) => {
+      if (event.button !== 0 || isInteractiveTarget(event.target)) {
+        return;
+      }
+
+      const element = getScrollableElement(event.target);
+      if (!element) {
+        return;
+      }
+
+      const canScroll =
+        element.scrollWidth > element.clientWidth + 2 ||
+        element.scrollHeight > element.clientHeight + 2;
+      if (!canScroll) {
+        return;
+      }
+
+      dragState = {
+        element,
+        startX: event.clientX,
+        startY: event.clientY,
+        scrollLeft: element.scrollLeft,
+        scrollTop: element.scrollTop,
+        startedAt: performance.now(),
+        dragging: false,
+      };
+    };
+
+    const handleMouseMove = (event: MouseEvent) => {
+      if (!dragState) {
+        return;
+      }
+
+      const deltaX = event.clientX - dragState.startX;
+      const deltaY = event.clientY - dragState.startY;
+      const movedEnough =
+        Math.abs(deltaX) > TABLE_DRAG_SCROLL_THRESHOLD_PX ||
+        Math.abs(deltaY) > TABLE_DRAG_SCROLL_THRESHOLD_PX;
+      const waitedEnough =
+        performance.now() - dragState.startedAt >= TABLE_DRAG_SCROLL_START_DELAY_MS;
+
+      if (!dragState.dragging && movedEnough && waitedEnough) {
+        dragState.dragging = true;
+        dragState.element.classList.add("drag-panning");
+      }
+
+      if (!dragState.dragging) {
+        return;
+      }
+
+      event.preventDefault();
+      dragState.element.scrollLeft = dragState.scrollLeft - deltaX;
+      dragState.element.scrollTop = dragState.scrollTop - deltaY;
+    };
+
+    const handleMouseUp = () => {
+      if (!dragState) {
+        return;
+      }
+
+      if (dragState.dragging) {
+        const element = dragState.element;
+        element.dataset.dragClickBlock = "true";
+        window.setTimeout(() => {
+          delete element.dataset.dragClickBlock;
+        }, TABLE_DRAG_SCROLL_CLICK_BLOCK_MS);
+      }
+
+      clearDragState();
+    };
+
+    const handleClick = (event: MouseEvent) => {
+      const element = getScrollableElement(event.target);
+      if (!element?.dataset.dragClickBlock) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    window.addEventListener("mousedown", handleMouseDown, true);
+    window.addEventListener("mousemove", handleMouseMove, { passive: false });
+    window.addEventListener("mouseup", handleMouseUp, true);
+    window.addEventListener("mouseleave", handleMouseUp, true);
+    window.addEventListener("click", handleClick, true);
+
+    return () => {
+      clearDragState();
+      window.removeEventListener("mousedown", handleMouseDown, true);
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp, true);
+      window.removeEventListener("mouseleave", handleMouseUp, true);
+      window.removeEventListener("click", handleClick, true);
+    };
+  }, []);
+}
 
 type SortDirection = "asc" | "desc";
 type TableSort<K extends string> = {
@@ -294,6 +483,7 @@ interface FarmTrackerStoredState {
   dateKey: string;
   startedAt: number;
   lastUpdatedAt: number;
+  baselineHoldings?: Array<[number, number]>;
   lastHoldings: Array<[number, number]>;
   gained: Array<[number, number]>;
 }
@@ -382,6 +572,8 @@ type WizardVaultTrackFilter = "all" | "PvE" | "PvP" | "WvW";
 const DEFAULT_QUERY = "";
 const MARKET_HISTORY_STORAGE_KEY = "tyria-ledger.market-history.v1";
 const FARM_TRACKER_STORAGE_KEY = "tyria-ledger.farm-tracker.v1";
+const FARM_TRACKER_TRACK_LOOT_STORAGE_KEY = "tyria-ledger.farm-tracker.track-loot.v1";
+const FARM_TRACKER_AUTO_SNAPSHOT_MS = 60 * 1000;
 const MARKET_AUTO_SCAN_MIN_DELAY_MS = 1000;
 const MARKET_SCAN_COOLDOWN_MS = 10 * 60 * 1000;
 const MAX_MARKET_HISTORY_POINTS_PER_ITEM = 800;
@@ -889,6 +1081,7 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
       { id: "farming-guides", label: "Farming Guides", icon: <BookOpen /> },
       { id: "farming-tracker", label: "Farming Tracker", icon: <ListChecks /> },
       { id: "farming-calculator", label: "Farming Calculator", icon: <Database /> },
+      { id: "favorites", label: "Favourites", icon: <Star /> },
     ],
   },
   {
@@ -906,29 +1099,19 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
     items: [
       { id: "open-world", label: "Open World Farming", icon: <TrendingUp /> },
       { id: "drizzlewood-donation", label: "Drizzlewood Material Donation", icon: <Database /> },
-      { id: "fishing", label: "Fishing", icon: <BookOpen /> },
       { id: "meta-events", label: "Meta", icon: <ShieldCheck /> },
       { id: "solo-farming", label: "Solo Farming", icon: <PackageSearch /> },
     ],
   },
   {
-    title: "Salvaging",
-    items: [
-      { id: "salvaging", label: "Salvaging", icon: <Boxes /> },
-      { id: "unidentified-gear", label: "Unidentified Gear", icon: <PackageSearch /> },
-    ],
-  },
-  {
-    title: "Gathering",
+    title: "Materials & Loot",
     items: [
       { id: "gathering", label: "Gathering", icon: <Database /> },
-    ],
-  },
-  {
-    title: "Bags",
-    items: [
-      { id: "bag-opener", label: "Bags", icon: <PackageSearch /> },
-      { id: "bags", label: "Slot Bags", icon: <BookOpen /> },
+      { id: "fishing", label: "Fishing", icon: <Fish /> },
+      { id: "salvaging", label: "Salvaging", icon: <Boxes /> },
+      { id: "unidentified-gear", label: "Unidentified Gear", icon: <PackageSearch /> },
+      { id: "bag-opener", label: "Containers", icon: <Container /> },
+      { id: "bags", label: "Slot Bags", icon: <Backpack /> },
     ],
   },
   {
@@ -2600,6 +2783,7 @@ function App() {
   const [sidebarSearch, setSidebarSearch] = useState("");
   const [maps, setMaps] = useState<Gw2Map[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [favoriteItemIds, setFavoriteItemIds] = useState<Set<number>>(() => readStoredFavoriteItemIds());
   const activePage = pageHistory[pageHistoryIndex] ?? "account";
   const canNavigateBack = pageHistoryIndex > 0;
   const canNavigateForward = pageHistoryIndex < pageHistory.length - 1;
@@ -2608,6 +2792,45 @@ function App() {
   const catalogRef = useRef(catalog);
   const marketUpdatedAtRef = useRef(marketUpdatedAt);
   const loadStateRef = useRef(loadState);
+  useWideTableDragPanning();
+
+  const favoriteItemsContextValue = useMemo<FavoriteItemsContextValue>(
+    () => ({
+      favoriteItemIds,
+      toggleFavoriteItem: (item) => {
+        if (!item.id) {
+          return;
+        }
+
+        setFavoriteItemIds((current) => {
+          const next = new Set(current);
+          if (next.has(item.id!)) {
+            next.delete(item.id!);
+          } else {
+            next.add(item.id!);
+          }
+
+          return next;
+        });
+      },
+      isFavoriteItem: (item) => {
+        if (item == null) {
+          return false;
+        }
+
+        const itemId = typeof item === "number" ? item : item.id;
+        return typeof itemId === "number" && favoriteItemIds.has(itemId);
+      },
+    }),
+    [favoriteItemIds],
+  );
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      FAVORITE_ITEM_IDS_STORAGE_KEY,
+      JSON.stringify(Array.from(favoriteItemIds).sort((left, right) => left - right)),
+    );
+  }, [favoriteItemIds]);
 
   useEffect(() => {
     void migrateLocalStorageMarketHistory();
@@ -3544,9 +3767,9 @@ function App() {
     await runAnalysisForKey(trimmedKey);
   }
 
-  async function refreshAccountSnapshot(key: string) {
+  async function refreshAccountSnapshot(key: string, options: { forceRefresh?: boolean } = {}) {
     try {
-      const snapshot = await loadAccountSnapshot(key);
+      const snapshot = await loadAccountSnapshot(key, options);
       setAccountSnapshot(snapshot);
       setAccountUpdatedAt(Date.now());
       setProgress(`Personal data ready for ${snapshot.tokenInfo.name}`);
@@ -3647,6 +3870,29 @@ function App() {
       );
     }
 
+    if (activePage === "favorites") {
+      return (
+        <FavoritesPage
+          catalog={catalog}
+          favoriteItemIds={favoriteItemIds}
+          selectedItem={selectedItem}
+          listings={listings}
+          itemTransactions={itemTransactions}
+          recipes={recipes}
+          usedInRecipes={usedInRecipes}
+          recipeUsageState={recipeUsageState}
+          wikiGuide={wikiGuide}
+          detailState={detailState}
+          containerAnalysis={containerAnalysis}
+          containerState={containerState}
+          accountSnapshot={accountSnapshot}
+          marketHistoryRevision={marketHistoryRevision}
+          onCloseDetail={() => setSelectedItem(null)}
+          onSelectItem={setSelectedItem}
+        />
+      );
+    }
+
     if (activePage.startsWith("activity:")) {
       return (
         <ActivityGuidePage
@@ -3704,9 +3950,13 @@ function App() {
         <FarmTrackerPage
           accountSnapshot={accountSnapshot}
           accountItems={accountItems}
+          catalog={catalog}
           apiKeyRemembered={apiKeyRemembered}
           analysisState={analysisState}
           onAnalyze={() => runAnalysisForKey()}
+          onRefreshSnapshot={async () => {
+            await refreshAccountSnapshot(apiKey.trim(), { forceRefresh: true });
+          }}
         />
       );
     }
@@ -3789,11 +4039,21 @@ function App() {
           craftLoadState={craftLoadState}
           craftsUpdatedAt={craftsUpdatedAt}
           marketCrafts={marketCrafts}
+          selectedItem={selectedItem}
+          listings={listings}
+          itemTransactions={itemTransactions}
+          recipes={recipes}
+          usedInRecipes={usedInRecipes}
+          recipeUsageState={recipeUsageState}
+          wikiGuide={wikiGuide}
+          detailState={detailState}
+          containerAnalysis={containerAnalysis}
+          containerState={containerState}
+          marketHistoryRevision={marketHistoryRevision}
           onLoadCrafts={loadCraftOpportunities}
-          onSelectCraft={(opportunity) => {
-            selectCraftOpportunity(opportunity);
-            navigateToPage("crafting");
-          }}
+          onCloseDetail={() => setSelectedItem(null)}
+          onSelectCraft={selectCraftOpportunity}
+          onSelectItem={(item) => setSelectedItem(buildMarketItemForDetail(item))}
         />
       );
     }
@@ -3827,10 +4087,24 @@ function App() {
     if (activePage === "legendary-readiness") {
       return (
         <LegendaryReadinessPage
+          catalog={catalog}
+          selectedItem={selectedItem}
+          listings={listings}
+          itemTransactions={itemTransactions}
+          recipes={recipes}
+          usedInRecipes={usedInRecipes}
+          recipeUsageState={recipeUsageState}
+          wikiGuide={wikiGuide}
+          detailState={detailState}
+          containerAnalysis={containerAnalysis}
+          containerState={containerState}
           accountSnapshot={accountSnapshot}
           analysis={analysis}
           analysisState={analysisState}
+          marketHistoryRevision={marketHistoryRevision}
           onAnalyze={() => runAnalysisForKey()}
+          onCloseDetail={() => setSelectedItem(null)}
+          onSelectItem={(item) => setSelectedItem(buildMarketItemForDetail(item))}
         />
       );
     }
@@ -3983,58 +4257,60 @@ function App() {
   })();
 
   return (
-    <div className="app-shell">
-      <Sidebar
-        activePage={activePage}
-        sidebarSearch={sidebarSearch}
-        onSidebarSearchChange={setSidebarSearch}
-        onSetActivePage={navigateToPage}
-      />
+    <FavoriteItemsContext.Provider value={favoriteItemsContextValue}>
+      <div className="app-shell">
+        <Sidebar
+          activePage={activePage}
+          sidebarSearch={sidebarSearch}
+          onSidebarSearchChange={setSidebarSearch}
+          onSetActivePage={navigateToPage}
+        />
 
-      <main className="content-shell">
-        <section className="status-strip">
-          <div className="status-left">
-            <div className="history-controls">
-              <button onClick={navigateBack} disabled={!canNavigateBack} aria-label="Back">
-                <ChevronLeft />
-                <span>Back</span>
-              </button>
-              <button onClick={navigateForward} disabled={!canNavigateForward} aria-label="Forward">
-                <span>Forward</span>
-                <ChevronRight />
-              </button>
-            </div>
-            <div className="progress-copy">
-              <strong>{progress}</strong>
-              {progressCount ? (
-                <span>
-                  {progressCount.done} / {progressCount.total}
-                </span>
-              ) : null}
-            </div>
-          </div>
-          <div className="status-right">
-            <UpdateStatusButton
-              updateInfo={updateInfo}
-              updateState={updateCheckState}
-              onCheck={() => void checkForAppUpdates()}
-              onOpenUpdate={() => void openUpdateDownload()}
-            />
-            {error ? (
-              <div className="error-pill">
-                <AlertCircle />
-                {error}
-                <button onClick={() => setError(null)} aria-label="Dismiss error">
-                  <X />
+        <main className="content-shell">
+          <section className="status-strip">
+            <div className="status-left">
+              <div className="history-controls">
+                <button onClick={navigateBack} disabled={!canNavigateBack} aria-label="Back">
+                  <ChevronLeft />
+                  <span>Back</span>
+                </button>
+                <button onClick={navigateForward} disabled={!canNavigateForward} aria-label="Forward">
+                  <span>Forward</span>
+                  <ChevronRight />
                 </button>
               </div>
-            ) : null}
-          </div>
-        </section>
+              <div className="progress-copy">
+                <strong>{progress}</strong>
+                {progressCount ? (
+                  <span>
+                    {progressCount.done} / {progressCount.total}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+            <div className="status-right">
+              <UpdateStatusButton
+                updateInfo={updateInfo}
+                updateState={updateCheckState}
+                onCheck={() => void checkForAppUpdates()}
+                onOpenUpdate={() => void openUpdateDownload()}
+              />
+              {error ? (
+                <div className="error-pill">
+                  <AlertCircle />
+                  {error}
+                  <button onClick={() => setError(null)} aria-label="Dismiss error">
+                    <X />
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </section>
 
-        <div className="content-main">{content}</div>
-      </main>
-    </div>
+          <div className="content-main">{content}</div>
+        </main>
+      </div>
+    </FavoriteItemsContext.Provider>
   );
 }
 
@@ -5817,21 +6093,31 @@ function formatAge(timestamp: number, now = Date.now()): string {
   }
 
   if (seconds < 60) {
-    return `${seconds}s ago`;
+    return "<1min ago";
   }
 
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) {
-    return `${minutes}m ago`;
+    return `${minutes}min ago`;
   }
 
   const hours = Math.floor(minutes / 60);
-  if (hours < 48) {
+  if (hours < 24) {
     return `${hours}h ago`;
   }
 
   const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  if (days < 7) {
+    return `${days} ${days === 1 ? "day" : "days"} ago`;
+  }
+
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) {
+    return `${weeks} ${weeks === 1 ? "week" : "weeks"} ago`;
+  }
+
+  const months = Math.floor(days / 30);
+  return `${months} ${months === 1 ? "month" : "months"} ago`;
 }
 
 function AchievementsPage({
@@ -7013,6 +7299,189 @@ function MarketPage({
   );
 }
 
+function FavoritesPage({
+  catalog,
+  favoriteItemIds,
+  selectedItem,
+  listings,
+  itemTransactions,
+  recipes,
+  usedInRecipes,
+  recipeUsageState,
+  wikiGuide,
+  detailState,
+  containerAnalysis,
+  containerState,
+  accountSnapshot,
+  marketHistoryRevision,
+  onCloseDetail,
+  onSelectItem,
+}: {
+  catalog: MarketItem[];
+  favoriteItemIds: Set<number>;
+  selectedItem: MarketItem | null;
+  listings: CommerceListings | null;
+  itemTransactions: ItemTransactions | null;
+  recipes: RecipeGuide[];
+  usedInRecipes: RecipeGuide[];
+  recipeUsageState: LoadState;
+  wikiGuide: WikiGuide | null;
+  detailState: LoadState;
+  containerAnalysis: ContainerAnalysis | null;
+  containerState: LoadState;
+  accountSnapshot: AccountSnapshot | null;
+  marketHistoryRevision: number;
+  onCloseDetail: () => void;
+  onSelectItem: (item: MarketItem) => void;
+}) {
+  const [itemRevision, setItemRevision] = useState(0);
+  const favoriteIds = useMemo(
+    () => Array.from(favoriteItemIds).sort((left, right) => left - right),
+    [favoriteItemIds],
+  );
+
+  useEffect(() => {
+    const missingIds = favoriteIds.filter(
+      (id) => !catalog.some((item) => item.id === id) && !getStoredItem(id),
+    );
+    if (missingIds.length === 0) {
+      return;
+    }
+
+    let ignore = false;
+    loadItems(missingIds).then(() => {
+      if (!ignore) {
+        setItemRevision((revision) => revision + 1);
+      }
+    });
+
+    return () => {
+      ignore = true;
+    };
+  }, [catalog, favoriteIds]);
+
+  const rows = useMemo(() => {
+    const catalogById = new Map(catalog.map((item) => [item.id, item]));
+    return favoriteIds
+      .map((id) => catalogById.get(id) ?? (getStoredItem(id) ? buildMarketItemForDetail(getStoredItem(id)!) : null))
+      .filter((item): item is MarketItem => Boolean(item));
+  }, [catalog, favoriteIds, itemRevision]);
+  const { sortedRows, renderHeader } = useSortableRows<MarketItem, "name" | "demand" | "sell" | "buy" | "spread" | "supply">(
+    rows,
+    { key: "name", direction: "asc" },
+    {
+      name: (left, right) => compareStringValue(left.name, right.name),
+      demand: (left, right) =>
+        compareNumberValue(
+          getDemandRatio(left.price.buys.quantity, left.price.sells.quantity),
+          getDemandRatio(right.price.buys.quantity, right.price.sells.quantity),
+        ),
+      sell: (left, right) => compareNumberValue(left.price.sells.unit_price, right.price.sells.unit_price),
+      buy: (left, right) => compareNumberValue(left.price.buys.unit_price, right.price.buys.unit_price),
+      spread: (left, right) => compareNumberValue(left.spread, right.spread),
+      supply: (left, right) => compareNumberValue(left.price.sells.quantity, right.price.sells.quantity),
+    },
+  );
+  const selectedFavoriteItem = selectedItem && favoriteItemIds.has(selectedItem.id) ? selectedItem : null;
+
+  return (
+    <div className={`market-workspace ${selectedFavoriteItem ? "" : "detail-closed"}`}>
+      <aside className="market-panel">
+        <section className="page-header compact-page-header">
+          <div>
+            <span className="eyebrow">My GW2 Account</span>
+            <h2>Favourites</h2>
+            <p>Starred items kept in one focused market list.</p>
+          </div>
+          <span className="metric">{rows.length.toLocaleString()}</span>
+        </section>
+
+        <div className="item-list favorites-list">
+          {sortedRows.length > 0 ? (
+            <div className="market-table-wrap">
+              <table className="market-table">
+                <thead>
+                  <tr>
+                    {renderHeader("name", "Name")}
+                    {renderHeader("demand", "Demand")}
+                    {renderHeader("sell", "Sell")}
+                    {renderHeader("buy", "Buy")}
+                    {renderHeader("spread", "Spread")}
+                    {renderHeader("supply", "Supply")}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedRows.map((item) => (
+                    <tr
+                      key={item.id}
+                      className={`market-row ${selectedFavoriteItem?.id === item.id ? "active" : ""}`}
+                      onClick={() => onSelectItem(item)}
+                    >
+                      <td>
+                        <span className="table-item-cell">
+                          <ItemIcon item={item} />
+                          <span className="item-copy">
+                            <strong>{item.name}</strong>
+                            <span>
+                              {item.rarity} {item.type}
+                            </span>
+                          </span>
+                        </span>
+                      </td>
+                      <td title="Demand uses current buy-order quantity divided by current sell-listing quantity.">
+                        <span className={`demand-ratio ${getDemandRatio(item.price.buys.quantity, item.price.sells.quantity) >= 1 ? "strong" : ""}`}>
+                          {formatDemandRatio(getDemandRatio(item.price.buys.quantity, item.price.sells.quantity))}
+                        </span>
+                        <small>
+                          {formatCompactQuantity(item.price.buys.quantity)} wanted / {formatCompactQuantity(item.price.sells.quantity)} listed
+                        </small>
+                      </td>
+                      <td>{item.price.sells.unit_price ? <Money value={item.price.sells.unit_price} /> : "Unavailable"}</td>
+                      <td>{item.price.buys.unit_price ? <Money value={item.price.buys.unit_price} /> : "Unavailable"}</td>
+                      <td className={item.spread > 0 ? "profit" : "muted-money"}>
+                        <Money value={Math.max(0, item.spread)} />
+                      </td>
+                      <td>{item.price.sells.quantity.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="empty-detail inline-empty">
+              <Star />
+              <h2>No favourites yet</h2>
+              <p>Open any item detail page and press the star to keep it here.</p>
+            </div>
+          )}
+        </div>
+      </aside>
+
+      {selectedFavoriteItem ? (
+        <section className="detail-panel">
+          <ItemDetail
+            item={selectedFavoriteItem}
+            catalog={catalog}
+            listings={listings}
+            itemTransactions={itemTransactions}
+            recipes={recipes}
+            usedInRecipes={usedInRecipes}
+            recipeUsageState={recipeUsageState}
+            wikiGuide={wikiGuide}
+            detailState={detailState}
+            containerAnalysis={containerAnalysis}
+            containerState={containerState}
+            accountSnapshot={accountSnapshot}
+            marketHistoryRevision={marketHistoryRevision}
+            onClose={onCloseDetail}
+            onOpenDetail={(detailItem) => onSelectItem(buildMarketItemForDetail(detailItem))}
+          />
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 type OpenableBagSourceKind = "Market" | "Festival" | "Fractal" | "WvW" | "PvP" | "Living World" | "Expansion" | "Core" | "Gem Store" | "Unknown";
 
 interface OpenableBagGuide {
@@ -7285,7 +7754,7 @@ function OpenableBagsPage({
         <section className="page-header compact-page-header">
           <div>
             <span className="eyebrow">Loot Containers</span>
-            <h2>Bags</h2>
+            <h2>Containers</h2>
             <p>All official openable container items, including tradeable bags and account-bound or non-Trading Post variants.</p>
           </div>
         </section>
@@ -7303,7 +7772,7 @@ function OpenableBagsPage({
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search bags, expansion, source"
+              placeholder="Search containers, expansion, source"
             />
           </label>
           <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} aria-label="Filter by source">
@@ -7320,7 +7789,7 @@ function OpenableBagsPage({
         {loadState === "error" ? (
           <div className="empty-detail inline-empty">
             <AlertCircle />
-            <h2>Bags could not be loaded</h2>
+            <h2>Containers could not be loaded</h2>
             <p>The app could not reach the GW2 Wiki or official item catalog. Try reopening this page once the APIs are reachable.</p>
           </div>
         ) : null}
@@ -7385,14 +7854,14 @@ function OpenableBagsPage({
         ) : loadState === "ready" ? (
           <div className="empty-detail inline-empty">
             <Search />
-            <h2>No bags match</h2>
+            <h2>No containers match</h2>
             <p>Clear the search or source filter to show the full openable-container list.</p>
           </div>
         ) : null}
 
         {rows.length > 0 ? (
           <p className="market-list-note">
-            {profitableCount.toLocaleString()} tradable bags currently show positive estimated opening profit from parsed wiki contents.
+            {profitableCount.toLocaleString()} tradable containers currently show positive estimated opening profit from parsed wiki contents.
             {nonMarketCount.toLocaleString()} containers are account-bound, unsellable, or not currently listed on the Trading Post.
             Rows marked “Checking” are being valued in the background; selecting any container loads its full detail page.
           </p>
@@ -8262,6 +8731,7 @@ function CraftingPlannerPage({
           opportunities={marketCrafts}
           loadState={craftLoadState}
           compact
+          hideQuantityAndPerItem
           onSelectCraft={onSelectCraft}
         />
       </aside>
@@ -8296,15 +8766,41 @@ function ProfitableCraftsPage({
   marketCrafts,
   craftLoadState,
   craftsUpdatedAt,
+  selectedItem,
+  listings,
+  itemTransactions,
+  recipes,
+  usedInRecipes,
+  recipeUsageState,
+  wikiGuide,
+  detailState,
+  containerAnalysis,
+  containerState,
+  marketHistoryRevision,
   onLoadCrafts,
+  onCloseDetail,
   onSelectCraft,
+  onSelectItem,
 }: {
   accountSnapshot: AccountSnapshot | null;
   marketCrafts: CraftOpportunity[];
   craftLoadState: LoadState;
   craftsUpdatedAt: number | null;
+  selectedItem: MarketItem | null;
+  listings: CommerceListings | null;
+  itemTransactions: ItemTransactions | null;
+  recipes: RecipeGuide[];
+  usedInRecipes: RecipeGuide[];
+  recipeUsageState: LoadState;
+  wikiGuide: WikiGuide | null;
+  detailState: LoadState;
+  containerAnalysis: ContainerAnalysis | null;
+  containerState: LoadState;
+  marketHistoryRevision: number;
   onLoadCrafts: () => Promise<CraftOpportunity[]>;
+  onCloseDetail: () => void;
   onSelectCraft: (opportunity: CraftOpportunity) => void;
+  onSelectItem: (item: Gw2Item) => void;
 }) {
   const now = useRelativeNow();
   const [recipeFilter, setRecipeFilter] = useState<"all" | "unlocked">("all");
@@ -8352,75 +8848,99 @@ function ProfitableCraftsPage({
   }, [characters, selectedCharacterName]);
 
   return (
-    <div className="focused-page">
-      <section className="page-header">
-        <div>
-          <span className="eyebrow">Market Crafting</span>
-          <h2>Profitable Crafts</h2>
-          <p>
-            Crafts ranked by buying every ingredient from the Trading Post, crafting the output,
-            then selling the result after Trading Post fees.
+    <div className={`market-workspace crafting-workspace ${selectedItem ? "" : "detail-closed"}`}>
+      <aside className="market-panel craft-table-panel">
+        <section className="page-header compact-page-header">
+          <div>
+            <span className="eyebrow">Market Crafting</span>
+            <h2>Profitable Crafts</h2>
+            <p>
+              Crafts ranked by buying every ingredient from the Trading Post, crafting the output,
+              then selling the result after Trading Post fees.
+            </p>
+          </div>
+          <button className="icon-button primary" onClick={() => void onLoadCrafts()}>
+            <RefreshCcw />
+            <span>{craftLoadState === "loading" ? "Loading" : "Refresh"}</span>
+          </button>
+        </section>
+
+        <section className="stat-grid compact-stat-grid">
+          <Metric icon={<TrendingUp />} label="Top Profit" value={<Money value={topProfit} />} tone={topProfit > 0 ? "positive" : "muted"} />
+          <Metric icon={<Coins />} label="Ranked Profit" value={<Money value={totalListedProfit} />} tone={totalListedProfit > 0 ? "positive" : "muted"} />
+          <Metric icon={<Hammer />} label="Crafts Shown" value={filteredCrafts.length.toLocaleString()} />
+          <Metric icon={<Database />} label="Updated" value={craftsUpdatedAt ? formatAge(craftsUpdatedAt, now) : "Not loaded"} tone={craftsUpdatedAt ? "default" : "muted"} />
+        </section>
+
+        <section className="surface craft-filter-panel">
+          <label>
+            Recipe availability
+            <select
+              value={recipeFilter}
+              disabled={!accountSnapshot}
+              onChange={(event) => setRecipeFilter(event.target.value as "all" | "unlocked")}
+            >
+              <option value="all">All profitable recipes</option>
+              <option value="unlocked">Unlocked on this account</option>
+            </select>
+          </label>
+          <label>
+            Character
+            <select
+              value={selectedCharacterName}
+              disabled={!accountSnapshot || characters.length === 0}
+              onChange={(event) => setSelectedCharacterName(event.target.value)}
+            >
+              <option value="all">Any character</option>
+              {characters.map((character) => (
+                <option key={character.name} value={character.name}>
+                  {character.name} · {character.profession}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div>
+            <span className="eyebrow">Account Filter</span>
+            <strong>{accountSnapshot ? `${hiddenCraftCount.toLocaleString()} hidden by filters` : "Load GW2 API to personalize"}</strong>
+          </div>
+          <p className="craft-filter-note">
+            Source: official GW2 recipe API plus cached GW2 Wiki Mystic Forge recipes. This table only
+            ranks recipes with a sellable output, positive after-fee profit, and fully priced Trading
+            Post ingredients. Account filters now keep every profitable recipe your API key reports as
+            unlocked, even outside the global top list.
           </p>
-        </div>
-        <button className="icon-button primary" onClick={() => void onLoadCrafts()}>
-          <RefreshCcw />
-          <span>{craftLoadState === "loading" ? "Loading" : "Refresh"}</span>
-        </button>
-      </section>
+        </section>
 
-      <section className="stat-grid">
-        <Metric icon={<TrendingUp />} label="Top Profit" value={<Money value={topProfit} />} tone={topProfit > 0 ? "positive" : "muted"} />
-        <Metric icon={<Coins />} label="Ranked Profit" value={<Money value={totalListedProfit} />} tone={totalListedProfit > 0 ? "positive" : "muted"} />
-        <Metric icon={<Hammer />} label="Crafts Shown" value={filteredCrafts.length.toLocaleString()} />
-        <Metric icon={<Database />} label="Updated" value={craftsUpdatedAt ? formatAge(craftsUpdatedAt, now) : "Not loaded"} tone={craftsUpdatedAt ? "default" : "muted"} />
-      </section>
+        <section className="surface craft-profit-surface">
+          <CraftProfitTable
+            opportunities={filteredCrafts}
+            loadState={craftLoadState}
+            onSelectCraft={onSelectCraft}
+          />
+        </section>
+      </aside>
 
-      <section className="surface craft-filter-panel">
-        <label>
-          Recipe availability
-          <select
-            value={recipeFilter}
-            disabled={!accountSnapshot}
-            onChange={(event) => setRecipeFilter(event.target.value as "all" | "unlocked")}
-          >
-            <option value="all">All profitable recipes</option>
-            <option value="unlocked">Unlocked on this account</option>
-          </select>
-        </label>
-        <label>
-          Character
-          <select
-            value={selectedCharacterName}
-            disabled={!accountSnapshot || characters.length === 0}
-            onChange={(event) => setSelectedCharacterName(event.target.value)}
-          >
-            <option value="all">Any character</option>
-            {characters.map((character) => (
-              <option key={character.name} value={character.name}>
-                {character.name} · {character.profession}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div>
-          <span className="eyebrow">Account Filter</span>
-          <strong>{accountSnapshot ? `${hiddenCraftCount.toLocaleString()} hidden by filters` : "Load GW2 API to personalize"}</strong>
-        </div>
-        <p className="craft-filter-note">
-          Source: official GW2 recipe API plus cached GW2 Wiki Mystic Forge recipes. This table only
-          ranks recipes with a sellable output, positive after-fee profit, and fully priced Trading
-          Post ingredients. Account filters now keep every profitable recipe your API key reports as
-          unlocked, even outside the global top list.
-        </p>
-      </section>
-
-      <section className="surface craft-profit-surface">
-        <CraftProfitTable
-          opportunities={filteredCrafts}
-          loadState={craftLoadState}
-          onSelectCraft={onSelectCraft}
-        />
-      </section>
+      {selectedItem ? (
+        <section className="detail-panel">
+          <ItemDetail
+            item={selectedItem}
+            catalog={[]}
+            listings={listings}
+            itemTransactions={itemTransactions}
+            recipes={recipes}
+            usedInRecipes={usedInRecipes}
+            recipeUsageState={recipeUsageState}
+            wikiGuide={wikiGuide}
+            detailState={detailState}
+            containerAnalysis={containerAnalysis}
+            containerState={containerState}
+            accountSnapshot={accountSnapshot}
+            marketHistoryRevision={marketHistoryRevision}
+            onClose={onCloseDetail}
+            onOpenDetail={(detailItem) => onSelectItem(buildMarketItemForDetail(detailItem))}
+          />
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -8433,6 +8953,13 @@ interface MysticForgeRecipeRow {
   ingredientCount: number;
   source: string;
 }
+
+type MysticForgeCategoryFilter =
+  | "all"
+  | "tradable"
+  | "not-tradable"
+  | "multiple-output"
+  | "gathering";
 
 function chooseMysticForgeRecipeRow(left: MysticForgeRecipeRow, right: MysticForgeRecipeRow): MysticForgeRecipeRow {
   if (left.tradable !== right.tradable) {
@@ -8456,6 +8983,23 @@ function chooseMysticForgeRecipeRow(left: MysticForgeRecipeRow, right: MysticFor
   }
 
   return left.ingredientCount >= right.ingredientCount ? left : right;
+}
+
+function isGatheringRelatedRecipe(guide: RecipeGuide, output: Gw2Item): boolean {
+  const items = [
+    output,
+    ...guide.ingredients
+      .map((ingredient) => ingredient.item ?? getStoredItem(ingredient.item_id))
+      .filter((item): item is Gw2Item => Boolean(item)),
+  ];
+
+  return items.some((item) => {
+    const name = item.name.toLowerCase();
+    return (
+      item.type === "CraftingMaterial" &&
+      /\b(ore|ingot|log|wood|plank|scrap|cloth|leather|section|bolt|herb|root|vegetable|mushroom|flower|fiber|fillet|fish|scale|dust|crystal|orb|pebble|nugget|lump|shard)\b/.test(name)
+    );
+  });
 }
 
 function MysticForgePage({
@@ -8501,7 +9045,7 @@ function MysticForgePage({
 }) {
   const now = useRelativeNow();
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState<"all" | "tradable" | "not-tradable">("all");
+  const [category, setCategory] = useState<MysticForgeCategoryFilter>("all");
   const rows = useMemo(() => {
     const rowsByOutputId = new Map<number, MysticForgeRecipeRow>();
 
@@ -8537,6 +9081,14 @@ function MysticForgePage({
       }
 
       if (category === "not-tradable" && row.tradable) {
+        return false;
+      }
+
+      if (category === "multiple-output" && row.guide.recipe.output_item_count <= 1) {
+        return false;
+      }
+
+      if (category === "gathering" && !isGatheringRelatedRecipe(row.guide, row.output)) {
         return false;
       }
 
@@ -8609,6 +9161,8 @@ function MysticForgePage({
               <option value="all">All Mystic Forge recipes</option>
               <option value="tradable">Tradable outputs</option>
               <option value="not-tradable">Non-tradable outputs</option>
+              <option value="multiple-output">Multiple outputs</option>
+              <option value="gathering">Gathering materials</option>
             </select>
           </label>
           <label>
@@ -8660,7 +9214,12 @@ function MysticForgePage({
                         <ItemIcon item={row.output} />
                         <span className="item-copy">
                           <strong>{row.output.name}</strong>
-                          <span>{row.output.rarity} {row.output.type}</span>
+                          <span>
+                            {row.output.rarity} {row.output.type}
+                            {row.guide.recipe.output_item_count > 1
+                              ? ` · Crafts ${row.guide.recipe.output_item_count.toLocaleString()}`
+                              : ""}
+                          </span>
                         </span>
                       </span>
                     </td>
@@ -8781,11 +9340,13 @@ function CraftProfitTable({
   opportunities,
   loadState,
   compact = false,
+  hideQuantityAndPerItem = false,
   onSelectCraft,
 }: {
   opportunities: CraftOpportunity[];
   loadState: LoadState;
   compact?: boolean;
+  hideQuantityAndPerItem?: boolean;
   onSelectCraft: (opportunity: CraftOpportunity) => void;
 }) {
   const [sort, setSort] = useState<CraftProfitSort | null>(null);
@@ -8872,9 +9433,9 @@ function CraftProfitTable({
         <thead>
           <tr>
             {renderHeader("name", "Name")}
-            {renderHeader("quantity", "Qty")}
+            {!hideQuantityAndPerItem ? renderHeader("quantity", "Qty") : null}
             {renderHeader("demand", "Demand")}
-            {renderHeader("profitPerItem", "Profit / Item")}
+            {!hideQuantityAndPerItem ? renderHeader("profitPerItem", "Profit / Item") : null}
             {renderHeader("profit", "Profit")}
             {renderHeader("craftingCost", "Crafting Cost")}
             {renderHeader("sellValue", "Sell Value")}
@@ -8896,7 +9457,7 @@ function CraftProfitTable({
                     </span>
                   </span>
                 </td>
-                <td>{quantity.toLocaleString()}</td>
+                {!hideQuantityAndPerItem ? <td>{quantity.toLocaleString()}</td> : null}
                 <td title="Demand uses current buy-order quantity divided by current sell-listing quantity.">
                   <span className={`demand-ratio ${demandRatio >= 1 ? "strong" : ""}`}>
                     {formatDemandRatio(demandRatio)}
@@ -8905,7 +9466,7 @@ function CraftProfitTable({
                     {formatCompactQuantity(buyQuantity)} wanted / {formatCompactQuantity(sellQuantity)} listed
                   </small>
                 </td>
-                <td className="profit"><Money value={profitPerItem} /></td>
+                {!hideQuantityAndPerItem ? <td className="profit"><Money value={profitPerItem} /></td> : null}
                 <td className="profit"><Money value={opportunity.marketProfit} /></td>
                 <td><Money value={opportunity.marketCost} /></td>
                 <td>
@@ -9111,15 +9672,43 @@ function compareNumberValue(left: number | null | undefined, right: number | nul
 }
 
 function LegendaryReadinessPage({
+  catalog,
+  selectedItem,
+  listings,
+  itemTransactions,
+  recipes,
+  usedInRecipes,
+  recipeUsageState,
+  wikiGuide,
+  detailState,
+  containerAnalysis,
+  containerState,
   accountSnapshot,
   analysis,
   analysisState,
+  marketHistoryRevision,
   onAnalyze,
+  onCloseDetail,
+  onSelectItem,
 }: {
+  catalog: MarketItem[];
+  selectedItem: MarketItem | null;
+  listings: CommerceListings | null;
+  itemTransactions: ItemTransactions | null;
+  recipes: RecipeGuide[];
+  usedInRecipes: RecipeGuide[];
+  recipeUsageState: LoadState;
+  wikiGuide: WikiGuide | null;
+  detailState: LoadState;
+  containerAnalysis: ContainerAnalysis | null;
+  containerState: LoadState;
   accountSnapshot: AccountSnapshot | null;
   analysis: AccountAnalysis | null;
   analysisState: LoadState;
+  marketHistoryRevision: number;
   onAnalyze: () => Promise<void>;
+  onCloseDetail: () => void;
+  onSelectItem: (item: Gw2Item) => void;
 }) {
   const legendaries = analysis?.legendaries ?? [];
   const { sortedRows: sortedLegendaries, renderHeader } = useSortableRows<
@@ -9160,7 +9749,8 @@ function LegendaryReadinessPage({
   }
 
   return (
-    <div className="focused-page">
+    <div className={`market-workspace crafting-workspace ${selectedItem ? "" : "detail-closed"}`}>
+      <aside className="market-panel craft-table-panel">
       <section className="page-header">
         <div>
           <span className="eyebrow">Personal Account Scan</span>
@@ -9193,7 +9783,19 @@ function LegendaryReadinessPage({
               </thead>
               <tbody>
                 {sortedLegendaries.map((entry) => (
-                  <tr key={`${entry.recipe.id}-${entry.item.id}`}>
+                  <tr
+                    key={`${entry.recipe.id}-${entry.item.id}`}
+                    className={selectedItem?.id === entry.item.id ? "selected-row" : ""}
+                    onClick={() => onSelectItem(entry.item)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onSelectItem(entry.item);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                  >
                     <td>
                       <span className="table-item-cell">
                         <ItemIcon item={entry.item} />
@@ -9227,6 +9829,29 @@ function LegendaryReadinessPage({
           </div>
         ) : null}
       </section>
+      </aside>
+
+      {selectedItem ? (
+        <section className="detail-panel">
+          <ItemDetail
+            item={selectedItem}
+            catalog={catalog}
+            listings={listings}
+            itemTransactions={itemTransactions}
+            recipes={recipes}
+            usedInRecipes={usedInRecipes}
+            recipeUsageState={recipeUsageState}
+            wikiGuide={wikiGuide}
+            detailState={detailState}
+            containerAnalysis={containerAnalysis}
+            containerState={containerState}
+            accountSnapshot={accountSnapshot}
+            marketHistoryRevision={marketHistoryRevision}
+            onClose={onCloseDetail}
+            onOpenDetail={onSelectItem}
+          />
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -9323,11 +9948,16 @@ function SalvagingPage({
   const {
     sortedRows: sortedOutputRows,
     renderHeader: renderOutputHeader,
-  } = useSortableRows<(typeof outputRows)[number], "output" | "buy" | "sell" | "supply">(
+  } = useSortableRows<(typeof outputRows)[number], "output" | "demand" | "buy" | "sell" | "supply">(
     outputRows,
     { key: "output", direction: "asc" },
     {
       output: (left, right) => compareStringValue(left.quote.item?.name ?? left.name, right.quote.item?.name ?? right.name),
+      demand: (left, right) =>
+        compareNumberValue(
+          getDemandRatio(left.quote.item?.price.buys.quantity ?? 0, left.quote.item?.price.sells.quantity ?? 0),
+          getDemandRatio(right.quote.item?.price.buys.quantity ?? 0, right.quote.item?.price.sells.quantity ?? 0),
+        ),
       buy: (left, right) => compareNumberValue(left.quote.buyCost, right.quote.buyCost),
       sell: (left, right) => compareNumberValue(left.quote.instantSellNet, right.quote.instantSellNet),
       supply: (left, right) => compareNumberValue(left.quote.item?.price.sells.quantity ?? 0, right.quote.item?.price.sells.quantity ?? 0),
@@ -9402,6 +10032,7 @@ function SalvagingPage({
                 <thead>
                   <tr>
                     {renderOutputHeader("output", "Output")}
+                    {renderOutputHeader("demand", "Demand")}
                     {renderOutputHeader("buy", "Buy From Market")}
                     {renderOutputHeader("sell", "Instant Sell After Fees")}
                     {renderOutputHeader("supply", "Supply")}
@@ -9426,6 +10057,15 @@ function SalvagingPage({
                             <span>{row.quote.item ? `${row.quote.item.rarity} ${row.quote.item.type}` : "Not in loaded market"}</span>
                           </span>
                         </span>
+                      </td>
+                      <td title="Demand uses current buy-order quantity divided by current sell-listing quantity.">
+                        <span className={`demand-ratio ${getDemandRatio(row.quote.item?.price.buys.quantity ?? 0, row.quote.item?.price.sells.quantity ?? 0) >= 1 ? "strong" : ""}`}>
+                          {formatDemandRatio(getDemandRatio(row.quote.item?.price.buys.quantity ?? 0, row.quote.item?.price.sells.quantity ?? 0))}
+                        </span>
+                        <small>
+                          {formatCompactQuantity(row.quote.item?.price.buys.quantity ?? 0)} wanted /{" "}
+                          {formatCompactQuantity(row.quote.item?.price.sells.quantity ?? 0)} listed
+                        </small>
                       </td>
                       <td>{row.quote.buyCost ? <Money value={row.quote.buyCost} /> : "Unavailable"}</td>
                       <td>{row.quote.instantSellNet ? <Money value={row.quote.instantSellNet} /> : "Unavailable"}</td>
@@ -10797,20 +11437,25 @@ function FarmingCalculatorPage({
 function FarmTrackerPage({
   accountSnapshot,
   accountItems,
+  catalog,
   apiKeyRemembered,
   analysisState,
   onAnalyze,
+  onRefreshSnapshot,
 }: {
   accountSnapshot: AccountSnapshot | null;
   accountItems: Map<number, Gw2Item>;
+  catalog: MarketItem[];
   apiKeyRemembered: boolean;
   analysisState: LoadState;
   onAnalyze: () => Promise<void>;
+  onRefreshSnapshot: () => Promise<void>;
 }) {
   const now = useRelativeNow();
   const [mode, setMode] = useState<FarmTrackerMode>("account");
   const [selectedCharacter, setSelectedCharacter] = useState("");
   const [revision, setRevision] = useState(0);
+  const [trackLootEnabled, setTrackLootEnabled] = useState(() => readFarmTrackerTrackLootEnabled());
   const [trackerItems, setTrackerItems] = useState<Map<number, Gw2Item>>(new Map());
   const characters = accountSnapshot?.characters ?? [];
 
@@ -10829,13 +11474,35 @@ function FarmTrackerPage({
   );
 
   useEffect(() => {
-    if (!accountSnapshot || currentHoldings.size === 0) {
+    if (!accountSnapshot || currentHoldings.size === 0 || !trackLootEnabled) {
       return;
     }
 
     updateFarmTrackerState(scopeKey, currentHoldings);
     setRevision((current) => current + 1);
-  }, [accountSnapshot, currentHoldings, scopeKey]);
+  }, [accountSnapshot, currentHoldings, scopeKey, trackLootEnabled]);
+
+  useEffect(() => {
+    writeFarmTrackerTrackLootEnabled(trackLootEnabled);
+  }, [trackLootEnabled]);
+
+  useEffect(() => {
+    if (!trackLootEnabled || !accountSnapshot || !apiKeyRemembered) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      if (analysisState === "loading") {
+        return;
+      }
+
+      void onRefreshSnapshot().catch(() => undefined);
+    }, FARM_TRACKER_AUTO_SNAPSHOT_MS);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [accountSnapshot, analysisState, apiKeyRemembered, onRefreshSnapshot, trackLootEnabled]);
 
   const trackerState = useMemo(() => readFarmTrackerState(scopeKey), [scopeKey, revision]);
   useEffect(() => {
@@ -10873,19 +11540,25 @@ function FarmTrackerPage({
         const item = accountItems.get(id) ?? trackerItems.get(id) ?? getStoredItem(id);
         const price = getStoredPrice(id);
         const unitValue = Math.floor((price?.buys.unit_price || price?.sells.unit_price || 0) * 0.85);
+        const salvageProfile = item ? getSalvageEstimateForItem(item) : null;
+        const salvageUnitValue = salvageProfile?.outputs.length
+          ? estimateSalvageOutputValue(salvageProfile.outputs, catalog)
+          : 0;
         return {
           id,
           count,
           item,
           value: unitValue * count,
+          salvageValue: salvageUnitValue * count,
+          salvageUnitValue,
+          salvageModeled: Boolean(salvageProfile?.outputs.length),
         };
       })
-      .sort((left, right) => right.value - left.value || right.count - left.count)
-      .slice(0, 50);
-  }, [accountItems, revision, scopeKey, trackerItems, trackerState]);
+      .sort((left, right) => Math.max(right.value, right.salvageValue) - Math.max(left.value, left.salvageValue) || right.count - left.count);
+  }, [accountItems, catalog, revision, scopeKey, trackerItems, trackerState]);
   const { sortedRows: sortedGainedRows, renderHeader } = useSortableRows<
     (typeof gainedRows)[number],
-    "item" | "gained" | "value" | "unit"
+    "item" | "gained" | "value" | "salvage" | "unit"
   >(
     gainedRows,
     { key: "value", direction: "desc" },
@@ -10893,6 +11566,7 @@ function FarmTrackerPage({
       item: (left, right) => compareStringValue(left.item?.name ?? `Item ${left.id}`, right.item?.name ?? `Item ${right.id}`),
       gained: (left, right) => compareNumberValue(left.count, right.count),
       value: (left, right) => compareNumberValue(left.value, right.value),
+      salvage: (left, right) => compareNumberValue(left.salvageValue, right.salvageValue),
       unit: (left, right) => compareNumberValue(left.count ? left.value / left.count : 0, right.count ? right.value / right.count : 0),
     },
   );
@@ -10906,6 +11580,18 @@ function FarmTrackerPage({
 
     resetFarmTrackerState(scopeKey, currentHoldings);
     setRevision((current) => current + 1);
+  }
+
+  function toggleTrackLoot() {
+    setTrackLootEnabled((current) => {
+      const next = !current;
+      if (next && accountSnapshot) {
+        resumeFarmTrackerState(scopeKey, currentHoldings);
+        setRevision((revisionValue) => revisionValue + 1);
+      }
+
+      return next;
+    });
   }
 
   if (!accountSnapshot) {
@@ -10935,11 +11621,21 @@ function FarmTrackerPage({
           <span className="eyebrow">Daily Snapshot Tracker</span>
           <h2>Farming Tracker</h2>
           <p>
-            Tracks positive inventory/material deltas since today&apos;s reset baseline for {accountSnapshot.tokenInfo.name}.
+            Tracks current net inventory/material gains since today&apos;s reset baseline for {accountSnapshot.tokenInfo.name}.
           </p>
         </div>
         <div className="page-actions">
-          <button className="icon-button" onClick={() => void onAnalyze()}>
+          <button
+            type="button"
+            className={`track-loot-toggle ${trackLootEnabled ? "active" : ""}`}
+            onClick={toggleTrackLoot}
+            aria-pressed={trackLootEnabled}
+            title={trackLootEnabled ? "Tracking loot with one API snapshot per minute" : "Loot tracking is paused"}
+          >
+            <span className="toggle-knob" aria-hidden="true" />
+            <span>Track Loot</span>
+          </button>
+          <button className="icon-button" onClick={() => void onRefreshSnapshot()}>
             {analysisState === "loading" ? <Loader2 className="spin" /> : <RefreshCcw />}
             <span>Refresh API</span>
           </button>
@@ -10982,18 +11678,27 @@ function FarmTrackerPage({
         <Metric icon={<Coins />} label="Tracked Profit" value={<Money value={totalValue} />} tone={totalValue ? "positive" : "muted"} />
         <Metric icon={<Boxes />} label="Items Gained" value={totalItems.toLocaleString()} />
         <Metric icon={<Database />} label="Stacks" value={gainedRows.length.toLocaleString()} />
-        <Metric icon={<RefreshCcw />} label="Last Snapshot" value={trackerState ? formatAge(trackerState.lastUpdatedAt, now) : "Now"} />
+        <Metric
+          icon={<RefreshCcw />}
+          label="Last Snapshot"
+          value={trackLootEnabled
+            ? trackerState
+              ? formatAge(trackerState.lastUpdatedAt, now)
+              : "Now"
+            : "Paused"}
+        />
       </section>
 
       <section className="surface craft-profit-surface">
         {gainedRows.length ? (
-          <div className="craft-table-wrap">
+          <div className="craft-table-wrap farm-tracker-table-wrap">
             <table className="craft-profit-table">
               <thead>
                 <tr>
                   {renderHeader("item", "Item")}
                   {renderHeader("gained", "Gained")}
                   {renderHeader("value", "Est. Sell Value")}
+                  {renderHeader("salvage", "Est. Salvage")}
                   {renderHeader("unit", "Unit")}
                 </tr>
               </thead>
@@ -11011,6 +11716,15 @@ function FarmTrackerPage({
                     </td>
                     <td>{row.count.toLocaleString()}</td>
                     <td><Money value={row.value} /></td>
+                    <td>
+                      {row.salvageValue ? (
+                        <Money value={row.salvageValue} />
+                      ) : row.salvageModeled ? (
+                        "Unpriced"
+                      ) : (
+                        "-"
+                      )}
+                    </td>
                     <td>{row.count ? <Money value={Math.floor(row.value / row.count)} /> : "-"}</td>
                   </tr>
                 ))}
@@ -11021,7 +11735,11 @@ function FarmTrackerPage({
           <div className="empty-detail inline-empty">
             <ListChecks />
             <h2>No gains tracked yet</h2>
-            <p>Reset the tracker, farm for a while, then refresh the API to record positive item changes.</p>
+            <p>
+              {trackLootEnabled
+                ? "Farm for a while and the tracker will snapshot the account API once per minute."
+                : "Turn Track Loot on to resume automatic snapshots."}
+            </p>
           </div>
         )}
       </section>
@@ -11145,6 +11863,23 @@ function writeFarmTrackerStore(store: Record<string, FarmTrackerStoredState>) {
   }
 }
 
+function readFarmTrackerTrackLootEnabled(): boolean {
+  try {
+    const raw = window.localStorage.getItem(FARM_TRACKER_TRACK_LOOT_STORAGE_KEY);
+    return raw === null ? true : raw === "true";
+  } catch {
+    return true;
+  }
+}
+
+function writeFarmTrackerTrackLootEnabled(enabled: boolean) {
+  try {
+    window.localStorage.setItem(FARM_TRACKER_TRACK_LOOT_STORAGE_KEY, String(enabled));
+  } catch {
+    // Losing this preference should not break tracking.
+  }
+}
+
 function readFarmTrackerState(scopeKey: string): FarmTrackerStoredState | null {
   return readFarmTrackerStore()[scopeKey] ?? null;
 }
@@ -11161,19 +11896,13 @@ function updateFarmTrackerState(scopeKey: string, currentHoldings: Map<number, n
     return fresh;
   }
 
-  const gained = new Map(existing.gained);
-  const previous = new Map(existing.lastHoldings);
-
-  for (const [id, count] of currentHoldings) {
-    const delta = count - (previous.get(id) ?? 0);
-    if (delta > 0) {
-      gained.set(id, (gained.get(id) ?? 0) + delta);
-    }
-  }
+  const baseline = getFarmTrackerBaseline(existing);
+  const gained = calculateFarmTrackerGains(baseline, currentHoldings, new Map(existing.gained));
 
   const next: FarmTrackerStoredState = {
     ...existing,
     lastUpdatedAt: Date.now(),
+    baselineHoldings: serializeHoldingMap(baseline),
     lastHoldings: serializeHoldingMap(currentHoldings),
     gained: serializeHoldingMap(gained),
   };
@@ -11190,6 +11919,31 @@ function resetFarmTrackerState(scopeKey: string, currentHoldings: Map<number, nu
   return next;
 }
 
+function resumeFarmTrackerState(scopeKey: string, currentHoldings: Map<number, number>): FarmTrackerStoredState {
+  const store = readFarmTrackerStore();
+  const today = getLocalDateKey();
+  const existing = store[scopeKey];
+
+  if (!existing || existing.dateKey !== today) {
+    const fresh = createFarmTrackerState(scopeKey, currentHoldings);
+    store[scopeKey] = fresh;
+    writeFarmTrackerStore(store);
+    return fresh;
+  }
+
+  const baseline = rebaseFarmTrackerBaseline(currentHoldings, new Map(existing.gained));
+  const next: FarmTrackerStoredState = {
+    ...existing,
+    lastUpdatedAt: Date.now(),
+    baselineHoldings: serializeHoldingMap(baseline),
+    lastHoldings: serializeHoldingMap(currentHoldings),
+    gained: serializeHoldingMap(calculateFarmTrackerGains(baseline, currentHoldings, new Map(existing.gained))),
+  };
+  store[scopeKey] = next;
+  writeFarmTrackerStore(store);
+  return next;
+}
+
 function createFarmTrackerState(scopeKey: string, holdings: Map<number, number>): FarmTrackerStoredState {
   const now = Date.now();
   return {
@@ -11197,9 +11951,63 @@ function createFarmTrackerState(scopeKey: string, holdings: Map<number, number>)
     dateKey: getLocalDateKey(),
     startedAt: now,
     lastUpdatedAt: now,
+    baselineHoldings: serializeHoldingMap(holdings),
     lastHoldings: serializeHoldingMap(holdings),
     gained: [],
   };
+}
+
+function getFarmTrackerBaseline(state: FarmTrackerStoredState): Map<number, number> {
+  if (state.baselineHoldings) {
+    return new Map(state.baselineHoldings);
+  }
+
+  const lastHoldings = new Map(state.lastHoldings);
+  const gained = new Map(state.gained);
+  const baseline = new Map<number, number>();
+  const itemIds = new Set<number>([...lastHoldings.keys(), ...gained.keys()]);
+
+  for (const id of itemIds) {
+    baseline.set(id, Math.max(0, (lastHoldings.get(id) ?? 0) - (gained.get(id) ?? 0)));
+  }
+
+  return baseline;
+}
+
+function calculateFarmTrackerGains(
+  baseline: Map<number, number>,
+  currentHoldings: Map<number, number>,
+  previousGains = new Map<number, number>(),
+): Map<number, number> {
+  const gained = new Map<number, number>();
+  const itemIds = new Set<number>([
+    ...baseline.keys(),
+    ...currentHoldings.keys(),
+    ...previousGains.keys(),
+  ]);
+
+  for (const id of itemIds) {
+    const delta = (currentHoldings.get(id) ?? 0) - (baseline.get(id) ?? 0);
+    if (delta > 0) {
+      gained.set(id, delta);
+    }
+  }
+
+  return gained;
+}
+
+function rebaseFarmTrackerBaseline(
+  currentHoldings: Map<number, number>,
+  gained: Map<number, number>,
+): Map<number, number> {
+  const baseline = new Map<number, number>();
+  const itemIds = new Set<number>([...currentHoldings.keys(), ...gained.keys()]);
+
+  for (const id of itemIds) {
+    baseline.set(id, Math.max(0, (currentHoldings.get(id) ?? 0) - (gained.get(id) ?? 0)));
+  }
+
+  return baseline;
 }
 
 function serializeHoldingMap(map: Map<number, number>): Array<[number, number]> {
@@ -11560,7 +12368,7 @@ function isSalvageMarketCandidate(item: MarketItem): boolean {
   return salvageTypes.has(item.type) || /unidentified gear|salvage/.test(name);
 }
 
-function getSalvageEstimateForItem(item: MarketItem): SalvageProfile {
+function getSalvageEstimateForItem(item: MarketItem | Gw2Item): SalvageProfile {
   const name = item.name.toLowerCase();
   const salvageableGearTypes = new Set(["Armor", "Weapon", "Trinket", "Back"]);
 
@@ -11617,7 +12425,7 @@ function getSalvageEstimateForItem(item: MarketItem): SalvageProfile {
   };
 }
 
-function getEquipmentSalvageProfile(item: MarketItem): SalvageProfile {
+function getEquipmentSalvageProfile(item: MarketItem | Gw2Item): SalvageProfile {
   const tier = getSalvageMaterialTier(item.level);
   const families = getSalvageMaterialFamilies(item);
   const materialAverage = getBaseSalvageMaterialAverage(item.rarity);
@@ -11685,7 +12493,7 @@ function getBaseSalvageMaterialAverage(rarity: string): number {
   }
 }
 
-function getSalvageMaterialFamilies(item: MarketItem): SalvageMaterialFamily[] {
+function getSalvageMaterialFamilies(item: MarketItem | Gw2Item): SalvageMaterialFamily[] {
   if (item.type === "Armor") {
     const weightClass = String(item.details?.weight_class ?? "").toLowerCase();
     if (weightClass === "heavy") {
@@ -11724,7 +12532,7 @@ function getSalvageMaterialFamilies(item: MarketItem): SalvageMaterialFamily[] {
   return ["metal"];
 }
 
-function getUpgradeComponentSalvageOutputs(item: MarketItem): SalvageOutputEstimate[] {
+function getUpgradeComponentSalvageOutputs(item: MarketItem | Gw2Item): SalvageOutputEstimate[] {
   const outputs: SalvageOutputEstimate[] = [
     makeSalvageOutput(
       item.rarity === "Exotic" || item.rarity === "Rare" ? "Pile of Lucent Crystal" : "Lucent Mote",
@@ -11984,27 +12792,38 @@ function normalizeMapName(value: string): string {
     .trim();
 }
 
-function ItemIcon({ item }: { item: { name: string; icon?: string } }) {
+function ItemIcon({ item }: { item: { id?: number; name: string; icon?: string } }) {
+  const { isFavoriteItem } = useFavoriteItems();
   const [iconFailed, setIconFailed] = useState(false);
   const iconUrl = item.icon?.startsWith("http://")
     ? item.icon.replace(/^http:\/\//i, "https://")
     : item.icon;
+  const favorite = isFavoriteItem(item);
 
   useEffect(() => {
     setIconFailed(false);
   }, [iconUrl]);
 
-  return iconUrl && !iconFailed ? (
-    <img
-      className="item-icon"
-      src={iconUrl}
-      alt=""
-      loading="lazy"
-      onError={() => setIconFailed(true)}
-    />
-  ) : (
-    <span className="item-icon fallback">
-      <Boxes />
+  return (
+    <span className="item-icon-frame">
+      {iconUrl && !iconFailed ? (
+        <img
+          className="item-icon"
+          src={iconUrl}
+          alt=""
+          loading="lazy"
+          onError={() => setIconFailed(true)}
+        />
+      ) : (
+        <span className="item-icon fallback">
+          <Boxes />
+        </span>
+      )}
+      {favorite ? (
+        <span className="item-favorite-badge" aria-label="Favourite item">
+          <Star />
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -12044,15 +12863,16 @@ function ItemDetail({
   onOpenDetail?: (item: Gw2Item) => void;
   extraInfo?: ReactNode;
 }) {
+  const { isFavoriteItem, toggleFavoriteItem } = useFavoriteItems();
   const topBuy = listings?.buys?.[0];
   const topSell = listings?.sells?.[0];
   const isTradable = hasTradingPostPrice(item);
   const showMarketSections = isTradable;
-  const showCraftingSections = recipes.length > 0 || detailState === "loading";
   const salvageProfile = useMemo(() => getSalvageEstimateForItem(item), [item]);
   const showSalvageProfile = salvageProfile.outputs.length > 0 || salvageProfile.confidence !== "Unmodeled";
   const [wikiAcquisition, setWikiAcquisition] = useState<WikiItemAcquisition | null>(null);
   const [wikiAcquisitionState, setWikiAcquisitionState] = useState<LoadState>("idle");
+  const isFavorite = isFavoriteItem(item);
 
   useEffect(() => {
     let ignore = false;
@@ -12092,20 +12912,21 @@ function ItemDetail({
             {item.type} - Level {item.level || "Any"}
           </p>
         </div>
+        <button
+          className={`detail-favorite-button ${isFavorite ? "active" : ""}`}
+          type="button"
+          onClick={() => toggleFavoriteItem(item)}
+          aria-label={isFavorite ? "Remove from favourites" : "Add to favourites"}
+          title={isFavorite ? "Remove from favourites" : "Add to favourites"}
+        >
+          <Star />
+        </button>
         <button className="detail-close-button" onClick={onClose} aria-label="Close item details" title="Close item details">
           <X />
         </button>
       </section>
 
       {extraInfo}
-
-      {wikiAcquisition?.teachesRecipe ? (
-        <TeachesRecipePanel
-          unlock={wikiAcquisition.teachesRecipe}
-          catalog={catalog}
-          onOpenDetail={onOpenDetail}
-        />
-      ) : null}
 
       {!isTradable ? (
         <section className="surface tradeability-note">
@@ -12160,6 +12981,14 @@ function ItemDetail({
         wikiGuide={wikiGuide}
         accountSnapshot={accountSnapshot}
       />
+
+      {wikiAcquisition?.teachesRecipe ? (
+        <TeachesRecipePanel
+          unlock={wikiAcquisition.teachesRecipe}
+          catalog={catalog}
+          onOpenDetail={onOpenDetail}
+        />
+      ) : null}
 
       {recipes.length ? (
         <IngredientMindMap
@@ -12245,24 +13074,6 @@ function ItemDetail({
         </section>
       ) : null}
 
-      {showCraftingSections ? (
-        <section className="surface">
-          <div className="section-title">
-            <Hammer />
-            <h3>Crafting Routes</h3>
-          </div>
-          {recipes.length ? (
-            <div className="recipe-list">
-              {recipes.map((guide) => (
-                <RecipeCard key={guide.recipe.id} guide={guide} accountSnapshot={accountSnapshot} />
-              ))}
-            </div>
-          ) : detailState === "loading" ? (
-            <SkeletonRows />
-          ) : null}
-        </section>
-      ) : null}
-
       <RecipeUsageSections
         outputRecipes={recipes}
         usedInRecipes={usedInRecipes}
@@ -12296,29 +13107,31 @@ function TeachesRecipePanel({
   catalog: MarketItem[];
   onOpenDetail?: (item: Gw2Item) => void;
 }) {
-  const taughtItem = findMarketItemByName(catalog, unlock.title);
+  const taughtItem = findMarketItemByName(catalog, unlock.title) ?? getStoredItemByName(unlock.title);
 
   return (
     <section className="surface teaches-recipe-note">
-      <BookOpen />
-      <div>
-        <span>Teaches recipe</span>
-        <strong>{unlock.title}</strong>
-        <div className="teaches-recipe-actions">
-          {taughtItem && onOpenDetail ? (
-            <button
-              type="button"
-              className="text-link-button"
-              onClick={() => onOpenDetail(taughtItem)}
-            >
-              Open item detail
-            </button>
-          ) : null}
-          <a href={unlock.url} target="_blank" rel="noreferrer">
-            Open wiki
-            <ExternalLink />
-          </a>
-        </div>
+      <div className="section-title">
+        <BookOpen />
+        <h3>Teaches Recipe</h3>
+      </div>
+      <div className="teaches-recipe-content">
+        <button
+          type="button"
+          className="teaches-recipe-item"
+          onClick={() => taughtItem && onOpenDetail?.(taughtItem)}
+          disabled={!taughtItem || !onOpenDetail}
+        >
+          <ItemIcon item={taughtItem ?? { name: unlock.title }} />
+          <span className="item-copy">
+            <strong>{unlock.title}</strong>
+            <span>{taughtItem ? `${taughtItem.rarity} ${taughtItem.type}` : "Wiki recipe unlock"}</span>
+          </span>
+        </button>
+        <a href={unlock.url} target="_blank" rel="noreferrer">
+          Open wiki
+          <ExternalLink />
+        </a>
       </div>
     </section>
   );
@@ -14196,6 +15009,9 @@ function RecipeCard({
             <span>
               {sourceLabel}
               {guide.recipe.min_rating ? ` - Rating ${guide.recipe.min_rating}` : ""}
+              {guide.recipe.output_item_count > 1
+                ? ` - Crafts ${guide.recipe.output_item_count.toLocaleString()}`
+                : ""}
             </span>
           </span>
         </div>
@@ -14207,8 +15023,18 @@ function RecipeCard({
 
       <div className="cost-line">
         <span className="cost-price">
-          {marketCostLabel} {guide.marketCost > 0 ? <Money value={guide.marketCost} /> : "Unavailable"}
+          {accountSnapshot ? "Missing purchase cost" : marketCostLabel}{" "}
+          {(accountSnapshot ? guide.personalCost : guide.marketCost) > 0 ? (
+            <Money value={accountSnapshot ? guide.personalCost : guide.marketCost} />
+          ) : (
+            "Unavailable"
+          )}
         </span>
+        {accountSnapshot ? (
+          <span>
+            Full TP recipe {guide.marketCost > 0 ? <Money value={guide.marketCost} /> : "Unavailable"}
+          </span>
+        ) : null}
         <span>Owned coverage {Math.round(guide.ownedCoverage * 100)}%</span>
         <a href={sourceUrl} target="_blank" rel="noreferrer">
           Source
@@ -14628,11 +15454,12 @@ function RoutePlanner({
   const ownedCount = accountSnapshot?.holdings.get(item.id) ?? 0;
   const buyCost = item.price.sells.unit_price;
   const hasBuyPrice = hasTradingPostPrice(item);
-  const craftCost = bestRecipe
+  const personalCraftCost = bestRecipe
     ? accountSnapshot
       ? bestRecipe.personalCost
       : bestRecipe.marketCost
     : Number.POSITIVE_INFINITY;
+  const fullRecipeCost = bestRecipe ? bestRecipe.marketCost : Number.POSITIVE_INFINITY;
   const hasEnoughGold = accountSnapshot ? accountSnapshot.coins >= buyCost : false;
 
   let route = hasBuyPrice ? "Use the Trading Post" : "Follow direct acquisition";
@@ -14651,11 +15478,16 @@ function RoutePlanner({
   if (accountSnapshot && ownedCount > 0) {
     route = "Already available";
     detail = `${ownedCount.toLocaleString()} in account storage.`;
-  } else if (bestRecipe && (!hasBuyPrice || craftCost < buyCost)) {
-    route = accountSnapshot ? "Craft with current materials" : "Craft from market materials";
-    detail = (
+  } else if (bestRecipe && (!hasBuyPrice || personalCraftCost < buyCost)) {
+    route = accountSnapshot ? "Craft using owned materials" : "Craft from market materials";
+    detail = accountSnapshot ? (
       <>
-        <Money value={craftCost} /> estimated {accountSnapshot ? "personal" : "market"} cost.
+        Buy missing ingredients for <Money value={personalCraftCost} />. Full recipe cost{" "}
+        <Money value={fullRecipeCost} /> if buying every ingredient.
+      </>
+    ) : (
+      <>
+        Full recipe cost <Money value={fullRecipeCost} /> using market ingredients.
       </>
     );
   } else if (accountSnapshot && hasBuyPrice && !hasEnoughGold) {
@@ -14687,14 +15519,21 @@ function RoutePlanner({
             <RouteOption
               label="Buy"
               value={<Money value={buyCost} />}
-              active={!bestRecipe || buyCost <= craftCost}
+              active={!bestRecipe || buyCost <= personalCraftCost}
             />
           ) : null}
           <RouteOption
-            label="Craft"
-            value={bestRecipe ? <Money value={craftCost} /> : "No recipe"}
-            active={Boolean(bestRecipe && (!hasBuyPrice || craftCost < buyCost))}
+            label={accountSnapshot ? "Craft missing" : "Craft"}
+            value={bestRecipe ? <Money value={personalCraftCost} /> : "No recipe"}
+            active={Boolean(bestRecipe && (!hasBuyPrice || personalCraftCost < buyCost))}
           />
+          {accountSnapshot && bestRecipe ? (
+            <RouteOption
+              label="Full recipe"
+              value={<Money value={fullRecipeCost} />}
+              active={false}
+            />
+          ) : null}
           <RouteOption
             label="Direct"
             value={wikiGuide ? "Wiki route" : "Unknown"}
@@ -15150,7 +15989,7 @@ function IngredientMindMap({
                     <ItemIcon item={node.item} />
                     <strong>{node.item.name}</strong>
                     <span className="node-required-count">
-                      {node.requiredCount.toLocaleString()} needed
+                      {node.requiredCount.toLocaleString()} {node.depth === 0 ? "crafted" : "needed"}
                     </span>
                     <span className={accountSnapshot ? "node-owned-count" : "node-owned-count muted"}>
                       {accountSnapshot
@@ -15267,7 +16106,7 @@ function buildCraftMapTree(
 ): CraftMapTreeNode {
   return buildCraftMapTreeNode(
     item,
-    1,
+    Math.max(1, recipe.recipe.output_item_count),
     recipe,
     nestedRecipes,
     accountSnapshot,

@@ -5099,19 +5099,24 @@ export async function loadGatheringLocations(
   return info;
 }
 
-export async function loadAccountSnapshot(apiKey: string): Promise<AccountSnapshot> {
+export async function loadAccountSnapshot(
+  apiKey: string,
+  options: { forceRefresh?: boolean } = {},
+): Promise<AccountSnapshot> {
   const trimmedKey = apiKey.trim();
   const tokenInfo = await fetchJson<TokenInfo>(gw2AuthenticatedUrl("/tokeninfo", trimmedKey));
   assertAccountAnalysisPermissions(tokenInfo);
 
   const cacheKey = `account:snapshot:${tokenInfo.id}`;
-  const cachedSnapshot = await loadSqlCache(
-    cacheKey,
-    SQL_CACHE_TTL.accountSnapshot,
-    isAccountSnapshotPayload,
-  );
-  if (cachedSnapshot) {
-    return hydrateAccountSnapshot(cachedSnapshot, tokenInfo);
+  if (!options.forceRefresh) {
+    const cachedSnapshot = await loadSqlCache(
+      cacheKey,
+      SQL_CACHE_TTL.accountSnapshot,
+      isAccountSnapshotPayload,
+    );
+    if (cachedSnapshot) {
+      return hydrateAccountSnapshot(cachedSnapshot, tokenInfo);
+    }
   }
 
   const [materials, bank, inventory, characters, wallet, recipes, achievements] = await Promise.all([
@@ -6151,6 +6156,17 @@ export function formatCoin(value: number): string {
 
 export function getStoredItem(itemId: number): Gw2Item | undefined {
   return itemCache.get(itemId);
+}
+
+export function getStoredItemByName(itemName: string): Gw2Item | undefined {
+  const normalizedName = normalizeWikiLookupName(itemName);
+  for (const item of itemCache.values()) {
+    if (normalizeWikiLookupName(item.name) === normalizedName) {
+      return item;
+    }
+  }
+
+  return undefined;
 }
 
 export function getStoredPrice(itemId: number): CommercePrice | undefined {
