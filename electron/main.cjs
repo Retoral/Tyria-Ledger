@@ -1126,6 +1126,39 @@ function pickReleaseAsset(assets) {
   return namedAssets[0] ?? null;
 }
 
+function closeDatabase() {
+  if (!database || typeof database.close !== "function") {
+    return;
+  }
+
+  try {
+    database.close();
+  } catch (error) {
+    console.warn("Unable to close local database before quitting.", error);
+  } finally {
+    database = null;
+  }
+}
+
+function quitAfterInstallerDownload() {
+  const quitTimer = setTimeout(() => {
+    closeDatabase();
+
+    for (const browserWindow of BrowserWindow.getAllWindows()) {
+      if (!browserWindow.isDestroyed()) {
+        browserWindow.destroy();
+      }
+    }
+
+    app.quit();
+
+    const forceExitTimer = setTimeout(() => app.exit(0), 1500);
+    forceExitTimer.unref?.();
+  }, 750);
+
+  quitTimer.unref?.();
+}
+
 async function checkForUpdates() {
   const currentVersion = app.getVersion();
   const checkedAt = new Date().toISOString();
@@ -1201,10 +1234,13 @@ async function openUpdateDownload(_event, updateInfo) {
   const assetUrl = typeof updateInfo?.assetUrl === "string" ? updateInfo.assetUrl : "";
   const releaseUrl = typeof updateInfo?.releaseUrl === "string" ? updateInfo.releaseUrl : UPDATE_RELEASES_URL;
   const assetName = typeof updateInfo?.assetName === "string" ? updateInfo.assetName : "the latest installer";
+  const shouldQuitForInstaller = Boolean(assetUrl) && (process.platform === "win32" || process.platform === "darwin");
 
   const response = await dialog.showMessageBox(mainWindow, {
     type: "question",
-    buttons: assetUrl ? ["Download installer", "Open release page", "Cancel"] : ["Open release page", "Cancel"],
+    buttons: assetUrl
+      ? [shouldQuitForInstaller ? "Download and close app" : "Download installer", "Open release page", "Cancel"]
+      : ["Open release page", "Cancel"],
     defaultId: 0,
     cancelId: assetUrl ? 2 : 1,
     title: "Update available",
@@ -1212,12 +1248,19 @@ async function openUpdateDownload(_event, updateInfo) {
       ? `Tyria Ledger ${latestVersion} is available.`
       : "A Tyria Ledger update is available.",
     detail: assetUrl
-      ? `The app will open ${assetName} from GitHub. After it downloads, run the installer to update Tyria Ledger.`
+      ? shouldQuitForInstaller
+        ? `The app will open ${assetName} from GitHub, then close Tyria Ledger so the installer can replace the app files. After the download finishes, run the installer.`
+        : `The app will open ${assetName} from GitHub. After it downloads, run the installer to update Tyria Ledger.`
       : "The app will open the GitHub release page so you can download the installer for your platform.",
   });
 
   if (response.response === 0) {
     await shell.openExternal(assetUrl || releaseUrl);
+
+    if (shouldQuitForInstaller) {
+      quitAfterInstallerDownload();
+    }
+
     return {
       opened: true,
       target: assetUrl ? "asset" : "release",
@@ -1299,49 +1342,69 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
-  nativeTheme.themeSource = "dark";
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
-  try {
-    openDatabase();
-  } catch (error) {
-    console.warn("SQLite market history storage is unavailable; renderer fallback can continue.", error);
-  }
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
 
-  ipcMain.handle("gw2-api-key:load", readApiKey);
-  ipcMain.handle("gw2-api-key:save", (_event, apiKey) => writeApiKey(apiKey));
-  ipcMain.handle("gw2-api-key:delete", deleteApiKey);
-  ipcMain.handle("market-history:list", getAllMarketHistory);
-  ipcMain.handle("market-history:item", getItemMarketHistory);
-  ipcMain.handle("market-history:record", recordMarketHistory);
-  ipcMain.handle("market-history:import", importMarketHistory);
-  ipcMain.handle("market-history:migrate", importMarketHistory);
-  ipcMain.handle("market-catalog:load", loadMarketCatalog);
-  ipcMain.handle("market-catalog:save", saveMarketCatalog);
-  ipcMain.handle("recipe-cache:load", loadRecipeCache);
-  ipcMain.handle("recipe-cache:save", saveRecipeCache);
-  ipcMain.handle("item-cache:load", loadItemCache);
-  ipcMain.handle("item-cache:load-by-type", loadItemCacheByType);
-  ipcMain.handle("item-cache:save", saveItemCache);
-  ipcMain.handle("wiki-container-cache:load", loadWikiContainerCache);
-  ipcMain.handle("wiki-container-cache:save", saveWikiContainerCache);
-  ipcMain.handle("app-cache:load", loadAppCache);
-  ipcMain.handle("app-cache:save", saveAppCache);
-  ipcMain.handle("app-cache:delete-prefix", deleteAppCachePrefix);
-  ipcMain.handle("updates:check", checkForUpdates);
-  ipcMain.handle("updates:open-download", openUpdateDownload);
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
 
-  createWindow();
+    mainWindow.focus();
+  });
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+  app.on("before-quit", closeDatabase);
+
+  app.whenReady().then(() => {
+    nativeTheme.themeSource = "dark";
+
+    try {
+      openDatabase();
+    } catch (error) {
+      console.warn("SQLite market history storage is unavailable; renderer fallback can continue.", error);
+    }
+
+    ipcMain.handle("gw2-api-key:load", readApiKey);
+    ipcMain.handle("gw2-api-key:save", (_event, apiKey) => writeApiKey(apiKey));
+    ipcMain.handle("gw2-api-key:delete", deleteApiKey);
+    ipcMain.handle("market-history:list", getAllMarketHistory);
+    ipcMain.handle("market-history:item", getItemMarketHistory);
+    ipcMain.handle("market-history:record", recordMarketHistory);
+    ipcMain.handle("market-history:import", importMarketHistory);
+    ipcMain.handle("market-history:migrate", importMarketHistory);
+    ipcMain.handle("market-catalog:load", loadMarketCatalog);
+    ipcMain.handle("market-catalog:save", saveMarketCatalog);
+    ipcMain.handle("recipe-cache:load", loadRecipeCache);
+    ipcMain.handle("recipe-cache:save", saveRecipeCache);
+    ipcMain.handle("item-cache:load", loadItemCache);
+    ipcMain.handle("item-cache:load-by-type", loadItemCacheByType);
+    ipcMain.handle("item-cache:save", saveItemCache);
+    ipcMain.handle("wiki-container-cache:load", loadWikiContainerCache);
+    ipcMain.handle("wiki-container-cache:save", saveWikiContainerCache);
+    ipcMain.handle("app-cache:load", loadAppCache);
+    ipcMain.handle("app-cache:save", saveAppCache);
+    ipcMain.handle("app-cache:delete-prefix", deleteAppCachePrefix);
+    ipcMain.handle("updates:check", checkForUpdates);
+    ipcMain.handle("updates:open-download", openUpdateDownload);
+
+    createWindow();
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+  });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit();
     }
   });
-});
-
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
+}

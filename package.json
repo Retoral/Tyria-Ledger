@@ -62,6 +62,13 @@
         "nsis",
         "portable"
       ]
+    },
+    "nsis": {
+      "include": "build/installer.nsh",
+      "artifactName": "Tyria-Ledger-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Tyria-Ledger-${version}.${ext}"
     }
   }
 }
