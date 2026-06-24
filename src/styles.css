@@ -2008,12 +2008,13 @@ svg {
 .brand-mark {
   display: block;
   flex: 0 0 auto;
-  width: 48px;
-  height: 48px;
-  border-radius: 8px;
-  background: #090d0f;
-  object-fit: cover;
-  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+  width: 56px;
+  height: 56px;
+  margin: -4px 0 -4px -4px;
+  border-radius: 0;
+  background: transparent;
+  object-fit: contain;
+  box-shadow: none;
 }
 
 h1,
