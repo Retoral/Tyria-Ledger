@@ -9,12 +9,20 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
 const args = new Set(process.argv.slice(2));
 const dryRun = args.has("--dry-run");
 const allowDirty = args.has("--allow-dirty") || process.env.ALLOW_DIRTY_RELEASE === "1";
-const versionArg = process.argv.slice(2).find((arg) => /^--version=/.test(arg));
-const tagArg = process.argv.slice(2).find((arg) => /^--tag=/.test(arg));
-const repoArg = process.argv.slice(2).find((arg) => /^--repo=/.test(arg));
-const version = versionArg ? versionArg.split("=")[1] : pkg.version;
-const tag = tagArg ? tagArg.split("=")[1] : `v${version}`;
-const releaseRepo = repoArg ? repoArg.split("=")[1] : process.env.GITHUB_RELEASE_REPO;
+const rawArgs = process.argv.slice(2);
+function getOption(name) {
+  const equalsArg = rawArgs.find((arg) => arg.startsWith(`${name}=`));
+  if (equalsArg) {
+    return equalsArg.slice(name.length + 1);
+  }
+
+  const index = rawArgs.indexOf(name);
+  return index >= 0 ? rawArgs[index + 1] : undefined;
+}
+
+const version = getOption("--version") ?? pkg.version;
+const tag = getOption("--tag") ?? `v${version}`;
+const releaseRepo = getOption("--repo") ?? process.env.GITHUB_RELEASE_REPO;
 const releaseDir = path.join(root, "release");
 
 function run(command, commandArgs, options = {}) {
