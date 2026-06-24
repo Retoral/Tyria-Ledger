@@ -1,6 +1,6 @@
 {
   "name": "tyria-ledger",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "Desktop Guild Wars 2 Trading Post and crafting companion.",
   "main": "electron/main.cjs",
