@@ -120,6 +120,7 @@ declare global {
       deleteAppCachePrefix: (prefix: string) => Promise<DesktopAppCacheDeleteResult>;
       checkForUpdates: () => Promise<DesktopUpdateCheckResult>;
       openUpdateDownload: (updateInfo: DesktopUpdateCheckResult) => Promise<DesktopOpenUpdateResult>;
+      onNavigateHistory: (callback: (direction: "back" | "forward") => void) => () => void;
     };
   }
 }

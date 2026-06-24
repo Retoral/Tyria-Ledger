@@ -23,4 +23,9 @@ contextBridge.exposeInMainWorld("gw2Desktop", {
   deleteAppCachePrefix: (prefix) => ipcRenderer.invoke("app-cache:delete-prefix", prefix),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),
   openUpdateDownload: (updateInfo) => ipcRenderer.invoke("updates:open-download", updateInfo),
+  onNavigateHistory: (callback) => {
+    const listener = (_event, direction) => callback(direction);
+    ipcRenderer.on("navigation:history", listener);
+    return () => ipcRenderer.removeListener("navigation:history", listener);
+  },
 });

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, nativeTheme, safeStorage, shell } = require("electron");
 const fs = require("node:fs/promises");
 const fsSync = require("node:fs");
 const path = require("node:path");
@@ -25,6 +25,32 @@ const UPDATE_REPOSITORY_OWNER = "Retoral";
 const UPDATE_REPOSITORY_NAME = "Tyria-Ledger";
 const UPDATE_API_URL = `https://api.github.com/repos/${UPDATE_REPOSITORY_OWNER}/${UPDATE_REPOSITORY_NAME}/releases/latest`;
 const UPDATE_RELEASES_URL = `https://github.com/${UPDATE_REPOSITORY_OWNER}/${UPDATE_REPOSITORY_NAME}/releases`;
+const WINDOW_BACKGROUND_COLOR = "#090d0f";
+const WINDOW_CHROME_COLOR = "#151a1d";
+const WINDOW_CHROME_SYMBOL_COLOR = "#d6ddd8";
+
+function getWindowChromeOptions() {
+  if (process.platform !== "win32" && process.platform !== "linux") {
+    return {};
+  }
+
+  return {
+    titleBarStyle: "hidden",
+    titleBarOverlay: {
+      color: WINDOW_CHROME_COLOR,
+      symbolColor: WINDOW_CHROME_SYMBOL_COLOR,
+      height: 36,
+    },
+  };
+}
+
+function getWindowIconPath() {
+  if (isDev) {
+    return path.join(__dirname, "..", "public", "app-icon.png");
+  }
+
+  return path.join(app.getAppPath(), "dist", "app-icon.png");
+}
 
 function apiKeyPath() {
   return path.join(app.getPath("userData"), "gw2-api-key.bin");
@@ -1218,15 +1244,48 @@ function createWindow() {
     height: 920,
     minWidth: 1120,
     minHeight: 720,
-    backgroundColor: "#f5f6f2",
+    backgroundColor: WINDOW_BACKGROUND_COLOR,
+    darkTheme: true,
+    icon: getWindowIconPath(),
     title: "Tyria Ledger",
     autoHideMenuBar: true,
     show: false,
+    ...getWindowChromeOptions(),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       preload: path.join(__dirname, "preload.cjs"),
     },
+  });
+
+  const sendHistoryNavigation = (direction) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    mainWindow.webContents.send("navigation:history", direction);
+  };
+
+  mainWindow.on("app-command", (event, command) => {
+    if (command === "browser-backward") {
+      event.preventDefault();
+      sendHistoryNavigation("back");
+    }
+
+    if (command === "browser-forward") {
+      event.preventDefault();
+      sendHistoryNavigation("forward");
+    }
+  });
+
+  mainWindow.on("swipe", (_event, direction) => {
+    if (direction === "right") {
+      sendHistoryNavigation("back");
+    }
+
+    if (direction === "left") {
+      sendHistoryNavigation("forward");
+    }
   });
 
   mainWindow.once("ready-to-show", () => {
@@ -1241,6 +1300,8 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  nativeTheme.themeSource = "dark";
+
   try {
     openDatabase();
   } catch (error) {

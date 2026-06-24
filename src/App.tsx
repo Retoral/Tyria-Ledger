@@ -30,11 +30,14 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import {
   analyzeAccount,
   checkApiStatuses,
+  ensureCommercePricesForItems,
   getStoredItem,
   getStoredPrice,
   hydrateTradingPostCatalogCache,
@@ -47,6 +50,7 @@ import {
   loadItems,
   loadListings,
   loadMaps,
+  loadMysticForgeRecipeGuides,
   loadOpenableBagItems,
   loadPermanentGatheringNodes,
   loadProfitableCrafts,
@@ -229,6 +233,13 @@ interface DataImportRow {
   detail: string;
   state: ImportState;
   updatedAt: number | null;
+  children?: DataImportChildRow[];
+}
+
+interface DataImportChildRow {
+  label: string;
+  detail: string;
+  state: ImportState;
 }
 
 interface IngredientCraftRouteSummary {
@@ -297,6 +308,7 @@ interface ActivityValueDefinition {
 }
 
 interface SalvageOutputEstimate {
+  itemId?: number;
   name: string;
   averageCount: number;
   note?: string;
@@ -391,40 +403,42 @@ const HISTORY_RANGES: HistoryRange[] = [
 ];
 
 const SALVAGE_ROW_LIMIT = 300;
-const SALVAGE_OUTPUT_PRICE_NAMES = [
-  "Glob of Ectoplasm",
-  "Pile of Crystalline Dust",
-  "Pile of Incandescent Dust",
-  "Pile of Luminous Dust",
-  "Pile of Radiant Dust",
-  "Pile of Shimmering Dust",
-  "Pile of Glittering Dust",
-  "Orichalcum Ore",
-  "Mithril Ore",
-  "Platinum Ore",
-  "Iron Ore",
-  "Copper Ore",
-  "Ancient Wood Log",
-  "Elder Wood Log",
-  "Hard Wood Log",
-  "Seasoned Wood Log",
-  "Soft Wood Log",
-  "Green Wood Log",
-  "Hardened Leather Section",
-  "Thick Leather Section",
-  "Rugged Leather Section",
-  "Coarse Leather Section",
-  "Thin Leather Section",
-  "Rawhide Leather Section",
-  "Gossamer Scrap",
-  "Silk Scrap",
-  "Linen Scrap",
-  "Cotton Scrap",
-  "Wool Scrap",
-  "Jute Scrap",
-  "Pile of Lucent Crystal",
-  "Lucent Mote",
-];
+const SALVAGE_OUTPUT_ITEM_IDS = {
+  "Glob of Ectoplasm": 19721,
+  "Pile of Crystalline Dust": 24277,
+  "Pile of Incandescent Dust": 24276,
+  "Pile of Luminous Dust": 24275,
+  "Pile of Radiant Dust": 24274,
+  "Pile of Shimmering Dust": 24273,
+  "Pile of Glittering Dust": 24272,
+  "Orichalcum Ore": 19701,
+  "Mithril Ore": 19700,
+  "Platinum Ore": 19702,
+  "Iron Ore": 19699,
+  "Copper Ore": 19697,
+  "Ancient Wood Log": 19725,
+  "Elder Wood Log": 19722,
+  "Hard Wood Log": 19724,
+  "Seasoned Wood Log": 19727,
+  "Soft Wood Log": 19726,
+  "Green Wood Log": 19723,
+  "Hardened Leather Section": 19732,
+  "Thick Leather Section": 19729,
+  "Rugged Leather Section": 19731,
+  "Coarse Leather Section": 19730,
+  "Thin Leather Section": 19728,
+  "Rawhide Leather Section": 19719,
+  "Gossamer Scrap": 19745,
+  "Silk Scrap": 19748,
+  "Linen Scrap": 19743,
+  "Cotton Scrap": 19741,
+  "Wool Scrap": 19739,
+  "Jute Scrap": 19718,
+  "Pile of Lucent Crystal": 89271,
+  "Lucent Mote": 89140,
+} as const;
+const SALVAGE_OUTPUT_PRICE_NAMES = Object.keys(SALVAGE_OUTPUT_ITEM_IDS) as Array<keyof typeof SALVAGE_OUTPUT_ITEM_IDS>;
+const SALVAGE_OUTPUT_PRICE_IDS = Object.values(SALVAGE_OUTPUT_ITEM_IDS);
 const SALVAGE_MATERIAL_TIERS = [
   {
     maxLevel: 15,
@@ -479,25 +493,38 @@ const SALVAGE_FAMILY_LABELS = {
   cloth: "Cloth",
 } as const;
 type SalvageMaterialFamily = keyof typeof SALVAGE_FAMILY_LABELS;
+function getSalvageOutputItemId(name: string): number | undefined {
+  return SALVAGE_OUTPUT_ITEM_IDS[name as keyof typeof SALVAGE_OUTPUT_ITEM_IDS];
+}
+
+function makeSalvageOutput(name: string, averageCount: number, note?: string): SalvageOutputEstimate {
+  return {
+    itemId: getSalvageOutputItemId(name),
+    name,
+    averageCount,
+    note,
+  };
+}
+
 const FINE_GEAR_OUTPUTS: SalvageOutputEstimate[] = [
-  { name: "Mithril Ore", averageCount: 0.35 },
-  { name: "Elder Wood Log", averageCount: 0.25 },
-  { name: "Thick Leather Section", averageCount: 0.2 },
-  { name: "Silk Scrap", averageCount: 0.2 },
+  makeSalvageOutput("Mithril Ore", 0.35),
+  makeSalvageOutput("Elder Wood Log", 0.25),
+  makeSalvageOutput("Thick Leather Section", 0.2),
+  makeSalvageOutput("Silk Scrap", 0.2),
 ];
 const MASTERWORK_GEAR_OUTPUTS: SalvageOutputEstimate[] = [
-  { name: "Mithril Ore", averageCount: 0.45 },
-  { name: "Elder Wood Log", averageCount: 0.35 },
-  { name: "Thick Leather Section", averageCount: 0.25 },
-  { name: "Silk Scrap", averageCount: 0.25 },
+  makeSalvageOutput("Mithril Ore", 0.45),
+  makeSalvageOutput("Elder Wood Log", 0.35),
+  makeSalvageOutput("Thick Leather Section", 0.25),
+  makeSalvageOutput("Silk Scrap", 0.25),
 ];
 const RARE_GEAR_OUTPUTS: SalvageOutputEstimate[] = [
-  { name: "Glob of Ectoplasm", averageCount: 0.875 },
-  { name: "Pile of Crystalline Dust", averageCount: 0.12 },
+  makeSalvageOutput("Glob of Ectoplasm", 0.875),
+  makeSalvageOutput("Pile of Crystalline Dust", 0.12),
 ];
 const EXOTIC_GEAR_OUTPUTS: SalvageOutputEstimate[] = [
-  { name: "Glob of Ectoplasm", averageCount: 1.15 },
-  { name: "Pile of Crystalline Dust", averageCount: 0.28 },
+  makeSalvageOutput("Glob of Ectoplasm", 1.15),
+  makeSalvageOutput("Pile of Crystalline Dust", 0.28),
 ];
 const UNIDENTIFIED_GEAR_DEFINITIONS: UnidentifiedGearDefinition[] = [
   {
@@ -862,6 +889,7 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
       { id: "market", label: "Trading Post", icon: <PackageSearch /> },
       { id: "crafting", label: "Crafting Planner", icon: <Hammer /> },
       { id: "profitable-crafts", label: "Profitable Crafts", icon: <TrendingUp /> },
+      { id: "mystic-forge", label: "Mystic Forge", icon: <Coins /> },
       { id: "legendary-readiness", label: "Legendary Readiness", icon: <ShieldCheck /> },
     ],
   },
@@ -2535,6 +2563,9 @@ function App() {
   const [highValueCrafts, setHighValueCrafts] = useState<CraftOpportunity[]>([]);
   const [highValueCraftLoadState, setHighValueCraftLoadState] = useState<LoadState>("idle");
   const [highValueCraftsUpdatedAt, setHighValueCraftsUpdatedAt] = useState<number | null>(null);
+  const [mysticForgeRecipes, setMysticForgeRecipes] = useState<RecipeGuide[]>([]);
+  const [mysticForgeLoadState, setMysticForgeLoadState] = useState<LoadState>("idle");
+  const [mysticForgeUpdatedAt, setMysticForgeUpdatedAt] = useState<number | null>(null);
   const [marketHistoryRevision, setMarketHistoryRevision] = useState(0);
   const [wikiGuide, setWikiGuide] = useState<WikiGuide | null>(null);
   const [containerAnalysis, setContainerAnalysis] = useState<ContainerAnalysis | null>(null);
@@ -2553,6 +2584,7 @@ function App() {
   const [accountUpdatedAt, setAccountUpdatedAt] = useState<number | null>(null);
   const [achievementImportState, setAchievementImportState] = useState<LoadState>("idle");
   const [achievementUpdatedAt, setAchievementUpdatedAt] = useState<number | null>(null);
+  const [achievementCatalogCount, setAchievementCatalogCount] = useState(0);
   const [mapsState, setMapsState] = useState<LoadState>("idle");
   const [mapsUpdatedAt, setMapsUpdatedAt] = useState<number | null>(null);
   const [updateCheckState, setUpdateCheckState] = useState<UpdateCheckState>("idle");
@@ -2592,6 +2624,17 @@ function App() {
       })
       .catch(() => {
         setMapsState("error");
+      });
+
+    setAchievementImportState("loading");
+    loadAchievementCatalog()
+      .then((achievementCatalog) => {
+        setAchievementCatalogCount(achievementCatalog.achievements.length);
+        setAchievementImportState("ready");
+        setAchievementUpdatedAt(Date.now());
+      })
+      .catch(() => {
+        setAchievementImportState("error");
       });
 
     const storedKeyPromise = window.gw2Desktop?.loadApiKey();
@@ -2721,83 +2764,102 @@ function App() {
       (accountSnapshot?.materials.length ?? 0) +
       (accountSnapshot?.bank.filter(Boolean).length ?? 0) +
       (accountSnapshot?.inventory.filter(Boolean).length ?? 0);
+    const accountLoadingDetail = "Loads after the saved GW2 API key is analyzed";
+    const accountMissingDetail = "API key not provided";
+    const accountErrorDetail = "Unable to load from the account key";
+    const getAccountChildDetail = (readyDetail: string, pendingDetail: string) => {
+      if (accountSnapshot) {
+        return readyDetail;
+      }
+
+      if (!hasApiKey) {
+        return accountMissingDetail;
+      }
+
+      if (analysisState === "error") {
+        return accountErrorDetail;
+      }
+
+      if (analysisState === "loading") {
+        return "Loading from account API";
+      }
+
+      return pendingDetail;
+    };
+    const accountChildren: DataImportChildRow[] = [
+      {
+        label: "Token",
+        detail: getAccountChildDetail(
+          `Validated ${accountSnapshot?.tokenInfo.name ?? "account"}`,
+          "Validates the saved account key",
+        ),
+        state: accountDataState,
+      },
+      {
+        label: "Characters",
+        detail: getAccountChildDetail(
+          `${accountSnapshot?.characters.length.toLocaleString() ?? "0"} characters for bags and professions`,
+          "Loads character bags and crafting professions",
+        ),
+        state: accountDataState,
+      },
+      {
+        label: "Wallet",
+        detail: getAccountChildDetail(
+          `${accountSnapshot?.wallet.length.toLocaleString() ?? "0"} currencies, including coin balance`,
+          "Loads currencies and coin balance",
+        ),
+        state: accountDataState,
+      },
+      {
+        label: "Inventory & Materials",
+        detail: getAccountChildDetail(
+          `${loadedAccountStackCount.toLocaleString()} unique holdings from ${storedItemStackCount.toLocaleString()} storage entries`,
+          "Loads material storage, bank, shared inventory, and character bags",
+        ),
+        state: accountDataState,
+      },
+      {
+        label: "Unlocked Recipes",
+        detail: getAccountChildDetail(
+          `${accountSnapshot?.recipes.length.toLocaleString() ?? "0"} unlocked recipes for personal craft checks`,
+          "Loads unlocked account recipes",
+        ),
+        state: accountDataState,
+      },
+      {
+        label: "Achievements",
+        detail: getAccountChildDetail(
+          `${accountSnapshot?.achievements.length.toLocaleString() ?? "0"} progress records loaded`,
+          "Loads personal achievement progress",
+        ),
+        state: accountDataState,
+      },
+    ];
+    const accountDetail = accountSnapshot
+      ? [
+          `${accountSnapshot.characters.length.toLocaleString()} characters`,
+          `${accountSnapshot.wallet.length.toLocaleString()} currencies`,
+          `${loadedAccountStackCount.toLocaleString()} item holdings`,
+          `${accountSnapshot.recipes.length.toLocaleString()} recipes`,
+          `${accountSnapshot.achievements.length.toLocaleString()} achievements`,
+        ].join(", ")
+      : hasApiKey
+        ? analysisState === "loading"
+          ? "Loading wallet, materials, bank, inventory, recipes, and achievements"
+          : analysisState === "error"
+            ? "Account API import failed"
+            : accountLoadingDetail
+        : accountMissingDetail;
+    const achievementCatalogDetail = achievementCatalogCount
+      ? `${achievementCatalogCount.toLocaleString()} official achievements loaded`
+      : achievementImportState === "loading"
+        ? "Loading official achievement catalog"
+        : achievementImportState === "error"
+          ? "Official achievement catalog failed to load"
+          : "Official achievement catalog not loaded";
 
     return [
-      {
-        id: "api-status",
-        label: "API Status",
-        detail: apiStatuses.length
-          ? `${apiStatuses.length.toLocaleString()} endpoints checked`
-          : "Checks GW2 public and account API availability",
-        state: apiStatusState,
-        updatedAt: apiStatusUpdatedAt,
-      },
-      {
-        id: "account",
-        label: "GW2 Account",
-        detail: accountSnapshot
-          ? `${accountSnapshot.tokenInfo.name} wallet, materials, bank, inventory, recipes, achievements`
-          : hasApiKey
-            ? "Ready to import personal account data"
-            : "API key not provided",
-        state: accountDataState,
-        updatedAt: accountDataUpdatedAt,
-      },
-      {
-        id: "account-characters",
-        label: "Characters",
-        detail: accountSnapshot
-          ? `${accountSnapshot.characters.length.toLocaleString()} characters loaded for inventory and profession checks`
-          : hasApiKey
-            ? "Loads character bags and crafting professions from the account key"
-            : "API key not provided",
-        state: accountDataState,
-        updatedAt: accountDataUpdatedAt,
-      },
-      {
-        id: "account-wallet",
-        label: "Wallet",
-        detail: accountSnapshot
-          ? `${accountSnapshot.wallet.length.toLocaleString()} currencies loaded, including current coin balance`
-          : hasApiKey
-            ? "Loads currencies and coin balance from the account key"
-            : "API key not provided",
-        state: accountDataState,
-        updatedAt: accountDataUpdatedAt,
-      },
-      {
-        id: "account-inventory",
-        label: "Inventory & Materials",
-        detail: accountSnapshot
-          ? `${loadedAccountStackCount.toLocaleString()} unique item holdings from ${storedItemStackCount.toLocaleString()} storage entries`
-          : hasApiKey
-            ? "Loads material storage, bank, shared inventory, and character bags"
-            : "API key not provided",
-        state: accountDataState,
-        updatedAt: accountDataUpdatedAt,
-      },
-      {
-        id: "account-recipes",
-        label: "Unlocked Recipes",
-        detail: accountSnapshot
-          ? `${accountSnapshot.recipes.length.toLocaleString()} unlocked recipes loaded for personal craft checks`
-          : hasApiKey
-            ? "Loads unlocked account recipes from the account key"
-            : "API key not provided",
-        state: accountDataState,
-        updatedAt: accountDataUpdatedAt,
-      },
-      {
-        id: "account-achievements",
-        label: "Achievements",
-        detail: accountSnapshot
-          ? `${accountSnapshot.achievements.length.toLocaleString()} account achievement progress records loaded`
-          : hasApiKey
-            ? "Loads personal achievement progress from the account key"
-            : "API key not provided",
-        state: accountDataState,
-        updatedAt: accountDataUpdatedAt,
-      },
       {
         id: "trading-post",
         label: "Trading Post",
@@ -2810,10 +2872,7 @@ function App() {
       {
         id: "achievement-catalog",
         label: "Achievement Catalog",
-        detail:
-          achievementImportState === "idle"
-            ? "Open Achievements to import the official achievement catalog"
-            : "Official achievement catalog and account progress guide data",
+        detail: achievementCatalogDetail,
         state: achievementImportState,
         updatedAt: achievementUpdatedAt,
       },
@@ -2824,10 +2883,28 @@ function App() {
         state: mapsState,
         updatedAt: mapsUpdatedAt,
       },
+      {
+        id: "api-status",
+        label: "API Status",
+        detail: apiStatuses.length
+          ? `${apiStatuses.length.toLocaleString()} endpoints checked`
+          : "Checks GW2 public and account API availability",
+        state: apiStatusState,
+        updatedAt: apiStatusUpdatedAt,
+      },
+      {
+        id: "account",
+        label: "GW2 Account",
+        detail: accountDetail,
+        state: accountDataState,
+        updatedAt: accountDataUpdatedAt,
+        children: accountChildren,
+      },
     ];
   }, [
     accountSnapshot,
     accountUpdatedAt,
+    achievementCatalogCount,
     achievementImportState,
     achievementUpdatedAt,
     analysisState,
@@ -2918,6 +2995,16 @@ function App() {
   }, [accountSnapshot, apiKey, selectedItem]);
 
   useEffect(() => {
+    const navigateHistory = (direction: "back" | "forward") => {
+      if (direction === "back" && canNavigateBack) {
+        navigateBack();
+      }
+
+      if (direction === "forward" && canNavigateForward) {
+        navigateForward();
+      }
+    };
+
     function handleNavigationHotkeys(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       const tagName = target?.tagName?.toLowerCase();
@@ -2932,25 +3019,60 @@ function App() {
       }
 
       const wantsBack =
+        event.key === "BrowserBack" ||
         (event.altKey && event.key === "ArrowLeft") ||
-        (event.metaKey && event.key === "[");
+        (event.metaKey && (event.key === "[" || event.key === "ArrowLeft"));
       const wantsForward =
+        event.key === "BrowserForward" ||
         (event.altKey && event.key === "ArrowRight") ||
-        (event.metaKey && event.key === "]");
+        (event.metaKey && (event.key === "]" || event.key === "ArrowRight"));
 
       if (wantsBack && canNavigateBack) {
         event.preventDefault();
-        navigateBack();
+        navigateHistory("back");
       }
 
       if (wantsForward && canNavigateForward) {
         event.preventDefault();
-        navigateForward();
+        navigateHistory("forward");
       }
     }
 
+    let lastPointerNavigation: { button: number; time: number } | null = null;
+    function handleNavigationPointer(event: MouseEvent) {
+      if (event.button !== 3 && event.button !== 4) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const now = Date.now();
+      if (
+        lastPointerNavigation &&
+        lastPointerNavigation.button === event.button &&
+        now - lastPointerNavigation.time < 250
+      ) {
+        return;
+      }
+
+      lastPointerNavigation = {
+        button: event.button,
+        time: now,
+      };
+      navigateHistory(event.button === 3 ? "back" : "forward");
+    }
+
+    const unsubscribeDesktopNavigation = window.gw2Desktop?.onNavigateHistory?.(navigateHistory);
     window.addEventListener("keydown", handleNavigationHotkeys);
-    return () => window.removeEventListener("keydown", handleNavigationHotkeys);
+    window.addEventListener("mousedown", handleNavigationPointer, true);
+    window.addEventListener("auxclick", handleNavigationPointer, true);
+    return () => {
+      unsubscribeDesktopNavigation?.();
+      window.removeEventListener("keydown", handleNavigationHotkeys);
+      window.removeEventListener("mousedown", handleNavigationPointer, true);
+      window.removeEventListener("auxclick", handleNavigationPointer, true);
+    };
   }, [canNavigateBack, canNavigateForward, pageHistoryIndex]);
 
   function navigateToPage(page: ActivePage) {
@@ -3279,10 +3401,15 @@ function App() {
     setProgress("Loading profitable craft data");
 
     try {
-      const opportunities = await loadProfitableCrafts((message, done, total) => {
-        setProgress(message);
-        setProgressCount(done && total ? { done, total } : null);
-      });
+      const opportunities = await loadProfitableCrafts(
+        (message, done, total) => {
+          setProgress(message);
+          setProgressCount(done && total ? { done, total } : null);
+        },
+        {
+          includeRecipeIds: accountSnapshot?.recipes,
+        },
+      );
 
       setMarketCrafts(opportunities);
       setCraftLoadState("ready");
@@ -3320,6 +3447,39 @@ function App() {
     } catch (craftError) {
       setHighValueCraftLoadState("error");
       setError(craftError instanceof Error ? craftError.message : "Unable to load high-value crafts");
+      throw craftError;
+    }
+  }
+
+  async function loadMysticForgeRecipes(): Promise<RecipeGuide[]> {
+    if (mysticForgeLoadState === "loading") {
+      return mysticForgeRecipes;
+    }
+
+    setMysticForgeLoadState("loading");
+    setError(null);
+    setProgressCount(null);
+    setProgress("Loading Mystic Forge recipes");
+
+    try {
+      const guides = await loadMysticForgeRecipeGuides(
+        (message, done, total) => {
+          setProgress(message);
+          setProgressCount(done && total ? { done, total } : null);
+        },
+        {
+          holdings: accountSnapshot?.holdings,
+        },
+      );
+
+      setMysticForgeRecipes(guides);
+      setMysticForgeLoadState("ready");
+      setMysticForgeUpdatedAt(Date.now());
+      setProgress(`${guides.length.toLocaleString()} Mystic Forge recipes loaded`);
+      return guides;
+    } catch (craftError) {
+      setMysticForgeLoadState("error");
+      setError(craftError instanceof Error ? craftError.message : "Unable to load Mystic Forge recipes");
       throw craftError;
     }
   }
@@ -3469,15 +3629,22 @@ function App() {
           accountItems={accountItems}
           analysis={analysis}
           analysisState={analysisState}
+          apiKey={apiKey}
+          apiKeyRemembered={apiKeyRemembered}
           apiStatuses={apiStatuses}
           apiStatusState={apiStatusState}
           catalog={catalog}
           dataImports={dataImports}
+          marketScopeId={marketScopeId}
           onAnalyze={() => runAnalysisForKey()}
+          onApiKeyChange={setApiKey}
+          onForgetApiKey={forgetApiKey}
+          onMarketScopeChange={updateMarketScope}
           onOpenActivity={openActivityGuide}
           onOpenItemSearch={openItemSearch}
           onLoadMarket={loadCatalog}
           onRefreshApiStatuses={() => refreshApiStatuses()}
+          onSaveApiKey={saveApiKey}
         />
       );
     }
@@ -3536,6 +3703,7 @@ function App() {
               setAchievementUpdatedAt(updatedAt);
             }
           }}
+          onCatalogLoaded={setAchievementCatalogCount}
           onProgress={(message, done, total) => {
             setProgress(message);
             setProgressCount(done && total ? { done, total } : null);
@@ -3643,6 +3811,32 @@ function App() {
             selectCraftOpportunity(opportunity);
             navigateToPage("crafting");
           }}
+        />
+      );
+    }
+
+    if (activePage === "mystic-forge") {
+      return (
+        <MysticForgePage
+          catalog={catalog}
+          recipes={mysticForgeRecipes}
+          loadState={mysticForgeLoadState}
+          updatedAt={mysticForgeUpdatedAt}
+          selectedItem={selectedItem}
+          listings={listings}
+          itemTransactions={itemTransactions}
+          outputRecipes={recipes}
+          usedInRecipes={usedInRecipes}
+          recipeUsageState={recipeUsageState}
+          wikiGuide={wikiGuide}
+          detailState={detailState}
+          containerAnalysis={containerAnalysis}
+          containerState={containerState}
+          accountSnapshot={accountSnapshot}
+          marketHistoryRevision={marketHistoryRevision}
+          onLoadRecipes={loadMysticForgeRecipes}
+          onCloseDetail={() => setSelectedItem(null)}
+          onSelectItem={(item) => setSelectedItem(buildMarketItemForDetail(item))}
         />
       );
     }
@@ -3809,16 +4003,7 @@ function App() {
     <div className="app-shell">
       <Sidebar
         activePage={activePage}
-        apiKey={apiKey}
-        apiKeyRemembered={apiKeyRemembered}
-        analysisState={analysisState}
-        marketScopeId={marketScopeId}
         sidebarSearch={sidebarSearch}
-        onAnalyze={() => runAnalysisForKey()}
-        onApiKeyChange={setApiKey}
-        onForgetApiKey={forgetApiKey}
-        onMarketScopeChange={updateMarketScope}
-        onSaveApiKey={saveApiKey}
         onSidebarSearchChange={setSidebarSearch}
         onSetActivePage={navigateToPage}
       />
@@ -3914,30 +4099,12 @@ function UpdateStatusButton({
 
 function Sidebar({
   activePage,
-  apiKey,
-  apiKeyRemembered,
-  analysisState,
-  marketScopeId,
   sidebarSearch,
-  onAnalyze,
-  onApiKeyChange,
-  onForgetApiKey,
-  onMarketScopeChange,
-  onSaveApiKey,
   onSidebarSearchChange,
   onSetActivePage,
 }: {
   activePage: ActivePage;
-  apiKey: string;
-  apiKeyRemembered: boolean;
-  analysisState: LoadState;
-  marketScopeId: MarketScopeId;
   sidebarSearch: string;
-  onAnalyze: () => void;
-  onApiKeyChange: (value: string) => void;
-  onForgetApiKey: () => void;
-  onMarketScopeChange: (scopeId: MarketScopeId) => void;
-  onSaveApiKey: () => void;
   onSidebarSearchChange: (value: string) => void;
   onSetActivePage: (page: ActivePage) => void;
 }) {
@@ -3957,7 +4124,7 @@ function Sidebar({
   return (
     <aside className="side-nav">
       <div className="side-brand">
-        <div className="brand-mark">TL</div>
+        <img className="brand-mark" src="/app-icon.png" alt="" aria-hidden="true" />
         <div>
           <h1>Tyria Ledger</h1>
           <p>GW2 account economy</p>
@@ -3999,42 +4166,6 @@ function Sidebar({
           <p className="nav-empty">No matching tools found.</p>
         ) : null}
       </nav>
-
-      <div className="side-bottom">
-        <MarketScopeSelector
-          marketScopeId={marketScopeId}
-          onMarketScopeChange={onMarketScopeChange}
-        />
-
-        <section className="api-key-dock">
-          <div className="dock-title">
-            <KeyRound />
-            <span>GW2 API Key</span>
-            {apiKeyRemembered ? <CheckCircle2 className="ok" /> : null}
-          </div>
-          <div className="key-row">
-            <input
-              value={apiKey}
-              type="password"
-              onChange={(event) => onApiKeyChange(event.target.value)}
-              placeholder="Paste account API key"
-            />
-            <button onClick={onSaveApiKey} disabled={!apiKey.trim()}>
-              Save
-            </button>
-          </div>
-          <div className="small-actions">
-            <button onClick={onAnalyze} disabled={analysisState === "loading" || !apiKey.trim()}>
-              {analysisState === "loading" ? <Loader2 className="spin" /> : <TrendingUp />}
-              Analyze
-            </button>
-            <button onClick={onForgetApiKey} disabled={!apiKey && !apiKeyRemembered}>
-              <X />
-              Forget
-            </button>
-          </div>
-        </section>
-      </div>
     </aside>
   );
 }
@@ -4069,6 +4200,66 @@ function MarketScopeSelector({
         The official Trading Post API exposes shared market data. The region scope is saved for
         filtering, notes, and future region-aware data.
       </p>
+    </section>
+  );
+}
+
+function AccountSettingsPanel({
+  apiKey,
+  apiKeyRemembered,
+  analysisState,
+  marketScopeId,
+  onAnalyze,
+  onApiKeyChange,
+  onForgetApiKey,
+  onMarketScopeChange,
+  onSaveApiKey,
+}: {
+  apiKey: string;
+  apiKeyRemembered: boolean;
+  analysisState: LoadState;
+  marketScopeId: MarketScopeId;
+  onAnalyze: () => void;
+  onApiKeyChange: (value: string) => void;
+  onForgetApiKey: () => void;
+  onMarketScopeChange: (scopeId: MarketScopeId) => void;
+  onSaveApiKey: () => void;
+}) {
+  return (
+    <section className="account-settings-panel">
+      <MarketScopeSelector
+        marketScopeId={marketScopeId}
+        onMarketScopeChange={onMarketScopeChange}
+      />
+
+      <section className="api-key-dock">
+        <div className="dock-title">
+          <KeyRound />
+          <span>GW2 API Key</span>
+          {apiKeyRemembered ? <CheckCircle2 className="ok" /> : null}
+        </div>
+        <div className="key-row">
+          <input
+            value={apiKey}
+            type="password"
+            onChange={(event) => onApiKeyChange(event.target.value)}
+            placeholder="Paste account API key"
+          />
+          <button onClick={onSaveApiKey} disabled={!apiKey.trim()}>
+            Save
+          </button>
+        </div>
+        <div className="small-actions">
+          <button onClick={onAnalyze} disabled={analysisState === "loading" || !apiKey.trim()}>
+            {analysisState === "loading" ? <Loader2 className="spin" /> : <TrendingUp />}
+            Analyze
+          </button>
+          <button onClick={onForgetApiKey} disabled={!apiKey && !apiKeyRemembered}>
+            <X />
+            Forget
+          </button>
+        </div>
+      </section>
     </section>
   );
 }
@@ -4355,29 +4546,43 @@ function AccountDashboard({
   accountItems,
   analysis,
   analysisState,
+  apiKey,
+  apiKeyRemembered,
   apiStatuses,
   apiStatusState,
   catalog,
   dataImports,
+  marketScopeId,
   onAnalyze,
+  onApiKeyChange,
+  onForgetApiKey,
+  onMarketScopeChange,
   onOpenActivity,
   onOpenItemSearch,
   onLoadMarket,
   onRefreshApiStatuses,
+  onSaveApiKey,
 }: {
   accountSnapshot: AccountSnapshot | null;
   accountItems: Map<number, Gw2Item>;
   analysis: AccountAnalysis | null;
   analysisState: LoadState;
+  apiKey: string;
+  apiKeyRemembered: boolean;
   apiStatuses: ApiStatusResult[];
   apiStatusState: LoadState;
   catalog: MarketItem[];
   dataImports: DataImportRow[];
+  marketScopeId: MarketScopeId;
   onAnalyze: () => void;
+  onApiKeyChange: (value: string) => void;
+  onForgetApiKey: () => void;
+  onMarketScopeChange: (scopeId: MarketScopeId) => void;
   onOpenActivity: (suggestion: GoldSuggestion) => void;
   onOpenItemSearch: (itemName: string) => void;
   onLoadMarket: () => void;
   onRefreshApiStatuses: () => void;
+  onSaveApiKey: () => void;
 }) {
   const holdingRows = useMemo(() => {
     if (!accountSnapshot) {
@@ -4461,6 +4666,18 @@ function AccountDashboard({
           tone={analysis ? "positive" : "muted"}
         />
       </section>
+
+      <AccountSettingsPanel
+        apiKey={apiKey}
+        apiKeyRemembered={apiKeyRemembered}
+        analysisState={analysisState}
+        marketScopeId={marketScopeId}
+        onAnalyze={onAnalyze}
+        onApiKeyChange={onApiKeyChange}
+        onForgetApiKey={onForgetApiKey}
+        onMarketScopeChange={onMarketScopeChange}
+        onSaveApiKey={onSaveApiKey}
+      />
 
       <DataImportsPanel imports={dataImports} />
 
@@ -5613,17 +5830,40 @@ function DataImportsPanel({ imports }: { imports: DataImportRow[] }) {
         <h3>Data Imports</h3>
       </div>
       <div className="data-import-list">
-        {imports.map((row) => (
-          <div key={row.id} className={`data-import-row state-${row.state}`}>
-            {getImportStateIcon(row.state)}
-            <div>
-              <strong>{row.label}</strong>
-              <span>{row.detail}</span>
+        {imports.map((row) => {
+          const hasDetails = Boolean(row.children?.length);
+
+          return (
+            <div
+              key={row.id}
+              className={`data-import-row state-${row.state}${hasDetails ? " has-import-details" : ""}`}
+              tabIndex={hasDetails ? 0 : undefined}
+            >
+              {getImportStateIcon(row.state)}
+              <div className="data-import-copy">
+                <strong>{row.label}</strong>
+                <span>{row.detail}</span>
+              </div>
+              <span className="import-state">{getImportStateLabel(row.state)}</span>
+              <time>{row.updatedAt ? `Updated ${formatAge(row.updatedAt, now)}` : "Never loaded"}</time>
+              {hasDetails ? (
+                <div className="import-detail-popover" role="tooltip">
+                  <strong>GW2 Account imports</strong>
+                  {row.children?.map((child) => (
+                    <div key={child.label} className={`import-detail-row state-${child.state}`}>
+                      {getImportStateIcon(child.state)}
+                      <span>
+                        <b>{child.label}</b>
+                        <small>{child.detail}</small>
+                      </span>
+                      <em>{getImportStateLabel(child.state)}</em>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
-            <span className="import-state">{getImportStateLabel(row.state)}</span>
-            <time>{row.updatedAt ? `Updated ${formatAge(row.updatedAt, now)}` : "Never loaded"}</time>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <p className="import-latest">
         Latest information age: {latestUpdatedAt ? formatAge(latestUpdatedAt, now) : "not loaded yet"}
@@ -5697,12 +5937,14 @@ function AchievementsPage({
   accountSnapshot,
   analysisState,
   onAnalyze,
+  onCatalogLoaded,
   onImportStateChange,
   onProgress,
 }: {
   accountSnapshot: AccountSnapshot | null;
   analysisState: LoadState;
   onAnalyze: () => void;
+  onCatalogLoaded: (count: number) => void;
   onImportStateChange: (state: LoadState, updatedAt?: number | null) => void;
   onProgress: (message: string, done?: number, total?: number) => void;
 }) {
@@ -5730,6 +5972,7 @@ function AchievementsPage({
 
         setCatalog(achievementCatalog);
         setCatalogState("ready");
+        onCatalogLoaded(achievementCatalog.achievements.length);
         onImportStateChange("ready", Date.now());
         onProgress(`${achievementCatalog.achievements.length.toLocaleString()} achievements loaded`);
       })
@@ -6647,11 +6890,16 @@ function MarketPage({
     sortedRows: sortedFilteredItems,
     sort: marketSort,
     renderHeader,
-  } = useSortableRows<MarketItem, "name" | "sell" | "buy" | "spread" | "supply">(
+  } = useSortableRows<MarketItem, "name" | "demand" | "sell" | "buy" | "spread" | "supply">(
     filteredItems,
     { key: "supply", direction: "desc" },
     {
       name: (left, right) => compareStringValue(left.name, right.name),
+      demand: (left, right) =>
+        compareNumberValue(
+          getDemandRatio(left.price.buys.quantity, left.price.sells.quantity),
+          getDemandRatio(right.price.buys.quantity, right.price.sells.quantity),
+        ),
       sell: (left, right) => compareNumberValue(left.price.sells.unit_price, right.price.sells.unit_price),
       buy: (left, right) => compareNumberValue(left.price.buys.unit_price, right.price.buys.unit_price),
       spread: (left, right) => compareNumberValue(left.spread, right.spread),
@@ -6725,6 +6973,7 @@ function MarketPage({
                 <thead>
                   <tr>
                     {renderHeader("name", "Name")}
+                    {renderHeader("demand", "Demand")}
                     {renderHeader("sell", "Sell")}
                     {renderHeader("buy", "Buy")}
                     {renderHeader("spread", "Spread")}
@@ -6748,6 +6997,14 @@ function MarketPage({
                             </span>
                           </span>
                         </span>
+                      </td>
+                      <td title="Demand uses current buy-order quantity divided by current sell-listing quantity.">
+                        <span className={`demand-ratio ${getDemandRatio(item.price.buys.quantity, item.price.sells.quantity) >= 1 ? "strong" : ""}`}>
+                          {formatDemandRatio(getDemandRatio(item.price.buys.quantity, item.price.sells.quantity))}
+                        </span>
+                        <small>
+                          {formatCompactQuantity(item.price.buys.quantity)} wanted / {formatCompactQuantity(item.price.sells.quantity)} listed
+                        </small>
                       </td>
                       <td><Money value={item.price.sells.unit_price} /></td>
                       <td><Money value={item.price.buys.unit_price} /></td>
@@ -8209,6 +8466,12 @@ function ProfitableCraftsPage({
           <span className="eyebrow">Account Filter</span>
           <strong>{accountSnapshot ? `${hiddenCraftCount.toLocaleString()} hidden by filters` : "Load GW2 API to personalize"}</strong>
         </div>
+        <p className="craft-filter-note">
+          Source: official GW2 recipe API plus cached GW2 Wiki Mystic Forge recipes. This table only
+          ranks recipes with a sellable output, positive after-fee profit, and fully priced Trading
+          Post ingredients. Account filters now keep every profitable recipe your API key reports as
+          unlocked, even outside the global top list.
+        </p>
       </section>
 
       <section className="surface craft-profit-surface">
@@ -8218,6 +8481,274 @@ function ProfitableCraftsPage({
           onSelectCraft={onSelectCraft}
         />
       </section>
+    </div>
+  );
+}
+
+function MysticForgePage({
+  catalog,
+  recipes,
+  loadState,
+  updatedAt,
+  selectedItem,
+  listings,
+  itemTransactions,
+  outputRecipes,
+  usedInRecipes,
+  recipeUsageState,
+  wikiGuide,
+  detailState,
+  containerAnalysis,
+  containerState,
+  accountSnapshot,
+  marketHistoryRevision,
+  onLoadRecipes,
+  onCloseDetail,
+  onSelectItem,
+}: {
+  catalog: MarketItem[];
+  recipes: RecipeGuide[];
+  loadState: LoadState;
+  updatedAt: number | null;
+  selectedItem: MarketItem | null;
+  listings: CommerceListings | null;
+  itemTransactions: ItemTransactions | null;
+  outputRecipes: RecipeGuide[];
+  usedInRecipes: RecipeGuide[];
+  recipeUsageState: LoadState;
+  wikiGuide: WikiGuide | null;
+  detailState: LoadState;
+  containerAnalysis: ContainerAnalysis | null;
+  containerState: LoadState;
+  accountSnapshot: AccountSnapshot | null;
+  marketHistoryRevision: number;
+  onLoadRecipes: () => Promise<RecipeGuide[]>;
+  onCloseDetail: () => void;
+  onSelectItem: (item: Gw2Item) => void;
+}) {
+  const now = useRelativeNow();
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<"all" | "tradable" | "not-tradable">("all");
+  const rows = useMemo(
+    () =>
+      recipes
+        .map((guide) => {
+          const output = guide.recipe.output_item_id ? getStoredItem(guide.recipe.output_item_id) : undefined;
+          if (!output) {
+            return null;
+          }
+
+          const marketItem = buildMarketItemForDetail(output);
+          const tradable = hasTradingPostPrice(marketItem);
+          const ingredientCount = guide.ingredients.reduce((sum, ingredient) => sum + ingredient.count, 0);
+
+          return {
+            guide,
+            output,
+            marketItem,
+            tradable,
+            ingredientCount,
+            source: guide.recipe.sourceName ?? getRecipeSourceLabel(guide.recipe),
+          };
+        })
+        .filter((row): row is NonNullable<typeof row> => Boolean(row)),
+    [recipes],
+  );
+  const filteredRows = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    return rows.filter((row) => {
+      if (category === "tradable" && !row.tradable) {
+        return false;
+      }
+
+      if (category === "not-tradable" && row.tradable) {
+        return false;
+      }
+
+      if (!normalizedQuery) {
+        return true;
+      }
+
+      return (
+        row.output.name.toLowerCase().includes(normalizedQuery) ||
+        row.source.toLowerCase().includes(normalizedQuery) ||
+        row.guide.ingredients.some((ingredient) => ingredient.item?.name.toLowerCase().includes(normalizedQuery))
+      );
+    });
+  }, [category, query, rows]);
+  const { sortedRows, renderHeader } = useSortableRows<
+    (typeof rows)[number],
+    "output" | "category" | "ingredients" | "value" | "cost" | "profit" | "source"
+  >(
+    filteredRows,
+    { key: "value", direction: "desc" },
+    {
+      output: (left, right) => compareStringValue(left.output.name, right.output.name),
+      category: (left, right) => compareStringValue(left.tradable ? "tradable" : "not tradable", right.tradable ? "tradable" : "not tradable"),
+      ingredients: (left, right) => compareNumberValue(left.ingredientCount, right.ingredientCount),
+      value: (left, right) => compareNumberValue(left.guide.outputValue, right.guide.outputValue),
+      cost: (left, right) => compareNumberValue(left.guide.marketCost, right.guide.marketCost),
+      profit: (left, right) => compareNumberValue(left.guide.netProfit, right.guide.netProfit),
+      source: (left, right) => compareStringValue(left.source, right.source),
+    },
+  );
+  const tradableCount = rows.filter((row) => row.tradable).length;
+  const notTradableCount = Math.max(0, rows.length - tradableCount);
+  const bestProfit = Math.max(0, ...rows.map((row) => row.guide.netProfit));
+
+  useEffect(() => {
+    if (loadState === "idle") {
+      void onLoadRecipes();
+    }
+  }, [loadState, onLoadRecipes]);
+
+  return (
+    <div className={`market-workspace crafting-workspace ${selectedItem ? "" : "detail-closed"}`}>
+      <aside className="market-panel craft-table-panel">
+        <section className="page-header compact-page-header">
+          <div>
+            <span className="eyebrow">Mystic Forge</span>
+            <h2>Mystic Forge</h2>
+            <p>
+              All loaded Mystic Forge recipes from official recipe data and the GW2 Wiki, including recipes with
+              tradable and non-tradable outputs.
+            </p>
+          </div>
+          <button className="icon-button primary" onClick={() => void onLoadRecipes()} disabled={loadState === "loading"}>
+            {loadState === "loading" ? <Loader2 className="spin" /> : <RefreshCcw />}
+            <span>{loadState === "loading" ? "Loading" : "Refresh"}</span>
+          </button>
+        </section>
+
+        <section className="stat-grid compact-stat-grid">
+          <Metric icon={<Coins />} label="Recipes" value={rows.length.toLocaleString()} />
+          <Metric icon={<PackageSearch />} label="Tradable" value={tradableCount.toLocaleString()} tone={tradableCount ? "positive" : "muted"} />
+          <Metric icon={<ShieldCheck />} label="Not Tradable" value={notTradableCount.toLocaleString()} tone={notTradableCount ? "muted" : "default"} />
+          <Metric icon={<TrendingUp />} label="Best Profit" value={<Money value={bestProfit} />} tone={bestProfit > 0 ? "positive" : "muted"} />
+        </section>
+
+        <section className="surface craft-filter-panel">
+          <label>
+            Category
+            <select value={category} onChange={(event) => setCategory(event.target.value as typeof category)}>
+              <option value="all">All Mystic Forge recipes</option>
+              <option value="tradable">Tradable outputs</option>
+              <option value="not-tradable">Non-tradable outputs</option>
+            </select>
+          </label>
+          <label>
+            Search
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search output, ingredient, source"
+            />
+          </label>
+          <div>
+            <span className="eyebrow">Updated</span>
+            <strong>{updatedAt ? formatAge(updatedAt, now) : "Not loaded"}</strong>
+          </div>
+        </section>
+
+        {loadState === "loading" && rows.length === 0 ? <SkeletonRows /> : null}
+        {loadState === "error" ? (
+          <div className="empty-detail inline-empty">
+            <AlertCircle />
+            <h2>Mystic Forge recipes could not be loaded</h2>
+            <p>The app could not load the official recipe index or GW2 Wiki Mystic Forge recipe pages.</p>
+          </div>
+        ) : null}
+
+        {sortedRows.length > 0 ? (
+          <div className="craft-table-wrap">
+            <table className="craft-profit-table mystic-forge-table">
+              <thead>
+                <tr>
+                  {renderHeader("output", "Output")}
+                  {renderHeader("category", "Category")}
+                  {renderHeader("ingredients", "Ingredients")}
+                  {renderHeader("value", "Sell Value")}
+                  {renderHeader("cost", "Crafting Cost")}
+                  {renderHeader("profit", "Profit")}
+                  {renderHeader("source", "Source")}
+                </tr>
+              </thead>
+              <tbody>
+                {sortedRows.map((row) => (
+                  <tr
+                    key={row.guide.recipe.id}
+                    className={selectedItem?.id === row.output.id ? "selected-row" : ""}
+                    onClick={() => onSelectItem(row.output)}
+                  >
+                    <td>
+                      <span className="table-item-cell">
+                        <ItemIcon item={row.output} />
+                        <span className="item-copy">
+                          <strong>{row.output.name}</strong>
+                          <span>{row.output.rarity} {row.output.type}</span>
+                        </span>
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`source-pill source-${row.tradable ? "market" : "unknown"}`}>
+                        {row.tradable ? "Tradable" : "Not tradable"}
+                      </span>
+                    </td>
+                    <td>
+                      {row.guide.ingredients.length.toLocaleString()}
+                      <small>{row.ingredientCount.toLocaleString()} total items</small>
+                    </td>
+                    <td>{row.guide.outputValue > 0 ? <Money value={row.guide.outputValue} /> : "No TP value"}</td>
+                    <td>{row.guide.marketCost > 0 ? <Money value={row.guide.marketCost} /> : "Unknown"}</td>
+                    <td className={row.guide.netProfit > 0 ? "profit" : "muted-money"}>
+                      {row.guide.marketCost > 0 && row.guide.outputValue > 0
+                        ? <Money value={Math.abs(row.guide.netProfit)} />
+                        : "-"}
+                    </td>
+                    <td>
+                      <span>{row.source}</span>
+                      {row.guide.recipe.sourceUrl ? (
+                        <a href={row.guide.recipe.sourceUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                          Source <ExternalLink />
+                        </a>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : loadState !== "loading" ? (
+          <div className="empty-detail inline-empty">
+            <Search />
+            <h2>No Mystic Forge recipes match</h2>
+            <p>Clear the category or search filter to show the full Mystic Forge recipe list.</p>
+          </div>
+        ) : null}
+      </aside>
+
+      {selectedItem ? (
+        <section className="detail-panel">
+          <ItemDetail
+            item={selectedItem}
+            catalog={catalog}
+            listings={listings}
+            itemTransactions={itemTransactions}
+            recipes={outputRecipes}
+            usedInRecipes={usedInRecipes}
+            recipeUsageState={recipeUsageState}
+            wikiGuide={wikiGuide}
+            detailState={detailState}
+            containerAnalysis={containerAnalysis}
+            containerState={containerState}
+            accountSnapshot={accountSnapshot}
+            marketHistoryRevision={marketHistoryRevision}
+            onClose={onCloseDetail}
+            onOpenDetail={(detailItem) => onSelectItem(buildMarketItemForDetail(detailItem))}
+          />
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -8763,14 +9294,37 @@ function SalvagingPage({
   onSelectItem: (item: MarketItem) => void;
   onLoadMarket: () => Promise<MarketItem[]>;
 }) {
-  const salvageRows = useMemo(() => buildSalvageEstimateRows(catalog), [catalog]);
+  const [salvageOutputRevision, setSalvageOutputRevision] = useState(0);
+
+  useEffect(() => {
+    let ignore = false;
+
+    Promise.allSettled([
+      loadItems(SALVAGE_OUTPUT_PRICE_IDS),
+      ensureCommercePricesForItems(SALVAGE_OUTPUT_PRICE_IDS),
+    ]).then(() => {
+      if (!ignore) {
+        setSalvageOutputRevision((revision) => revision + 1);
+      }
+    });
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  const salvageRows = useMemo(() => buildSalvageEstimateRows(catalog), [catalog, salvageOutputRevision]);
   const outputRows = useMemo(
     () =>
       SALVAGE_OUTPUT_PRICE_NAMES.map((name) => ({
         name,
-        quote: getMarketQuoteForName(catalog, name),
+        quote: getMarketQuoteForSalvageOutput(catalog, {
+          itemId: SALVAGE_OUTPUT_ITEM_IDS[name],
+          name,
+          averageCount: 1,
+        }),
       })).filter((row) => row.quote.item || catalog.length === 0),
-    [catalog],
+    [catalog, salvageOutputRevision],
   );
   const modeledRows = salvageRows.filter((row) => row.outputs.length > 0);
   const profitableRows = modeledRows.filter((row) => row.buySalvageProfit > 0);
@@ -9925,7 +10479,7 @@ function SalvageOutputList({
   return (
     <span className="output-list">
       {outputs.map((output) => {
-        const quote = getMarketQuoteForName(catalog, output.name);
+        const quote = getMarketQuoteForSalvageOutput(catalog, output);
         const unitValue = quote.instantSellNet || quote.listedSellNet;
 
         return (
@@ -9948,11 +10502,44 @@ function SalvageProfilePanel({
   profile: SalvageProfile;
   catalog: MarketItem[];
 }) {
-  const salvageValue = estimateSalvageOutputValue(profile.outputs, catalog);
+  const [outputRevision, setOutputRevision] = useState(0);
+  const outputItemIds = useMemo(
+    () =>
+      Array.from(
+        new Set(profile.outputs.map((output) => output.itemId).filter((id): id is number => typeof id === "number")),
+      ),
+    [profile.outputs],
+  );
+
+  useEffect(() => {
+    if (outputItemIds.length === 0) {
+      return;
+    }
+
+    let ignore = false;
+
+    Promise.allSettled([
+      loadItems(outputItemIds),
+      ensureCommercePricesForItems(outputItemIds),
+    ]).then(() => {
+      if (!ignore) {
+        setOutputRevision((revision) => revision + 1);
+      }
+    });
+
+    return () => {
+      ignore = true;
+    };
+  }, [outputItemIds]);
+
+  const salvageValue = useMemo(
+    () => estimateSalvageOutputValue(profile.outputs, catalog),
+    [catalog, outputRevision, profile.outputs],
+  );
   const directSellNet = item.price.buys.unit_price ? Math.floor(item.price.buys.unit_price * 0.85) : item.netSellPrice;
   const delta = salvageValue - directSellNet;
   const getOutputMarketValue = (output: SalvageOutputEstimate): number => {
-    const quote = getMarketQuoteForName(catalog, output.name);
+    const quote = getMarketQuoteForSalvageOutput(catalog, output);
     const unitValue = quote.instantSellNet || quote.listedSellNet;
     return unitValue ? Math.round(unitValue * output.averageCount) : 0;
   };
@@ -9997,7 +10584,7 @@ function SalvageProfilePanel({
               </thead>
               <tbody>
                 {sortedOutputs.map((output) => {
-                  const quote = getMarketQuoteForName(catalog, output.name);
+                  const quote = getMarketQuoteForSalvageOutput(catalog, output);
                   const unitValue = quote.instantSellNet || quote.listedSellNet;
 
                   return (
@@ -10007,7 +10594,7 @@ function SalvageProfilePanel({
                           <ItemIcon item={quote.item ?? { name: output.name }} />
                           <span className="item-copy">
                             <strong>{quote.item?.name ?? output.name}</strong>
-                            <span>{quote.item ? `${quote.item.rarity} ${quote.item.type}` : "Not in loaded market"}</span>
+                            <span>{quote.item ? `${quote.item.rarity} ${quote.item.type}` : "Item not resolved yet"}</span>
                           </span>
                         </span>
                       </td>
@@ -10122,8 +10709,7 @@ function FarmingCalculatorPage({
   const highestValueCrafts = useMemo(
     () =>
       [...highValueCrafts]
-        .sort((left, right) => right.outputValue - left.outputValue)
-        .slice(0, 80),
+        .sort((left, right) => right.outputValue - left.outputValue),
     [highValueCrafts],
   );
   const { sortedRows: sortedHighestValueCrafts, renderHeader } = useSortableRows<
@@ -11053,6 +11639,7 @@ function getEquipmentSalvageProfile(item: MarketItem): SalvageProfile {
 
   for (const family of families) {
     outputs.push({
+      itemId: getSalvageOutputItemId(tier[family]),
       name: tier[family],
       averageCount: materialAverage / families.length,
       note: `${SALVAGE_FAMILY_LABELS[family]} family`,
@@ -11060,19 +11647,19 @@ function getEquipmentSalvageProfile(item: MarketItem): SalvageProfile {
   }
 
   if ((item.rarity === "Rare" || item.rarity === "Exotic") && item.level >= 68) {
-    outputs.unshift({
-      name: "Glob of Ectoplasm",
-      averageCount: item.rarity === "Exotic" ? 1.15 : 0.875,
-      note: "Only modeled for level 68+ rare/exotic gear",
-    });
+    outputs.unshift(makeSalvageOutput(
+      "Glob of Ectoplasm",
+      item.rarity === "Exotic" ? 1.15 : 0.875,
+      "Only modeled for level 68+ rare/exotic gear",
+    ));
   }
 
   if (item.rarity === "Rare" || item.rarity === "Exotic") {
-    outputs.push({
-      name: tier.dust,
-      averageCount: item.rarity === "Exotic" ? 0.28 : 0.12,
-      note: "Rarity dust estimate",
-    });
+    outputs.push(makeSalvageOutput(
+      tier.dust,
+      item.rarity === "Exotic" ? 0.28 : 0.12,
+      "Rarity dust estimate",
+    ));
   }
 
   const familyLabel = families.length === 1
@@ -11153,10 +11740,10 @@ function getSalvageMaterialFamilies(item: MarketItem): SalvageMaterialFamily[] {
 
 function getUpgradeComponentSalvageOutputs(item: MarketItem): SalvageOutputEstimate[] {
   const outputs: SalvageOutputEstimate[] = [
-    {
-      name: item.rarity === "Exotic" || item.rarity === "Rare" ? "Pile of Lucent Crystal" : "Lucent Mote",
-      averageCount: item.rarity === "Exotic" ? 1.35 : item.rarity === "Rare" ? 0.75 : 1,
-    },
+    makeSalvageOutput(
+      item.rarity === "Exotic" || item.rarity === "Rare" ? "Pile of Lucent Crystal" : "Lucent Mote",
+      item.rarity === "Exotic" ? 1.35 : item.rarity === "Rare" ? 0.75 : 1,
+    ),
   ];
 
   return outputs;
@@ -11165,11 +11752,17 @@ function getUpgradeComponentSalvageOutputs(item: MarketItem): SalvageOutputEstim
 function estimateSalvageOutputValue(outputs: SalvageOutputEstimate[], catalog: MarketItem[]): number {
   return Math.round(
     outputs.reduce((sum, output) => {
-      const quote = getMarketQuoteForName(catalog, output.name);
+      const quote = getMarketQuoteForSalvageOutput(catalog, output);
       const unitValue = quote.instantSellNet || quote.listedSellNet;
       return sum + unitValue * output.averageCount;
     }, 0),
   );
+}
+
+function getMarketQuoteForSalvageOutput(catalog: MarketItem[], output: SalvageOutputEstimate): MarketQuote {
+  return output.itemId
+    ? getMarketQuoteForId(catalog, output.itemId, [output.name])
+    : getMarketQuoteForName(catalog, output.name);
 }
 
 function getMarketQuoteForAliases(catalog: MarketItem[], aliases: string[]): MarketQuote {
@@ -11185,7 +11778,16 @@ function getMarketQuoteForAliases(catalog: MarketItem[], aliases: string[]): Mar
 
 function getMarketQuoteForId(catalog: MarketItem[], itemId: number, fallbackAliases: string[] = []): MarketQuote {
   const idQuote = getMarketQuoteForItem(catalog.find((item) => item.id === itemId));
-  return idQuote.item ? idQuote : getMarketQuoteForAliases(catalog, fallbackAliases);
+  if (idQuote.item) {
+    return idQuote;
+  }
+
+  const storedItem = getStoredItem(itemId);
+  if (storedItem) {
+    return getMarketQuoteForItem(buildMarketItemForDetail(storedItem));
+  }
+
+  return getMarketQuoteForAliases(catalog, fallbackAliases);
 }
 
 function getMarketQuoteForName(catalog: MarketItem[], name: string): MarketQuote {
@@ -14191,6 +14793,20 @@ function IngredientMindMap({
   const [selectedNode, setSelectedNode] = useState<PositionedCraftMapNode | null>(null);
   const [nestedRecipes, setNestedRecipes] = useState<Map<number, RecipeGuide[]>>(new Map());
   const [wikiAcquisitions, setWikiAcquisitions] = useState<Map<number, WikiItemAcquisition | null>>(new Map());
+  const [collapsedNodeKeys, setCollapsedNodeKeys] = useState<Set<string>>(new Set());
+  const [expandedNodeKeys, setExpandedNodeKeys] = useState<Set<string>>(new Set());
+  const [mapPan, setMapPan] = useState({ x: 0, y: 0 });
+  const [isMapPanning, setIsMapPanning] = useState(false);
+  const mapViewportRef = useRef<HTMLDivElement | null>(null);
+  const mapDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+    dragged: boolean;
+  } | null>(null);
+  const suppressNextMapClickRef = useRef(false);
   const [mapState, setMapState] = useState<LoadState>("idle");
   const recipe = recipes[0];
   const tree = useMemo(
@@ -14200,11 +14816,43 @@ function IngredientMindMap({
         : null,
     [accountSnapshot, item, nestedRecipes, recipe, wikiAcquisitions],
   );
-  const layout = useMemo(() => (tree ? layoutCraftMap(tree) : null), [tree]);
+  const layout = useMemo(
+    () =>
+      tree
+        ? layoutCraftMap(tree, (node) => isCraftMapNodeCollapsed(node, collapsedNodeKeys, expandedNodeKeys))
+        : null,
+    [collapsedNodeKeys, expandedNodeKeys, tree],
+  );
   const visibleNodeKey = useMemo(
     () => (layout ? layout.nodes.map((node) => `${node.item.id}:${node.item.name}`).join("|") : ""),
     [layout],
   );
+
+  useEffect(() => {
+    setSelectedNode(null);
+    setCollapsedNodeKeys(new Set());
+    setExpandedNodeKeys(new Set());
+    setMapPan({ x: 0, y: 0 });
+    setIsMapPanning(false);
+    mapDragRef.current = null;
+    suppressNextMapClickRef.current = false;
+  }, [item.id, recipe?.recipe.id]);
+
+  useLayoutEffect(() => {
+    if (!layout || !mapViewportRef.current) {
+      return;
+    }
+
+    const viewport = mapViewportRef.current.getBoundingClientRect();
+    if (viewport.width <= 0 || viewport.height <= 0) {
+      return;
+    }
+
+    setMapPan(centerCraftMapPan(layout, {
+      width: viewport.width,
+      height: viewport.height,
+    }));
+  }, [layout, visibleNodeKey]);
 
   useEffect(() => {
     if (!recipe) {
@@ -14272,6 +14920,123 @@ function IngredientMindMap({
     };
   }, [layout, visibleNodeKey, wikiAcquisitions]);
 
+  useEffect(() => {
+    if (!selectedNode || !layout) {
+      return;
+    }
+
+    const nextSelectedNode = layout.nodes.find((node) => node.key === selectedNode.key);
+    if (!nextSelectedNode) {
+      setSelectedNode(null);
+      return;
+    }
+
+    if (nextSelectedNode !== selectedNode) {
+      setSelectedNode(nextSelectedNode);
+    }
+  }, [layout, selectedNode]);
+
+  const toggleNodeBranch = (node: PositionedCraftMapNode) => {
+    const isCollapsed = isCraftMapNodeCollapsed(node, collapsedNodeKeys, expandedNodeKeys);
+    setCollapsedNodeKeys((current) => {
+      const next = new Set(current);
+      if (isCollapsed) {
+        next.delete(node.key);
+      } else {
+        next.add(node.key);
+      }
+      return next;
+    });
+    setExpandedNodeKeys((current) => {
+      const next = new Set(current);
+      if (isCollapsed) {
+        next.add(node.key);
+      } else {
+        next.delete(node.key);
+      }
+      return next;
+    });
+  };
+  const clampPanForCurrentMap = (nextPan: { x: number; y: number }) => {
+    const viewport = mapViewportRef.current?.getBoundingClientRect();
+    if (!layout || !viewport) {
+      return nextPan;
+    }
+
+    return clampCraftMapPan(nextPan, layout, {
+      width: viewport.width,
+      height: viewport.height,
+    });
+  };
+  const handleMapPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!layout || event.button !== 0) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("button, a, input, textarea, select, .node-info")) {
+      return;
+    }
+
+    mapDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: mapPan.x,
+      originY: mapPan.y,
+      dragged: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const handleMapPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = mapDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    const hasDragged = Math.hypot(deltaX, deltaY) > 3;
+    if (hasDragged) {
+      drag.dragged = true;
+      setIsMapPanning(true);
+    }
+
+    setMapPan(clampPanForCurrentMap({
+      x: drag.originX + deltaX,
+      y: drag.originY + deltaY,
+    }));
+  };
+  const endMapPointerDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = mapDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (drag.dragged) {
+      suppressNextMapClickRef.current = true;
+      window.setTimeout(() => {
+        suppressNextMapClickRef.current = false;
+      }, 0);
+    }
+
+    mapDragRef.current = null;
+    setIsMapPanning(false);
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+  const handleMapClickCapture = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!suppressNextMapClickRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    suppressNextMapClickRef.current = false;
+  };
+
   return (
     <section className="surface mind-map-section">
       <div className="section-title">
@@ -14286,8 +15051,25 @@ function IngredientMindMap({
           {mapState === "error" ? (
             <p className="market-list-note">Some deeper recipe steps could not be loaded right now.</p>
           ) : null}
-          <div className="mind-map" style={{ ["--map-width" as string]: `${layout.width}px` }}>
-            <div className="map-canvas" style={{ width: layout.width, height: layout.height }}>
+          <div
+            ref={mapViewportRef}
+            className={`mind-map ${isMapPanning ? "panning" : ""}`}
+            style={{ ["--map-width" as string]: `${layout.width}px` }}
+            onPointerDown={handleMapPointerDown}
+            onPointerMove={handleMapPointerMove}
+            onPointerUp={endMapPointerDrag}
+            onPointerCancel={endMapPointerDrag}
+            onLostPointerCapture={endMapPointerDrag}
+            onClickCapture={handleMapClickCapture}
+          >
+            <div
+              className="map-canvas"
+              style={{
+                width: layout.width,
+                height: layout.height,
+                transform: `translate(${mapPan.x}px, ${mapPan.y}px)`,
+              }}
+            >
               <svg className="map-lines" viewBox={`0 0 ${layout.width} ${layout.height}`} aria-hidden="true">
                 {layout.connectors.map((connector) => (
                   <path
@@ -14297,36 +15079,64 @@ function IngredientMindMap({
                 ))}
               </svg>
 
-              {layout.nodes.map((node) => (
-                <button
-                  key={node.key}
-                  className={`map-node ${node.depth === 0 ? "output-node" : "ingredient-node"} ${
-                    node.recipe ? "craftable-node" : ""
-                  }`}
-                  style={{ left: node.x, top: node.y }}
-                  onClick={() => setSelectedNode(node)}
-                >
-                  <ItemIcon item={node.item} />
-                  <strong>{node.item.name}</strong>
-                  <span className="node-required-count">
-                    {node.requiredCount.toLocaleString()} needed
-                  </span>
-                  <span className={accountSnapshot ? "node-owned-count" : "node-owned-count muted"}>
-                    {accountSnapshot
-                      ? `${node.ownedCount.toLocaleString()} owned`
-                      : "Owned not loaded"}
-                  </span>
-                  <span className="node-total-price">
-                    {node.acquisition.totalCost > 0 ? (
-                      <>
-                        {node.acquisition.label} <Money value={node.acquisition.totalCost} />
-                      </>
-                    ) : (
-                      "Check source"
-                    )}
-                  </span>
-                </button>
-              ))}
+              {layout.nodes.map((node) => {
+                const hasBranch = node.children.length > 0;
+                const isCollapsed = isCraftMapNodeCollapsed(node, collapsedNodeKeys, expandedNodeKeys);
+
+                return (
+                  <div
+                    key={node.key}
+                    className={`map-node ${node.depth === 0 ? "output-node" : "ingredient-node"} ${
+                      node.recipe ? "craftable-node" : ""
+                    }`}
+                    style={{ left: node.x, top: node.y }}
+                    onClick={() => setSelectedNode(node)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelectedNode(node);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <ItemIcon item={node.item} />
+                    <strong>{node.item.name}</strong>
+                    <span className="node-required-count">
+                      {node.requiredCount.toLocaleString()} needed
+                    </span>
+                    <span className={accountSnapshot ? "node-owned-count" : "node-owned-count muted"}>
+                      {accountSnapshot
+                        ? `${node.ownedCount.toLocaleString()} owned`
+                        : "Owned not loaded"}
+                    </span>
+                    <span className="node-total-price">
+                      {node.acquisition.totalCost > 0 ? (
+                        <>
+                          {node.acquisition.label} <Money value={node.acquisition.totalCost} />
+                        </>
+                      ) : (
+                        "Check source"
+                      )}
+                    </span>
+                    {hasBranch ? (
+                      <button
+                        type="button"
+                        className="branch-toggle"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          toggleNodeBranch(node);
+                        }}
+                        title={isCollapsed ? "Show ingredients below this item" : "Hide ingredients below this item"}
+                        aria-label={isCollapsed ? `Show ingredients for ${node.item.name}` : `Hide ingredients for ${node.item.name}`}
+                      >
+                        {isCollapsed ? "+" : "-"}
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
 
               {selectedNode ? (
                 <NodeInfoWindow
@@ -14355,7 +15165,10 @@ function IngredientMindMap({
 }
 
 const CRAFT_MAP_MAX_DEPTH = 5;
-const CRAFT_MAP_MAX_NESTED_RECIPES = 80;
+const CRAFT_MAP_NODE_WIDTH = 154;
+const CRAFT_MAP_NODE_HEIGHT = 122;
+const CRAFT_MAP_NODE_VERTICAL_EXTRA = 32;
+const CRAFT_MAP_MIN_VISIBLE_PIXELS = 120;
 
 interface CraftMapTreeNode {
   key: string;
@@ -14377,6 +15190,18 @@ interface CraftMapConnector {
   key: string;
   parent: PositionedCraftMapNode;
   children: PositionedCraftMapNode[];
+}
+
+interface CraftMapLayout {
+  width: number;
+  height: number;
+  nodes: PositionedCraftMapNode[];
+  connectors: CraftMapConnector[];
+}
+
+interface CraftMapViewportSize {
+  width: number;
+  height: number;
 }
 
 function buildCraftMapTree(
@@ -14478,7 +15303,7 @@ async function loadNestedCraftRecipes(
   }));
   const visited = new Set<number>();
 
-  while (queue.length > 0 && visited.size < CRAFT_MAP_MAX_NESTED_RECIPES) {
+  while (queue.length > 0) {
     const next = queue.shift()!;
     if (visited.has(next.itemId) || next.depth >= CRAFT_MAP_MAX_DEPTH) {
       continue;
@@ -14523,41 +15348,69 @@ function selectBestRecipeGuide(
   })[0] ?? null;
 }
 
-function countCraftMapLeaves(node: CraftMapTreeNode): number {
+function isCraftMapNodeCollapsed(
+  node: CraftMapTreeNode,
+  collapsedNodeKeys: Set<string>,
+  expandedNodeKeys: Set<string>,
+): boolean {
   if (node.children.length === 0) {
+    return false;
+  }
+
+  if (collapsedNodeKeys.has(node.key)) {
+    return true;
+  }
+
+  return node.depth > 0 && !expandedNodeKeys.has(node.key);
+}
+
+function countCraftMapLeaves(
+  node: CraftMapTreeNode,
+  isCollapsed: (node: CraftMapTreeNode) => boolean,
+): number {
+  if (node.children.length === 0 || isCollapsed(node)) {
     return 1;
   }
 
-  return node.children.reduce((sum, child) => sum + countCraftMapLeaves(child), 0);
+  return node.children.reduce((sum, child) => sum + countCraftMapLeaves(child, isCollapsed), 0);
 }
 
-function getCraftMapDepth(node: CraftMapTreeNode): number {
-  return node.children.reduce((maxDepth, child) => Math.max(maxDepth, getCraftMapDepth(child)), node.depth);
+function getCraftMapDepth(
+  node: CraftMapTreeNode,
+  isCollapsed: (node: CraftMapTreeNode) => boolean,
+): number {
+  if (isCollapsed(node)) {
+    return node.depth;
+  }
+
+  return node.children.reduce(
+    (maxDepth, child) => Math.max(maxDepth, getCraftMapDepth(child, isCollapsed)),
+    node.depth,
+  );
 }
 
-function layoutCraftMap(root: CraftMapTreeNode): {
-  width: number;
-  height: number;
-  nodes: PositionedCraftMapNode[];
-  connectors: CraftMapConnector[];
-} {
-  const leafCount = countCraftMapLeaves(root);
-  const maxDepth = getCraftMapDepth(root);
+function layoutCraftMap(
+  root: CraftMapTreeNode,
+  isCollapsed: (node: CraftMapTreeNode) => boolean,
+): CraftMapLayout {
+  const leafCount = countCraftMapLeaves(root, isCollapsed);
+  const maxDepth = getCraftMapDepth(root, isCollapsed);
   const leafSpacing = 190;
+  const sidePadding = 130;
   const top = 86;
   const levelSpacing = 162;
-  const width = Math.max(760, leafCount * leafSpacing + 120);
+  const width = Math.max(760, Math.max(1, leafCount - 1) * leafSpacing + sidePadding * 2);
   const height = Math.max(360, top + maxDepth * levelSpacing + 130);
   const nodes: PositionedCraftMapNode[] = [];
   const connectors: CraftMapConnector[] = [];
   let leafIndex = 0;
 
   const place = (node: CraftMapTreeNode): PositionedCraftMapNode => {
-    const childNodes = node.children.map(place);
+    const childNodes = isCollapsed(node) ? [] : node.children.map(place);
     const x =
       childNodes.length > 0
         ? childNodes.reduce((sum, child) => sum + child.x, 0) / childNodes.length
-        : 60 + leafIndex++ * leafSpacing;
+        : sidePadding + leafIndex++ * leafSpacing;
     const positionedNode = {
       ...node,
       x,
@@ -14577,12 +15430,74 @@ function layoutCraftMap(root: CraftMapTreeNode): {
   };
 
   place(root);
+  if (nodes.length === 1) {
+    nodes[0].x = width / 2;
+    nodes[0].y = height / 2;
+  }
 
   return {
     width,
     height,
     nodes,
     connectors,
+  };
+}
+
+function getCraftMapVisibleBounds(nodes: PositionedCraftMapNode[]) {
+  if (nodes.length === 0) {
+    return {
+      left: 0,
+      top: 0,
+      right: 0,
+      bottom: 0,
+      width: 0,
+      height: 0,
+    };
+  }
+
+  const halfWidth = CRAFT_MAP_NODE_WIDTH / 2;
+  const halfHeight = CRAFT_MAP_NODE_HEIGHT / 2;
+  const left = Math.min(...nodes.map((node) => node.x - halfWidth));
+  const right = Math.max(...nodes.map((node) => node.x + halfWidth));
+  const top = Math.min(...nodes.map((node) => node.y - halfHeight));
+  const bottom = Math.max(...nodes.map((node) => node.y + halfHeight + CRAFT_MAP_NODE_VERTICAL_EXTRA));
+
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
+function centerCraftMapPan(layout: CraftMapLayout, viewport: CraftMapViewportSize) {
+  const bounds = getCraftMapVisibleBounds(layout.nodes);
+  const nextPan = {
+    x: viewport.width / 2 - (bounds.left + bounds.width / 2),
+    y: viewport.height / 2 - (bounds.top + bounds.height / 2),
+  };
+
+  return clampCraftMapPan(nextPan, layout, viewport);
+}
+
+function clampCraftMapPan(
+  pan: { x: number; y: number },
+  layout: CraftMapLayout,
+  viewport: CraftMapViewportSize,
+) {
+  return {
+    x: clampNumber(
+      pan.x,
+      CRAFT_MAP_MIN_VISIBLE_PIXELS - layout.width,
+      viewport.width - CRAFT_MAP_MIN_VISIBLE_PIXELS,
+    ),
+    y: clampNumber(
+      pan.y,
+      CRAFT_MAP_MIN_VISIBLE_PIXELS - layout.height,
+      viewport.height - CRAFT_MAP_MIN_VISIBLE_PIXELS,
+    ),
   };
 }
 

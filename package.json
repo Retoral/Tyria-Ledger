@@ -1,6 +1,6 @@
 {
   "name": "tyria-ledger",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Desktop Guild Wars 2 Trading Post and crafting companion.",
   "main": "electron/main.cjs",
@@ -39,6 +39,7 @@
   "build": {
     "appId": "com.tyrialedger.desktop",
     "productName": "Tyria Ledger",
+    "icon": "build/icon",
     "directories": {
       "output": "release"
     },
@@ -49,12 +50,14 @@
     ],
     "mac": {
       "category": "public.app-category.utilities",
+      "icon": "build/icon.icns",
       "target": [
         "dmg",
         "zip"
       ]
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis",
         "portable"

@@ -24,9 +24,28 @@ body {
   margin: 0;
   min-width: 1180px;
   min-height: 720px;
+  padding-top: env(titlebar-area-height, 0);
   background:
     radial-gradient(circle at 18% 6%, rgba(0, 124, 122, 0.16), transparent 32%),
     linear-gradient(180deg, #0d1113 0%, #090d0f 100%);
+}
+
+body::before {
+  content: "Tyria Ledger";
+  position: fixed;
+  top: env(titlebar-area-y, 0);
+  left: env(titlebar-area-x, 0);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  width: env(titlebar-area-width, 0);
+  height: env(titlebar-area-height, 0);
+  padding-left: 14px;
+  color: #d6ddd8;
+  background: #151a1d;
+  font-size: 13px;
+  font-weight: 800;
+  -webkit-app-region: drag;
 }
 
 button,
@@ -61,7 +80,7 @@ svg {
   position: sticky;
   top: 0;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
   height: 100vh;
   min-height: 720px;
   padding: 16px 12px;
@@ -190,18 +209,23 @@ svg {
   background: #0f3435;
 }
 
-.side-bottom {
-  display: grid;
-  gap: 10px;
-  padding-top: 12px;
-  border-top: 1px solid #2a302f;
-}
-
 .account-header-side {
   display: grid;
   justify-items: end;
   gap: 10px;
   width: min(560px, 52vw);
+}
+
+.account-settings-panel {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.75fr) minmax(420px, 1.25fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.account-settings-panel .api-key-dock,
+.account-settings-panel .market-scope-dock {
+  min-height: 100%;
 }
 
 .api-status-panel {
@@ -924,6 +948,7 @@ svg {
 }
 
 .data-import-row {
+  position: relative;
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) minmax(96px, auto) minmax(118px, auto);
   align-items: center;
@@ -936,7 +961,7 @@ svg {
   background: #141a1e;
 }
 
-.data-import-row div {
+.data-import-copy {
   display: grid;
   gap: 2px;
   min-width: 0;
@@ -948,17 +973,104 @@ svg {
   min-width: 0;
 }
 
-.data-import-row div > span,
+.data-import-copy > span,
 .data-import-row time,
 .import-latest {
   color: #9aa7a2;
   font-size: 12px;
 }
 
-.data-import-row div > span {
+.data-import-copy > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.has-import-details {
+  cursor: help;
+}
+
+.import-detail-popover {
+  position: absolute;
+  right: 156px;
+  top: calc(100% - 4px);
+  z-index: 30;
+  display: grid;
+  gap: 8px;
+  width: min(520px, calc(100vw - 420px));
+  min-width: 360px;
+  padding: 12px;
+  border: 1px solid #3d4d52;
+  border-radius: 10px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.38);
+  color: #edf5ef;
+  background: #0e1518;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.has-import-details:hover .import-detail-popover,
+.has-import-details:focus-within .import-detail-popover {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.data-import-row:last-child .import-detail-popover {
+  top: auto;
+  bottom: calc(100% - 4px);
+  transform: translateY(6px);
+}
+
+.import-detail-popover > strong {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #7ee9e2;
+}
+
+.import-detail-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid #273338;
+  border-radius: 8px;
+  background: #141c20;
+}
+
+.import-detail-row svg {
+  width: 16px;
+  height: 16px;
+}
+
+.import-detail-row span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.import-detail-row b {
+  font-size: 13px;
+}
+
+.import-detail-row small {
+  overflow: hidden;
+  color: #9aa7a2;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-detail-row em {
+  color: #9aa7a2;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
 }
 
 .import-state {
@@ -1914,15 +2026,14 @@ svg {
 }
 
 .brand-mark {
-  display: grid;
+  display: block;
+  flex: 0 0 auto;
   width: 48px;
   height: 48px;
-  place-items: center;
   border-radius: 8px;
-  color: #fff;
-  background: linear-gradient(135deg, #b23b45, #b8860b 56%, #007c7a);
-  font-weight: 900;
-  letter-spacing: 0;
+  background: #090d0f;
+  object-fit: cover;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
 }
 
 h1,
@@ -2343,6 +2454,7 @@ p {
   min-width: 220px;
 }
 
+.market-table small,
 .craft-profit-table small,
 .craft-panel-heading small {
   display: block;
@@ -2975,6 +3087,7 @@ p {
 
 .build-filter-panel select,
 .craft-filter-panel select,
+.craft-filter-panel input,
 .farm-tracker-controls select {
   min-width: 0;
   height: 38px;
@@ -2984,6 +3097,16 @@ p {
   color: #191a17;
   background: #fff;
   font-size: 14px;
+  text-transform: none;
+}
+
+.craft-filter-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #9aa7a2;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
   text-transform: none;
 }
 
@@ -3925,9 +4048,11 @@ p {
 }
 
 .mind-map {
+  position: relative;
   width: 100%;
+  height: 372px;
   min-height: 372px;
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid #dde2d9;
   border-radius: 8px;
   background:
@@ -3935,11 +4060,20 @@ p {
     linear-gradient(180deg, rgba(184, 134, 11, 0.08) 1px, transparent 1px),
     #fbfcfa;
   background-size: 36px 36px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.mind-map.panning {
+  cursor: grabbing;
 }
 
 .map-canvas {
   position: relative;
   min-width: var(--map-width);
+  transform-origin: 0 0;
+  will-change: transform;
 }
 
 .map-lines {
@@ -3971,7 +4105,13 @@ p {
   color: #1d211c;
   background: #fff;
   box-shadow: 0 10px 24px rgba(25, 26, 23, 0.12);
+  cursor: pointer;
   text-align: center;
+}
+
+.map-node:focus-visible {
+  outline: 2px solid #76f3eb;
+  outline-offset: 3px;
 }
 
 .map-node .item-icon {
@@ -4025,6 +4165,35 @@ p {
 
 .map-node .money .coin-dot {
   width: var(--coin-dot-size);
+}
+
+.branch-toggle {
+  position: absolute;
+  left: 50%;
+  bottom: -15px;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  transform: translateX(-50%);
+  border: 1px solid #cad5cf;
+  border-radius: 999px;
+  color: #1d211c;
+  background: #fff;
+  box-shadow: 0 8px 18px rgba(25, 26, 23, 0.16);
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 3;
+}
+
+.branch-toggle:hover,
+.branch-toggle:focus-visible {
+  border-color: #00a9a3;
+  color: #004d4a;
+  background: #dff8f5;
+  outline: none;
 }
 
 .output-node {
@@ -4563,6 +4732,7 @@ body,
 	.opening-input input,
 	.build-filter-panel select,
 	.craft-filter-panel select,
+	.craft-filter-panel input,
 	.farm-tracker-controls select,
 	.slot-bag-toolbar select {
 	  border-color: #303b3f;
@@ -4898,10 +5068,12 @@ body,
   background: #141a1e;
 }
 
+.market-table .demand-ratio,
 .craft-profit-table .demand-ratio {
   color: #9aa7a2;
 }
 
+.market-table .demand-ratio.strong,
 .craft-profit-table .demand-ratio.strong {
   color: #10c982;
 }
@@ -5138,6 +5310,19 @@ body,
   stroke: #4a6664;
 }
 
+.branch-toggle {
+  border-color: #3a4a4f;
+  color: #eef7f2;
+  background: #172025;
+}
+
+.branch-toggle:hover,
+.branch-toggle:focus-visible {
+  border-color: #39d2c8;
+  color: #ffffff;
+  background: #083c3f;
+}
+
 .order-book + .order-book {
   border-color: #303b3f;
 }
@@ -5218,7 +5403,17 @@ body,
     grid-template-columns: 360px minmax(0, 1fr);
   }
 
+  .account-settings-panel {
+    grid-template-columns: minmax(240px, 0.8fr) minmax(360px, 1.2fr);
+  }
+
   .insight-stack {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 920px) {
+  .account-settings-panel {
+    grid-template-columns: 1fr;
   }
 }

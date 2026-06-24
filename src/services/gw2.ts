@@ -129,6 +129,15 @@ interface WizardVaultEasyObjectiveEntry {
   routes: WizardVaultEasyObjectiveRoute[];
 }
 
+interface ProfitableCraftOptions {
+  limit?: number;
+  includeRecipeIds?: Iterable<number>;
+}
+
+interface MysticForgeRecipeOptions {
+  holdings?: Map<number, number>;
+}
+
 const itemCache = new Map<number, Gw2Item>();
 const priceCache = new Map<number, CommercePrice>();
 const unresolvableItemIds = new Set<number>();
@@ -138,6 +147,7 @@ let mysticForgeRecipeCache: Gw2Recipe[] | null = null;
 const mysticForgeRecipeItemCache = new Map<number, Gw2Recipe[]>();
 const wikiRecipeUsageItemCache = new Map<number, Gw2Recipe[]>();
 let achievementCatalogCache: AchievementCatalog | null = null;
+let achievementCatalogPromise: Promise<AchievementCatalog> | null = null;
 let worldCache: Gw2World[] | null = null;
 let mapCache: Gw2Map[] | null = null;
 let allItemsCatalogCache: Gw2Item[] | null = null;
@@ -184,8 +194,6 @@ const MYSTIC_FORGE_SEED_PAGES = [
   "Mystic Crystal/Material promotion recipes",
   "Philosopher's Stone/crafting materials",
 ];
-const MYSTIC_FORGE_ITEM_SEARCH_LIMIT = 80;
-const WIKI_RECIPE_USAGE_PAGE_LIMIT = 48;
 const CRAFTING_DISCIPLINES = [
   "Armorsmith",
   "Artificer",
@@ -763,6 +771,13 @@ function getMarketBuyCost(itemId: number, count = 1): number {
   return unitPrice * count;
 }
 
+function isMysticForgeRecipeRecord(recipe: Gw2Recipe): boolean {
+  const text = `${recipe.type} ${recipe.disciplines.join(" ")} ${recipe.flags.join(" ")} ${
+    recipe.sourceName ?? ""
+  } ${recipe.sourceUrl ?? ""}`.toLowerCase();
+  return recipe.source === "wiki" || text.includes("mystic") || text.includes("forge") || recipe.disciplines.length === 0;
+}
+
 function getUnknownNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -897,7 +912,7 @@ async function loadCommercePricesByIds(ids: number[]): Promise<CommercePrice[]> 
   return batches.flat();
 }
 
-async function ensureCommercePricesForItems(ids: number[], onProgress?: ProgressCallback): Promise<void> {
+export async function ensureCommercePricesForItems(ids: number[], onProgress?: ProgressCallback): Promise<void> {
   const uniqueIds = Array.from(new Set(ids.filter((id) => Number.isFinite(id))));
   if (uniqueIds.length === 0) {
     return;
@@ -1048,8 +1063,16 @@ export async function loadTradingPostCatalogProgressive(
 
 export async function loadProfitableCrafts(
   onProgress?: ProgressCallback,
-  limit = 120,
+  optionsOrLimit: ProfitableCraftOptions | number = {},
 ): Promise<CraftOpportunity[]> {
+  const options =
+    typeof optionsOrLimit === "number"
+      ? {
+          limit: optionsOrLimit,
+        }
+      : optionsOrLimit;
+  const limit = options.limit ?? Number.POSITIVE_INFINITY;
+  const includeRecipeIds = new Set(options.includeRecipeIds ?? []);
   const [, officialRecipes, wikiMysticRecipes] = await Promise.all([
     ensureCommercePrices(onProgress),
     loadAllRecipes(onProgress),
@@ -1095,15 +1118,35 @@ export async function loadProfitableCrafts(
       ): item is Pick<CraftOpportunity, "recipe" | "outputValue" | "marketCost" | "marketProfit"> =>
         item !== null && item.marketProfit > 0,
     )
-    .sort((left, right) => right.marketProfit - left.marketProfit)
-    .slice(0, Math.max(limit * 3, limit));
+    .sort((left, right) => right.marketProfit - left.marketProfit);
 
-  const outputIds = ranked
+  const candidatesByRecipeId = new Map<number, (typeof ranked)[number]>();
+  const marketCandidateCount = Math.max(limit, 0);
+  const marketCandidates = Number.isFinite(marketCandidateCount)
+    ? ranked.slice(0, marketCandidateCount)
+    : ranked;
+  for (const entry of marketCandidates) {
+    candidatesByRecipeId.set(entry.recipe.id, entry);
+  }
+
+  if (includeRecipeIds.size > 0) {
+    for (const entry of ranked) {
+      if (includeRecipeIds.has(entry.recipe.id)) {
+        candidatesByRecipeId.set(entry.recipe.id, entry);
+      }
+    }
+  }
+
+  const candidates = Array.from(candidatesByRecipeId.values()).sort(
+    (left, right) => right.marketProfit - left.marketProfit,
+  );
+
+  const outputIds = candidates
     .map((entry) => entry.recipe.output_item_id)
     .filter((id): id is number => typeof id === "number");
   await loadItems(outputIds, onProgress);
 
-  return ranked
+  return candidates
     .map((entry) => {
       const outputId = entry.recipe.output_item_id;
       const output = outputId ? itemCache.get(outputId) : undefined;
@@ -1123,13 +1166,12 @@ export async function loadProfitableCrafts(
       };
     })
     .filter((item): item is CraftOpportunity => Boolean(item))
-    .sort((left, right) => right.marketProfit - left.marketProfit)
-    .slice(0, limit);
+    .sort((left, right) => right.marketProfit - left.marketProfit);
 }
 
 export async function loadHighValueCrafts(
   onProgress?: ProgressCallback,
-  limit = 160,
+  limit = Number.POSITIVE_INFINITY,
 ): Promise<CraftOpportunity[]> {
   const [, officialRecipes, wikiMysticRecipes] = await Promise.all([
     ensureCommercePrices(onProgress),
@@ -1175,8 +1217,7 @@ export async function loadHighValueCrafts(
       ): item is Pick<CraftOpportunity, "recipe" | "outputValue" | "marketCost" | "marketProfit"> =>
         item !== null,
     )
-    .sort((left, right) => right.outputValue - left.outputValue)
-    .slice(0, Math.max(limit * 2, limit));
+    .sort((left, right) => right.outputValue - left.outputValue);
 
   const outputIds = ranked
     .map((entry) => entry.recipe.output_item_id)
@@ -1203,8 +1244,43 @@ export async function loadHighValueCrafts(
       };
     })
     .filter((item): item is CraftOpportunity => Boolean(item))
-    .sort((left, right) => right.outputValue - left.outputValue)
-    .slice(0, limit);
+    .sort((left, right) => right.outputValue - left.outputValue);
+}
+
+export async function loadMysticForgeRecipeGuides(
+  onProgress?: ProgressCallback,
+  options: MysticForgeRecipeOptions = {},
+): Promise<RecipeGuide[]> {
+  const [officialRecipes, wikiMysticRecipes] = await Promise.all([
+    loadAllRecipes(onProgress),
+    loadWikiMysticForgeRecipes(onProgress).catch(() => []),
+    ensureCommercePrices(onProgress),
+  ]).then(([officialRecipes, wikiMysticRecipes]) => [officialRecipes, wikiMysticRecipes] as const);
+  const recipes = dedupeRecipes([
+    ...officialRecipes.filter(isMysticForgeRecipeRecord),
+    ...wikiMysticRecipes,
+  ]);
+  const linkedIds = Array.from(
+    new Set([
+      ...recipes.flatMap((recipe) => recipe.ingredients.map((ingredient) => ingredient.item_id)),
+      ...recipes
+        .map((recipe) => recipe.output_item_id)
+        .filter((id): id is number => typeof id === "number"),
+    ]),
+  );
+
+  await Promise.all([
+    loadItems(linkedIds, onProgress),
+    ensureCommercePricesForItems(linkedIds, onProgress),
+  ]);
+
+  return recipes
+    .map((recipe) => buildRecipeGuide(recipe, options.holdings))
+    .sort((left, right) => {
+      const leftValue = left.outputValue || getUnitPrice(left.recipe.output_item_id ?? 0);
+      const rightValue = right.outputValue || getUnitPrice(right.recipe.output_item_id ?? 0);
+      return rightValue - leftValue || (left.recipe.sourceName ?? "").localeCompare(right.recipe.sourceName ?? "");
+    });
 }
 
 export async function loadItems(ids: number[], onProgress?: ProgressCallback): Promise<Gw2Item[]> {
@@ -2125,7 +2201,7 @@ async function loadWikiMysticForgeRecipes(onProgress?: ProgressCallback): Promis
   }
 
   const cachedRecipes = await loadSqlCache(
-    "wiki:mystic-forge-recipes",
+    "wiki:mystic-forge-recipes:v2",
     SQL_CACHE_TTL.wikiDerived,
     (value): value is Gw2Recipe[] => isArrayOf(value, isGw2Recipe),
   );
@@ -2139,9 +2215,9 @@ async function loadWikiMysticForgeRecipes(onProgress?: ProgressCallback): Promis
   const pageTitles = Array.from(
     new Set([
       ...MYSTIC_FORGE_SEED_PAGES,
-      ...categoryTitles.filter((title) => title.includes("/")),
+      ...categoryTitles,
     ]),
-  ).slice(0, 40);
+  );
   const pageTexts = await mapWithConcurrency(pageTitles, 3, async (pageTitle, index) => {
     onProgress?.("Loading wiki Mystic Forge pages", index + 1, pageTitles.length);
     return {
@@ -2153,7 +2229,7 @@ async function loadWikiMysticForgeRecipes(onProgress?: ProgressCallback): Promis
     parseMysticForgeRecipeDrafts(pageTitle, wikitext),
   );
   mysticForgeRecipeCache = await hydrateWikiRecipeDrafts(drafts, onProgress);
-  void saveSqlCache("wiki:mystic-forge-recipes", mysticForgeRecipeCache);
+  void saveSqlCache("wiki:mystic-forge-recipes:v2", mysticForgeRecipeCache);
   return mysticForgeRecipeCache;
 }
 
@@ -2166,7 +2242,7 @@ async function loadWikiMysticForgeRecipesForItem(
     return cached;
   }
 
-  const persistentCacheKey = `wiki:mystic-forge-recipes:item:${itemId}`;
+  const persistentCacheKey = `wiki:mystic-forge-recipes:item:v2:${itemId}`;
   const cachedRecipes = await loadSqlCache(
     persistentCacheKey,
     SQL_CACHE_TTL.wikiDerived,
@@ -2207,7 +2283,7 @@ async function loadWikiMysticForgeRecipesForItem(
 }
 
 async function loadWikiMysticForgeRecipePageTitlesForItem(itemName: string): Promise<string[]> {
-  const cacheKey = getNamedCacheKey("wiki:mystic-forge-page-titles", itemName);
+  const cacheKey = getNamedCacheKey("wiki:mystic-forge-page-titles:v2", itemName);
   const cachedTitles = await loadSqlCache(
     cacheKey,
     SQL_CACHE_TTL.wikiDerived,
@@ -2223,13 +2299,13 @@ async function loadWikiMysticForgeRecipePageTitlesForItem(itemName: string): Pro
   for (const searchQuery of queries) {
     let offset = 0;
 
-    while (titles.size < MYSTIC_FORGE_ITEM_SEARCH_LIMIT) {
+    while (true) {
       const params = new URLSearchParams({
         action: "query",
         list: "search",
         srsearch: searchQuery,
         srnamespace: "0",
-        srlimit: String(Math.min(50, MYSTIC_FORGE_ITEM_SEARCH_LIMIT - titles.size)),
+        srlimit: "50",
         origin: "*",
         format: "json",
       });
@@ -2258,7 +2334,7 @@ async function loadWikiMysticForgeRecipePageTitlesForItem(itemName: string): Pro
     }
   }
 
-  const result = Array.from(titles).slice(0, MYSTIC_FORGE_ITEM_SEARCH_LIMIT);
+  const result = Array.from(titles);
   void saveSqlCache(cacheKey, result);
   return result;
 }
@@ -2280,7 +2356,7 @@ async function loadWikiRecipeUsageForItem(
     return cached;
   }
 
-  const persistentCacheKey = `wiki:recipe-usage:item:${itemId}`;
+  const persistentCacheKey = `wiki:recipe-usage:item:v2:${itemId}`;
   const cachedRecipes = await loadSqlCache(
     persistentCacheKey,
     SQL_CACHE_TTL.wikiDerived,
@@ -2352,7 +2428,7 @@ function extractWikiRecipeUsagePageTitles(html: string, itemPageTitle: string): 
     }
   }
 
-  return Array.from(titles).slice(0, WIKI_RECIPE_USAGE_PAGE_LIMIT);
+  return Array.from(titles);
 }
 
 function parseWikiRecipeTableDrafts(
@@ -3291,6 +3367,20 @@ export async function loadAchievementCatalog(
     return achievementCatalogCache;
   }
 
+  if (achievementCatalogPromise) {
+    return achievementCatalogPromise;
+  }
+
+  achievementCatalogPromise = loadAchievementCatalogFresh(onProgress).finally(() => {
+    achievementCatalogPromise = null;
+  });
+
+  return achievementCatalogPromise;
+}
+
+async function loadAchievementCatalogFresh(
+  onProgress?: ProgressCallback,
+): Promise<AchievementCatalog> {
   const cachedCatalog = await loadSqlCache(
     "official:achievement-catalog",
     SQL_CACHE_TTL.achievementCatalog,
