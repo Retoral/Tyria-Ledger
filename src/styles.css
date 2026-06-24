@@ -2406,11 +2406,13 @@ p {
 .craft-table-wrap,
 .meta-table-wrap {
   width: 100%;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: visible;
   border: 1px solid #d8ddd4;
   border-radius: 8px;
   cursor: grab;
-  overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
   touch-action: pan-y;
 }
 
