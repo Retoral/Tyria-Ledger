@@ -4124,7 +4124,7 @@ function Sidebar({
   return (
     <aside className="side-nav">
       <div className="side-brand">
-        <img className="brand-mark" src="/app-icon.png" alt="" aria-hidden="true" />
+        <img className="brand-mark" src="./app-icon.png" alt="" aria-hidden="true" />
         <div>
           <h1>Tyria Ledger</h1>
           <p>GW2 account economy</p>

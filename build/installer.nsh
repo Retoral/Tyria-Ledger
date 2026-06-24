@@ -5,27 +5,24 @@
   Pop $R0
   StrCmp $R0 0 0 done
 
-  MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "Tyria Ledger is still running. The installer will close it before continuing." /SD IDOK IDOK closeApp
-  Quit
+  DetailPrint "Closing Tyria Ledger before installing."
+  nsProcess::_CloseProcess /NOUNLOAD "${APP_EXECUTABLE_FILENAME}"
+  Pop $R0
+  Sleep 1500
 
-  closeApp:
-    nsProcess::_CloseProcess /NOUNLOAD "${APP_EXECUTABLE_FILENAME}"
-    Pop $R0
-    Sleep 1500
+  nsProcess::_FindProcess /NOUNLOAD "${APP_EXECUTABLE_FILENAME}"
+  Pop $R0
+  StrCmp $R0 0 0 done
 
-    nsProcess::_FindProcess /NOUNLOAD "${APP_EXECUTABLE_FILENAME}"
-    Pop $R0
-    StrCmp $R0 0 0 done
+  DetailPrint "Force-closing Tyria Ledger before installing."
+  ExecWait '"$SYSDIR\taskkill.exe" /IM "${APP_EXECUTABLE_FILENAME}" /T /F'
+  Sleep 1000
 
-    ExecWait '"$SYSDIR\taskkill.exe" /IM "${APP_EXECUTABLE_FILENAME}" /T /F'
-    Sleep 1000
+  nsProcess::_FindProcess /NOUNLOAD "${APP_EXECUTABLE_FILENAME}"
+  Pop $R0
+  StrCmp $R0 0 0 done
 
-    nsProcess::_FindProcess /NOUNLOAD "${APP_EXECUTABLE_FILENAME}"
-    Pop $R0
-    StrCmp $R0 0 0 done
-
-    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Tyria Ledger could not be closed. Close every Tyria Ledger process in Task Manager, then retry." /SD IDCANCEL IDRETRY closeApp
-    Quit
+  DetailPrint "Tyria Ledger still appears to be running, continuing repair install anyway."
 
   done:
 !macroend
