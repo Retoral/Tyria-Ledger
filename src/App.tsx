@@ -8671,6 +8671,38 @@ function SalvagingPage({
     ...outputRows.map((row) => row.quote.item?.id).filter((id): id is number => typeof id === "number"),
   ]);
   const selectedSalvageItem = selectedItem && selectableItemIds.has(selectedItem.id) ? selectedItem : null;
+  const {
+    sortedRows: sortedOutputRows,
+    renderHeader: renderOutputHeader,
+  } = useSortableRows<(typeof outputRows)[number], "output" | "buy" | "sell" | "supply">(
+    outputRows,
+    { key: "output", direction: "asc" },
+    {
+      output: (left, right) => compareStringValue(left.quote.item?.name ?? left.name, right.quote.item?.name ?? right.name),
+      buy: (left, right) => compareNumberValue(left.quote.buyCost, right.quote.buyCost),
+      sell: (left, right) => compareNumberValue(left.quote.instantSellNet, right.quote.instantSellNet),
+      supply: (left, right) => compareNumberValue(left.quote.item?.price.sells.quantity ?? 0, right.quote.item?.price.sells.quantity ?? 0),
+    },
+  );
+  const {
+    sortedRows: sortedSalvageRows,
+    renderHeader: renderSalvageHeader,
+  } = useSortableRows<
+    SalvageEstimateRow,
+    "item" | "cost" | "direct" | "salvage" | "profit" | "outputs" | "notes"
+  >(
+    salvageRows,
+    { key: "profit", direction: "desc" },
+    {
+      item: (left, right) => compareStringValue(left.item.name, right.item.name),
+      cost: (left, right) => compareNumberValue(left.purchaseCost, right.purchaseCost),
+      direct: (left, right) => compareNumberValue(left.directSellNet, right.directSellNet),
+      salvage: (left, right) => compareNumberValue(left.salvageValue, right.salvageValue),
+      profit: (left, right) => compareNumberValue(left.buySalvageProfit, right.buySalvageProfit),
+      outputs: (left, right) => compareNumberValue(left.outputs.length, right.outputs.length),
+      notes: (left, right) => compareStringValue(left.note, right.note),
+    },
+  );
 
   return (
     <div className={`market-workspace salvaging-workspace ${selectedSalvageItem ? "" : "detail-closed"}`}>
@@ -8720,14 +8752,14 @@ function SalvagingPage({
               <table className="craft-profit-table compact-value-table">
                 <thead>
                   <tr>
-                    <th>Output</th>
-                    <th>Buy From Market</th>
-                    <th>Instant Sell After Fees</th>
-                    <th>Supply</th>
+                    {renderOutputHeader("output", "Output")}
+                    {renderOutputHeader("buy", "Buy From Market")}
+                    {renderOutputHeader("sell", "Instant Sell After Fees")}
+                    {renderOutputHeader("supply", "Supply")}
                   </tr>
                 </thead>
                 <tbody>
-                  {outputRows.map((row) => (
+                  {sortedOutputRows.map((row) => (
                     <tr
                       key={row.name}
                       className={selectedSalvageItem?.id === row.quote.item?.id ? "selected-row" : ""}
@@ -8768,17 +8800,17 @@ function SalvagingPage({
               <table className="craft-profit-table salvage-table">
                 <thead>
                   <tr>
-                    <th>Item</th>
-                    <th>TP Cost</th>
-                    <th>Direct Sale</th>
-                    <th>Est. Salvage Value</th>
-                    <th>Buy + Salvage Profit</th>
-                    <th>Main Outputs</th>
-                    <th>Notes</th>
+                    {renderSalvageHeader("item", "Item")}
+                    {renderSalvageHeader("cost", "TP Cost")}
+                    {renderSalvageHeader("direct", "Direct Sale")}
+                    {renderSalvageHeader("salvage", "Est. Salvage Value")}
+                    {renderSalvageHeader("profit", "Buy + Salvage Profit")}
+                    {renderSalvageHeader("outputs", "Main Outputs")}
+                    {renderSalvageHeader("notes", "Notes")}
                   </tr>
                 </thead>
                 <tbody>
-                  {salvageRows.map((row) => (
+                  {sortedSalvageRows.map((row) => (
                     <tr
                       key={row.item.id}
                       className={selectedSalvageItem?.id === row.item.id ? "selected-row" : ""}
@@ -8941,6 +8973,21 @@ function UnidentifiedGearPage({
   const bestModeledProfit = Math.max(0, ...modeledRows.map((row) => row.buyOpenSalvageProfit));
   const selectedGearItemIds = new Set(rows.map((row) => row.detailItem?.id).filter((id): id is number => typeof id === "number"));
   const selectedGearItem = selectedItem && selectedGearItemIds.has(selectedItem.id) ? selectedItem : null;
+  const { sortedRows, renderHeader } = useSortableRows<
+    (typeof rows)[number],
+    "gear" | "cost" | "direct" | "salvage" | "profit" | "notes"
+  >(
+    rows,
+    { key: "profit", direction: "desc" },
+    {
+      gear: (left, right) => compareStringValue(left.detailItem?.name ?? left.definition.label, right.detailItem?.name ?? right.definition.label),
+      cost: (left, right) => compareNumberValue(left.quote.buyCost, right.quote.buyCost),
+      direct: (left, right) => compareNumberValue(left.directSale, right.directSale),
+      salvage: (left, right) => compareNumberValue(left.openSalvageRevenue, right.openSalvageRevenue),
+      profit: (left, right) => compareNumberValue(left.buyOpenSalvageProfit, right.buyOpenSalvageProfit),
+      notes: (left, right) => compareStringValue(left.definition.note, right.definition.note),
+    },
+  );
 
   return (
     <div className={`market-workspace unidentified-workspace ${selectedGearItem ? "" : "detail-closed"}`}>
@@ -8980,16 +9027,16 @@ function UnidentifiedGearPage({
             <table className="craft-profit-table unidentified-table compact-unidentified-table">
               <thead>
                 <tr>
-                  <th>Gear</th>
-                  <th>Market Cost</th>
-                  <th>Direct Sale</th>
-                  <th>Est. Open + Salvage</th>
-                  <th>Profit</th>
-                  <th>Notes</th>
+                  {renderHeader("gear", "Gear")}
+                  {renderHeader("cost", "Market Cost")}
+                  {renderHeader("direct", "Direct Sale")}
+                  {renderHeader("salvage", "Est. Open + Salvage")}
+                  {renderHeader("profit", "Profit")}
+                  {renderHeader("notes", "Notes")}
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {sortedRows.map((row) => (
                   <tr
                     key={row.definition.tier}
                     className={selectedGearItem?.id === row.detailItem?.id ? "selected-row" : ""}
@@ -9236,6 +9283,25 @@ function GatheringPage({
       );
     });
   }, [disciplineFilter, query, rows]);
+  const { sortedRows: sortedGatheringRows, renderHeader } = useSortableRows<
+    GatheringRow,
+    "item" | "profession" | "tool" | "spots" | "nodes" | "extra" | "value" | "purchase" | "sale" | "difference"
+  >(
+    filteredRows,
+    { key: "value", direction: "desc" },
+    {
+      item: (left, right) => compareStringValue(left.marketItem.name, right.marketItem.name),
+      profession: (left, right) => compareStringValue(left.source.discipline, right.source.discipline),
+      tool: (left, right) => compareStringValue(left.source.tool, right.source.tool),
+      spots: (left, right) => compareNumberValue(left.permanentNodeCount, right.permanentNodeCount),
+      nodes: (left, right) => compareNumberValue(left.source.nodes.length, right.source.nodes.length),
+      extra: (left, right) => compareNumberValue(left.source.extraYields?.length ?? 0, right.source.extraYields?.length ?? 0),
+      value: (left, right) => compareNumberValue(left.estimatedGatherValue, right.estimatedGatherValue),
+      purchase: (left, right) => compareNumberValue(left.purchasePrice, right.purchasePrice),
+      sale: (left, right) => compareNumberValue(left.salePrice, right.salePrice),
+      difference: (left, right) => compareNumberValue(left.difference, right.difference),
+    },
+  );
   const selectedGatheringRow =
     filteredRows.find((row) => row.marketItem.id === selectedItem?.id) ??
     rows.find((row) => row.marketItem.id === selectedItem?.id) ??
@@ -9387,20 +9453,20 @@ function GatheringPage({
             <table className="craft-profit-table gathering-table">
               <thead>
                 <tr>
-                  <th>Item</th>
-                  <th>Profession</th>
-                  <th>Tool</th>
-                  <th>Permanent spots</th>
-                  <th>Nodes</th>
-                  <th>Extra yields</th>
-                  <th>Est. value</th>
-                  <th>Purchase</th>
-                  <th>Sale</th>
-                  <th>Difference</th>
+                  {renderHeader("item", "Item")}
+                  {renderHeader("profession", "Profession")}
+                  {renderHeader("tool", "Tool")}
+                  {renderHeader("spots", "Permanent spots")}
+                  {renderHeader("nodes", "Nodes")}
+                  {renderHeader("extra", "Extra yields")}
+                  {renderHeader("value", "Est. value")}
+                  {renderHeader("purchase", "Purchase")}
+                  {renderHeader("sale", "Sale")}
+                  {renderHeader("difference", "Difference")}
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((row) => (
+                {sortedGatheringRows.map((row) => (
                   <tr
                     key={row.marketItem.id}
                     className={selectedGatheringItem?.id === row.marketItem.id ? "selected-row" : ""}
@@ -9776,6 +9842,24 @@ function SalvageProfilePanel({
   const salvageValue = estimateSalvageOutputValue(profile.outputs, catalog);
   const directSellNet = item.price.buys.unit_price ? Math.floor(item.price.buys.unit_price * 0.85) : item.netSellPrice;
   const delta = salvageValue - directSellNet;
+  const getOutputMarketValue = (output: SalvageOutputEstimate): number => {
+    const quote = getMarketQuoteForName(catalog, output.name);
+    const unitValue = quote.instantSellNet || quote.listedSellNet;
+    return unitValue ? Math.round(unitValue * output.averageCount) : 0;
+  };
+  const { sortedRows: sortedOutputs, renderHeader } = useSortableRows<
+    SalvageOutputEstimate,
+    "output" | "average" | "value" | "notes"
+  >(
+    profile.outputs,
+    { key: "value", direction: "desc" },
+    {
+      output: (left, right) => compareStringValue(left.name, right.name),
+      average: (left, right) => compareNumberValue(left.averageCount, right.averageCount),
+      value: (left, right) => compareNumberValue(getOutputMarketValue(left), getOutputMarketValue(right)),
+      notes: (left, right) => compareStringValue(left.note ?? "", right.note ?? ""),
+    },
+  );
 
   return (
     <section className="surface salvage-profile-section">
@@ -9796,14 +9880,14 @@ function SalvageProfilePanel({
             <table className="craft-profit-table salvage-profile-table">
               <thead>
                 <tr>
-                  <th>Possible Output</th>
-                  <th>Average</th>
-                  <th>Market Value</th>
-                  <th>Notes</th>
+                  {renderHeader("output", "Possible Output")}
+                  {renderHeader("average", "Average")}
+                  {renderHeader("value", "Market Value")}
+                  {renderHeader("notes", "Notes")}
                 </tr>
               </thead>
               <tbody>
-                {profile.outputs.map((output) => {
+                {sortedOutputs.map((output) => {
                   const quote = getMarketQuoteForName(catalog, output.name);
                   const unitValue = quote.instantSellNet || quote.listedSellNet;
 
@@ -9933,6 +10017,21 @@ function FarmingCalculatorPage({
         .slice(0, 80),
     [highValueCrafts],
   );
+  const { sortedRows: sortedHighestValueCrafts, renderHeader } = useSortableRows<
+    CraftOpportunity,
+    "name" | "quantity" | "sellValue" | "craftingCost" | "profit" | "source"
+  >(
+    highestValueCrafts,
+    { key: "sellValue", direction: "desc" },
+    {
+      name: (left, right) => compareStringValue(left.output.name, right.output.name),
+      quantity: (left, right) => compareNumberValue(left.recipe.output_item_count, right.recipe.output_item_count),
+      sellValue: (left, right) => compareNumberValue(left.outputValue, right.outputValue),
+      craftingCost: (left, right) => compareNumberValue(left.marketCost, right.marketCost),
+      profit: (left, right) => compareNumberValue(left.marketProfit, right.marketProfit),
+      source: (left, right) => compareStringValue(getRecipeSourceLabel(left.recipe), getRecipeSourceLabel(right.recipe)),
+    },
+  );
   const topValue = highestValueCrafts[0]?.outputValue ?? 0;
   const mysticForgeCount = highestValueCrafts.filter((craft) => isMysticForgeCraft(craft)).length;
 
@@ -9967,16 +10066,16 @@ function FarmingCalculatorPage({
             <table className="craft-profit-table">
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Qty</th>
-                  <th>Sell Value</th>
-                  <th>Crafting Cost</th>
-                  <th>Profit</th>
-                  <th>Source</th>
+                  {renderHeader("name", "Name")}
+                  {renderHeader("quantity", "Qty")}
+                  {renderHeader("sellValue", "Sell Value")}
+                  {renderHeader("craftingCost", "Crafting Cost")}
+                  {renderHeader("profit", "Profit")}
+                  {renderHeader("source", "Source")}
                 </tr>
               </thead>
               <tbody>
-                {highestValueCrafts.map((craft) => (
+                {sortedHighestValueCrafts.map((craft) => (
                   <tr key={`${craft.recipe.id}-${craft.output.id}`} onClick={() => onSelectCraft(craft)}>
                     <td>
                       <span className="table-item-cell">
@@ -10103,6 +10202,19 @@ function FarmTrackerPage({
       .sort((left, right) => right.value - left.value || right.count - left.count)
       .slice(0, 50);
   }, [accountItems, revision, scopeKey, trackerItems, trackerState]);
+  const { sortedRows: sortedGainedRows, renderHeader } = useSortableRows<
+    (typeof gainedRows)[number],
+    "item" | "gained" | "value" | "unit"
+  >(
+    gainedRows,
+    { key: "value", direction: "desc" },
+    {
+      item: (left, right) => compareStringValue(left.item?.name ?? `Item ${left.id}`, right.item?.name ?? `Item ${right.id}`),
+      gained: (left, right) => compareNumberValue(left.count, right.count),
+      value: (left, right) => compareNumberValue(left.value, right.value),
+      unit: (left, right) => compareNumberValue(left.count ? left.value / left.count : 0, right.count ? right.value / right.count : 0),
+    },
+  );
   const totalValue = gainedRows.reduce((sum, row) => sum + row.value, 0);
   const totalItems = gainedRows.reduce((sum, row) => sum + row.count, 0);
 
@@ -10198,14 +10310,14 @@ function FarmTrackerPage({
             <table className="craft-profit-table">
               <thead>
                 <tr>
-                  <th>Item</th>
-                  <th>Gained</th>
-                  <th>Est. Sell Value</th>
-                  <th>Unit</th>
+                  {renderHeader("item", "Item")}
+                  {renderHeader("gained", "Gained")}
+                  {renderHeader("value", "Est. Sell Value")}
+                  {renderHeader("unit", "Unit")}
                 </tr>
               </thead>
               <tbody>
-                {gainedRows.map((row) => (
+                {sortedGainedRows.map((row) => (
                   <tr key={row.id}>
                     <td>
                       <span className="table-item-cell">
@@ -10437,6 +10549,33 @@ function CategoryPage({
     () => buildActivityValueRows(activityValue, catalog),
     [activityValue, catalog],
   );
+  const { sortedRows: sortedValueRows, renderHeader: renderValueHeader } = useSortableRows<
+    (typeof valueRows)[number],
+    "item" | "value" | "source" | "notes"
+  >(
+    valueRows,
+    { key: "value", direction: "desc" },
+    {
+      item: (left, right) => compareStringValue(left.item?.name ?? left.name, right.item?.name ?? right.name),
+      value: (left, right) => compareNumberValue(left.value, right.value),
+      source: (left, right) => compareStringValue(left.source, right.source),
+      notes: (left, right) => compareStringValue(left.note, right.note),
+    },
+  );
+  const { sortedRows: sortedFishingRoutes, renderHeader: renderFishingHeader } = useSortableRows<
+    FishingRouteInfo,
+    "route" | "bait" | "power" | "map" | "value"
+  >(
+    FISHING_ROUTE_INFO,
+    { key: "route", direction: "asc" },
+    {
+      route: (left, right) => compareStringValue(left.name, right.name),
+      bait: (left, right) => compareStringValue(left.bait, right.bait),
+      power: (left, right) => compareStringValue(left.fishingPower, right.fishingPower),
+      map: (left, right) => compareStringValue(`${left.expansion} ${left.map}`, `${right.expansion} ${right.map}`),
+      value: (left, right) => compareStringValue(left.valueFocus, right.valueFocus),
+    },
+  );
   const suggestions = REPEATABLE_EARNING_OPTIONS.filter((option) => {
     const text = `${option.title} ${option.detail}`.toLowerCase();
 
@@ -10503,14 +10642,14 @@ function CategoryPage({
                 <table className="craft-profit-table">
                   <thead>
                     <tr>
-                      <th>Item</th>
-                      <th>Estimated Value</th>
-                      <th>Earned From</th>
-                      <th>Notes</th>
+                      {renderValueHeader("item", "Item")}
+                      {renderValueHeader("value", "Estimated Value")}
+                      {renderValueHeader("source", "Earned From")}
+                      {renderValueHeader("notes", "Notes")}
                     </tr>
                   </thead>
                   <tbody>
-                    {valueRows.map((row) => (
+                    {sortedValueRows.map((row) => (
                       <tr key={`${row.name}-${row.source}`}>
                         <td>
                           <span className="table-item-cell">
@@ -10560,15 +10699,15 @@ function CategoryPage({
             <table className="craft-profit-table">
               <thead>
                 <tr>
-                  <th>Route</th>
-                  <th>Bait</th>
-                  <th>Fishing Power</th>
-                  <th>Expansion / Map</th>
-                  <th>Value Focus</th>
+                  {renderFishingHeader("route", "Route")}
+                  {renderFishingHeader("bait", "Bait")}
+                  {renderFishingHeader("power", "Fishing Power")}
+                  {renderFishingHeader("map", "Expansion / Map")}
+                  {renderFishingHeader("value", "Value Focus")}
                 </tr>
               </thead>
               <tbody>
-                {FISHING_ROUTE_INFO.map((route) => (
+                {sortedFishingRoutes.map((route) => (
                   <tr key={route.name}>
                     <td>{route.name}</td>
                     <td>{route.bait}</td>
