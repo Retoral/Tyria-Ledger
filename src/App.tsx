@@ -89,6 +89,7 @@ import type {
   ApiStatusResult,
   ContainerAnalysis,
   ContainerDrop,
+  CommerceListing,
   CommerceListings,
   CraftOpportunity,
   GatherableItemSource,
@@ -367,6 +368,85 @@ function readStoredHistoryLineVisibility(): HistoryLineVisibility {
   }
 }
 
+function readStoredMarketSplitRatio(): number {
+  if (typeof window === "undefined") {
+    return MARKET_SPLIT_DEFAULT_RATIO;
+  }
+
+  const value = Number(window.localStorage.getItem(MARKET_SPLIT_RATIO_STORAGE_KEY));
+  return Number.isFinite(value)
+    ? clampNumber(value, MARKET_SPLIT_MIN_RATIO, MARKET_SPLIT_MAX_RATIO)
+    : MARKET_SPLIT_DEFAULT_RATIO;
+}
+
+function applyMarketSplitRatio(ratio: number) {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  const clampedRatio = clampNumber(ratio, MARKET_SPLIT_MIN_RATIO, MARKET_SPLIT_MAX_RATIO);
+  document.documentElement.style.setProperty("--market-split-left", `${(clampedRatio * 100).toFixed(3)}%`);
+
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(MARKET_SPLIT_RATIO_STORAGE_KEY, String(clampedRatio));
+  }
+}
+
+function MarketSplitHandle() {
+  useEffect(() => {
+    applyMarketSplitRatio(readStoredMarketSplitRatio());
+  }, []);
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const workspace = event.currentTarget.closest(".market-workspace");
+    if (!workspace) {
+      return;
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+
+    const updateSplit = (clientX: number) => {
+      const rect = workspace.getBoundingClientRect();
+      if (rect.width <= 0) {
+        return;
+      }
+
+      applyMarketSplitRatio((clientX - rect.left) / rect.width);
+    };
+
+    updateSplit(event.clientX);
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      updateSplit(moveEvent.clientX);
+    };
+    const handlePointerEnd = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerEnd, { once: true });
+    window.addEventListener("pointercancel", handlePointerEnd, { once: true });
+  };
+
+  return (
+    <button
+      type="button"
+      className="market-splitter"
+      onPointerDown={handlePointerDown}
+      onDoubleClick={() => applyMarketSplitRatio(MARKET_SPLIT_DEFAULT_RATIO)}
+      aria-label="Resize item list and detail panels"
+      title="Drag to resize panels. Double-click to reset."
+    />
+  );
+}
+
 function useWideTableDragPanning() {
   useEffect(() => {
     let dragState:
@@ -600,6 +680,16 @@ interface SalvageEstimateRow {
   note: string;
 }
 
+interface TieredPurchaseEstimate {
+  requested: number;
+  fulfilled: number;
+  missing: number;
+  totalCost: number;
+  averageUnitCost: number;
+  tiersUsed: number;
+  highestUnitPrice: number;
+}
+
 interface UnidentifiedGearDefinition {
   tier: string;
   itemId: number;
@@ -637,6 +727,10 @@ const DEFAULT_QUERY = "";
 const MARKET_HISTORY_STORAGE_KEY = "tyria-ledger.market-history.v1";
 const FARM_TRACKER_STORAGE_KEY = "tyria-ledger.farm-tracker.v1";
 const FARM_TRACKER_TRACK_LOOT_STORAGE_KEY = "tyria-ledger.farm-tracker.track-loot.v1";
+const MARKET_SPLIT_RATIO_STORAGE_KEY = "tyria-ledger.market-split-ratio.v1";
+const MARKET_SPLIT_DEFAULT_RATIO = 0.5;
+const MARKET_SPLIT_MIN_RATIO = 0.28;
+const MARKET_SPLIT_MAX_RATIO = 0.72;
 const FARM_TRACKER_AUTO_SNAPSHOT_MS = 60 * 1000;
 const FARM_TRACKER_IDLE_AFTER_MS = 5 * 60 * 1000;
 const FARM_TRACKER_IDLE_SNAPSHOT_MS = 5 * 60 * 1000;
@@ -3288,7 +3382,7 @@ function App() {
       hasMarketPrice ? loadListings(selectedItem.id) : Promise.resolve(null),
       loadRecipesForOutput(selectedItem.id, accountSnapshot?.holdings),
       loadRecipesUsingItem(selectedItem.id, accountSnapshot?.holdings),
-      loadWikiGuide(selectedItem.name),
+      loadWikiGuide(selectedItem.name, { level: selectedItem.level, itemId: selectedItem.id }),
       transactionKey && hasMarketPrice
         ? loadTransactionsForItem(transactionKey, selectedItem.id)
         : Promise.resolve(null),
@@ -7548,6 +7642,8 @@ function MarketPage({
         </div>
       </aside>
 
+      <MarketSplitHandle />
+
       <MarketItemDetailPane
         selectedItem={selectedItem}
         catalog={detailCatalog ?? catalog}
@@ -8207,6 +8303,8 @@ function OpenableBagsPage({
           </p>
         ) : null}
       </aside>
+
+      <MarketSplitHandle />
 
       {selectedOpenableBag && selectedOpenableRow ? (
         <section className="detail-panel">
@@ -8924,6 +9022,8 @@ function SlotBagsPage({
         ) : null}
       </aside>
 
+      <MarketSplitHandle />
+
       {selectedSlotBag && selectedSlotBagRow ? (
         <section className="detail-panel">
           <ItemDetail
@@ -9076,6 +9176,8 @@ function CraftingPlannerPage({
           onSelectCraft={onSelectCraft}
         />
       </aside>
+
+      <MarketSplitHandle />
 
       {selectedItem ? (
         <section className="detail-panel">
@@ -9262,6 +9364,8 @@ function ProfitableCraftsPage({
           />
         </section>
       </aside>
+
+      <MarketSplitHandle />
 
       {selectedItem ? (
         <section className="detail-panel">
@@ -9583,12 +9687,19 @@ function MysticForgePage({
                         : "-"}
                     </td>
                     <td>
-                      <span>{row.source}</span>
                       {row.guide.recipe.sourceUrl ? (
-                        <a href={row.guide.recipe.sourceUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
-                          Source <ExternalLink />
+                        <a
+                          className="recipe-summary-source"
+                          href={row.guide.recipe.sourceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          {row.source} <ExternalLink />
                         </a>
-                      ) : null}
+                      ) : (
+                        <span>{row.source}</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -9603,6 +9714,8 @@ function MysticForgePage({
           </div>
         ) : null}
       </aside>
+
+      <MarketSplitHandle />
 
       {selectedItem ? (
         <section className="detail-panel">
@@ -10249,6 +10362,8 @@ function LegendaryReadinessPage({
       </section>
       </aside>
 
+      <MarketSplitHandle />
+
       {selectedItem ? (
         <section className="detail-panel">
           <ItemDetail
@@ -10571,6 +10686,8 @@ function SalvagingPage({
         </section>
       </aside>
 
+      <MarketSplitHandle />
+
       {selectedSalvageItem ? (
         <section className="detail-panel">
           <ItemDetail
@@ -10776,6 +10893,8 @@ function UnidentifiedGearPage({
           </div>
         )}
       </aside>
+
+      <MarketSplitHandle />
 
       {selectedGearItem ? (
         <section className="detail-panel">
@@ -11229,6 +11348,8 @@ function GatheringPage({
         ) : null}
       </aside>
 
+      <MarketSplitHandle />
+
       {selectedGatheringItem && selectedGatheringRow ? (
         <section className="detail-panel">
           <ItemDetail
@@ -11660,6 +11781,234 @@ function SalvageProfilePanel({
         </>
       ) : (
         <p className="muted-copy">No output list is modeled for this item yet.</p>
+      )}
+    </section>
+  );
+}
+
+function estimateTieredPurchaseCost(
+  listings: CommerceListing[] | undefined,
+  requestedCount: number,
+  fallbackUnitPrice: number,
+): TieredPurchaseEstimate {
+  const requested = Math.max(1, Math.floor(requestedCount));
+  const orderedListings = (listings ?? [])
+    .filter((listing) => listing.quantity > 0 && listing.unit_price > 0)
+    .slice()
+    .sort((left, right) => left.unit_price - right.unit_price);
+  let remaining = requested;
+  let fulfilled = 0;
+  let totalCost = 0;
+  let tiersUsed = 0;
+  let highestUnitPrice = 0;
+
+  for (const listing of orderedListings) {
+    if (remaining <= 0) {
+      break;
+    }
+
+    const purchased = Math.min(remaining, listing.quantity);
+    if (purchased <= 0) {
+      continue;
+    }
+
+    fulfilled += purchased;
+    totalCost += purchased * listing.unit_price;
+    remaining -= purchased;
+    tiersUsed += 1;
+    highestUnitPrice = listing.unit_price;
+  }
+
+  if (fulfilled === 0 && fallbackUnitPrice > 0) {
+    fulfilled = requested;
+    totalCost = requested * fallbackUnitPrice;
+    highestUnitPrice = fallbackUnitPrice;
+    tiersUsed = 1;
+    remaining = 0;
+  }
+
+  return {
+    requested,
+    fulfilled,
+    missing: Math.max(0, remaining),
+    totalCost,
+    averageUnitCost: fulfilled > 0 ? Math.round(totalCost / fulfilled) : 0,
+    tiersUsed,
+    highestUnitPrice,
+  };
+}
+
+function SalvageSimulator({
+  item,
+  profile,
+  catalog,
+  listings,
+  onOpenDetail,
+}: {
+  item: MarketItem;
+  profile: SalvageProfile;
+  catalog: MarketItem[];
+  listings: CommerceListings | null;
+  onOpenDetail?: (item: Gw2Item) => void;
+}) {
+  const [salvageCount, setSalvageCount] = useState(100);
+  const purchaseEstimate = useMemo(
+    () => estimateTieredPurchaseCost(listings?.sells, salvageCount, item.price.sells.unit_price),
+    [item.price.sells.unit_price, listings?.sells, salvageCount],
+  );
+  const hasMarketPurchase = purchaseEstimate.totalCost > 0;
+  const hasSalvageOutputData = profile.outputs.length > 0;
+  const canRunSimulation = hasMarketPurchase && hasSalvageOutputData;
+  const simulatedSalvageCount = canRunSimulation ? purchaseEstimate.fulfilled : 0;
+  const outputRows = useMemo(
+    () =>
+      profile.outputs.map((output) => {
+        const quote = getMarketQuoteForSalvageOutput(catalog, output);
+        const unitValue = quote.instantSellNet || quote.listedSellNet;
+        const expectedCount = output.averageCount * simulatedSalvageCount;
+        return {
+          output,
+          quote,
+          unitValue,
+          expectedCount,
+          totalValue: Math.round(unitValue * expectedCount),
+        };
+      }),
+    [catalog, profile.outputs, simulatedSalvageCount],
+  );
+  const salvageValue = outputRows.reduce((sum, row) => sum + row.totalValue, 0);
+  const result = salvageValue - purchaseEstimate.totalCost;
+  const unavailableReasons = [
+    hasMarketPurchase ? null : "No sell listings are currently loaded for this item, so the app cannot estimate what it would cost to buy copies for salvaging.",
+    hasSalvageOutputData ? null : "The app does not have known or confident modeled salvage results for this item yet, so it cannot estimate expected outputs.",
+  ].filter((reason): reason is string => Boolean(reason));
+
+  return (
+    <section className="surface container-simulator salvage-simulator">
+      <div className="section-title">
+        <PackageSearch />
+        <h3>Salvage Simulator</h3>
+      </div>
+
+      {!canRunSimulation ? (
+        <div className="simulator-unavailable">
+          <strong>Simulation unavailable</strong>
+          {unavailableReasons.map((reason) => (
+            <p key={reason}>{reason}</p>
+          ))}
+        </div>
+      ) : (
+        <>
+      <div className="simulator-head">
+        <div>
+          <strong>{item.name}</strong>
+          <span>
+            Buys listed copies from cheapest to highest until the requested amount is filled,
+            then applies the modeled salvage averages below.
+          </span>
+        </div>
+        <label className="opening-input">
+          Salvages
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={salvageCount}
+            onChange={(event) => {
+              const nextValue = Number(event.target.value);
+              setSalvageCount(Number.isFinite(nextValue) ? Math.max(1, Math.floor(nextValue)) : 1);
+            }}
+          />
+        </label>
+      </div>
+
+      <div className="preset-row">
+        {[1, 10, 100, 250].map((count) => (
+          <button key={count} type="button" onClick={() => setSalvageCount(count)}>
+            {count.toLocaleString()}
+          </button>
+        ))}
+      </div>
+
+      <div className="simulator-stats salvage-simulator-stats">
+        <article className="loot-stat">
+          <h4>Market purchase</h4>
+          <div>
+            <span>{hasMarketPurchase ? "Filled" : "Simulated"}</span>
+            <strong>
+              {purchaseEstimate.fulfilled.toLocaleString()} / {purchaseEstimate.requested.toLocaleString()}
+            </strong>
+          </div>
+          <div>
+            <span>Total cost</span>
+            <strong>{purchaseEstimate.totalCost ? <Money value={purchaseEstimate.totalCost} /> : "Unavailable"}</strong>
+          </div>
+          <div>
+            <span>Average unit</span>
+            <strong>{purchaseEstimate.averageUnitCost ? <Money value={purchaseEstimate.averageUnitCost} /> : "Unavailable"}</strong>
+          </div>
+        </article>
+        <article className="loot-stat">
+          <h4>Estimated result</h4>
+          <div>
+            <span>Output value</span>
+            <strong>{salvageValue ? <Money value={salvageValue} /> : "Unpriced"}</strong>
+          </div>
+          <div>
+            <span>{result >= 0 ? "Profit" : "Loss"}</span>
+            <strong className={result >= 0 ? "profit" : "loss"}>
+              <Money value={Math.abs(result)} />
+            </strong>
+          </div>
+          <div>
+            <span>Listing tiers</span>
+            <strong>{purchaseEstimate.tiersUsed.toLocaleString()}</strong>
+          </div>
+        </article>
+      </div>
+
+      {hasMarketPurchase && purchaseEstimate.missing > 0 ? (
+        <p className="simulator-note">
+          Only {purchaseEstimate.fulfilled.toLocaleString()} copies are currently covered by loaded sell listings.
+          The remaining {purchaseEstimate.missing.toLocaleString()} copies are excluded from the estimate.
+        </p>
+      ) : null}
+
+      <div className="loot-table salvage-simulator-table">
+        <div className="loot-row loot-header">
+          <span>Expected output</span>
+          <span>Average</span>
+          <span>Expected amount</span>
+          <span>Expected value</span>
+        </div>
+        {outputRows.map((row) => {
+          const detailItem = row.quote.item ?? { name: row.output.name };
+          const canOpenDetail = row.quote.item && typeof row.quote.item.id === "number";
+          return (
+            <div
+              key={row.output.name}
+              className={`loot-row ${canOpenDetail ? "selectable-loot-row" : ""}`}
+              onClick={() => {
+                if (canOpenDetail && row.quote.item) {
+                  onOpenDetail?.(row.quote.item);
+                }
+              }}
+            >
+              <span className="loot-item">
+                <ItemIcon item={detailItem} />
+                <span>
+                  <strong>{row.quote.item?.name ?? row.output.name}</strong>
+                  <small>{row.output.note ?? "Estimated salvage output"}</small>
+                </span>
+              </span>
+              <span className="loot-chance-value">{formatAverageCount(row.output.averageCount)}x</span>
+              <span>{formatAverageCount(row.expectedCount)}</span>
+              <span>{row.totalValue ? <Money value={row.totalValue} /> : "Unpriced"}</span>
+            </div>
+          );
+        })}
+      </div>
+        </>
       )}
     </section>
   );
@@ -12279,6 +12628,8 @@ function FarmTrackerPage({
           </section>
         </div>
       </aside>
+
+      <MarketSplitHandle />
 
       {selectedTrackerItem ? (
         <section className="detail-panel">
@@ -13583,7 +13934,9 @@ function ItemDetail({
   const isTradable = hasTradingPostPrice(item);
   const showMarketSections = isTradable;
   const salvageProfile = useMemo(() => getSalvageEstimateForItem(item), [item]);
+  const isSalvageableNonContainer = isKnownSalvageableNonContainer(item);
   const showSalvageProfile = salvageProfile.outputs.length > 0 || salvageProfile.confidence !== "Unmodeled";
+  const showSalvageSimulator = isSalvageableNonContainer;
   const [wikiAcquisition, setWikiAcquisition] = useState<WikiItemAcquisition | null>(null);
   const [wikiAcquisitionState, setWikiAcquisitionState] = useState<LoadState>("idle");
   const isFavorite = isFavoriteItem(item);
@@ -13640,6 +13993,8 @@ function ItemDetail({
         </button>
       </section>
 
+      <WikiGuidePanel wikiGuide={wikiGuide} detailState={detailState} />
+
       {extraInfo}
 
       {!isTradable ? (
@@ -13689,12 +14044,13 @@ function ItemDetail({
         />
       ) : null}
 
-      <RoutePlanner
-        item={item}
-        recipes={recipes}
-        wikiGuide={wikiGuide}
-        accountSnapshot={accountSnapshot}
-      />
+      {recipes.length ? (
+        <RoutePlanner
+          item={item}
+          recipes={recipes}
+          accountSnapshot={accountSnapshot}
+        />
+      ) : null}
 
       {wikiAcquisition?.teachesRecipe ? (
         <TeachesRecipePanel
@@ -13732,9 +14088,19 @@ function ItemDetail({
         />
       ) : null}
 
-      <section className={showMarketSections ? "split-section" : "single-section"}>
-        {showMarketSections ? (
-          <div className="surface">
+      {showSalvageSimulator ? (
+        <SalvageSimulator
+          item={item}
+          profile={salvageProfile}
+          catalog={catalog}
+          listings={listings}
+          onOpenDetail={onOpenDetail}
+        />
+      ) : null}
+
+      {showMarketSections ? (
+        <section className="split-section market-detail-books">
+          <section className="surface">
             <div className="section-title">
               <Coins />
               <h3>Orders</h3>
@@ -13748,43 +14114,21 @@ function ItemDetail({
             ) : detailState !== "loading" ? (
               <p className="muted-copy">Current order book unavailable.</p>
             ) : null}
-          </div>
-        ) : null}
-        <div className="surface">
-          <div className="section-title">
-            <BookOpen />
-            <h3>Wiki Guide</h3>
-          </div>
-          {wikiGuide ? (
-            <div className="wiki-box">
-              <p>{wikiGuide.extract || "Wiki page found."}</p>
-              <a href={wikiGuide.url} target="_blank" rel="noreferrer">
-                Open {wikiGuide.title}
-                <ExternalLink />
-              </a>
+          </section>
+          <section className="surface">
+            <div className="section-title">
+              <Coins />
+              <h3>Personal Transactions</h3>
             </div>
-          ) : detailState === "loading" ? (
-            <SkeletonRows />
-          ) : (
-            <p className="muted-copy">No wiki extract found for this item.</p>
-          )}
-        </div>
-      </section>
-
-      {showMarketSections ? (
-        <section className="surface">
-          <div className="section-title">
-            <Coins />
-            <h3>Personal Transactions</h3>
-          </div>
-          {itemTransactions ? (
-            <TransactionSummary transactions={itemTransactions} />
-          ) : (
-            <p className="muted-copy">
-              Add or analyze a key with tradingpost permission for personal item
-              buy/sell history.
-            </p>
-          )}
+            {itemTransactions ? (
+              <TransactionSummary transactions={itemTransactions} />
+            ) : (
+              <p className="muted-copy">
+                Add or analyze a key with tradingpost permission for personal item
+                buy/sell history.
+              </p>
+            )}
+          </section>
         </section>
       ) : null}
 
@@ -13811,6 +14155,36 @@ function ItemDetail({
         </section>
       ) : null}
     </div>
+  );
+}
+
+function WikiGuidePanel({
+  wikiGuide,
+  detailState,
+}: {
+  wikiGuide: WikiGuide | null;
+  detailState: LoadState;
+}) {
+  return (
+    <section className="surface wiki-guide-panel">
+      <div className="section-title">
+        <BookOpen />
+        <h3>Wiki Guide</h3>
+      </div>
+      {wikiGuide ? (
+        <div className="wiki-box">
+          <p>{wikiGuide.extract || "Wiki page found."}</p>
+          <a href={wikiGuide.url} target="_blank" rel="noreferrer">
+            Open {wikiGuide.title}
+            <ExternalLink />
+          </a>
+        </div>
+      ) : detailState === "loading" ? (
+        <SkeletonRows />
+      ) : (
+        <p className="muted-copy">No wiki extract found for this item.</p>
+      )}
+    </section>
   );
 }
 
@@ -15600,34 +15974,41 @@ function OrderBook({
 }
 
 function TransactionSummary({ transactions }: { transactions: ItemTransactions }) {
-  const groups = [
-    { label: "Current Buys", rows: transactions.currentBuys },
-    { label: "Current Sells", rows: transactions.currentSells },
-    { label: "Bought", rows: transactions.historyBuys },
-    { label: "Sold", rows: transactions.historySells },
-  ];
-  const hasRows = groups.some((group) => group.rows.length > 0);
+  const rows = [
+    ...transactions.historyBuys.map((transaction) => ({ ...transaction, type: "Bought" as const })),
+    ...transactions.historySells.map((transaction) => ({ ...transaction, type: "Sold" as const })),
+  ].sort((left, right) => {
+    const leftTime = new Date(left.purchased ?? left.created).getTime();
+    const rightTime = new Date(right.purchased ?? right.created).getTime();
+    return rightTime - leftTime;
+  });
 
-  if (!hasRows) {
+  if (!rows.length) {
     return <p className="muted-copy">No matching personal Trading Post transactions found.</p>;
   }
 
   return (
-    <div className="transaction-grid">
-      {groups.map((group) => (
-        <div key={group.label} className="transaction-group">
-          <h4>{group.label}</h4>
-          {group.rows.slice(0, 5).map((transaction) => (
-            <div key={`${group.label}-${transaction.id}`} className="transaction-row">
-              <span><Money value={transaction.price} /></span>
-              <span>{transaction.quantity.toLocaleString()}</span>
-              <span>
-                {new Date(transaction.purchased ?? transaction.created).toLocaleDateString()}
-              </span>
-            </div>
-          ))}
-        </div>
-      ))}
+    <div className="transaction-table">
+      <div className="transaction-heading" aria-hidden="true">
+        <span>Type</span>
+        <span>Qty</span>
+        <span>Price</span>
+        <span>Total</span>
+        <span>Date</span>
+      </div>
+      <div className="transaction-list">
+        {rows.slice(0, 12).map((transaction) => (
+          <div key={`${transaction.type}-${transaction.id}`} className="transaction-row">
+            <span>{transaction.type}</span>
+            <span>{transaction.quantity.toLocaleString()}</span>
+            <span><Money value={transaction.price} /></span>
+            <span><Money value={transaction.price * transaction.quantity} /></span>
+            <span>
+              {new Date(transaction.purchased ?? transaction.created).toLocaleDateString()}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -15639,6 +16020,15 @@ function isLikelyContainer(item: Gw2Item): boolean {
     /unidentified gear/.test(name) ||
     /\b(bag|box|cache|chest|container|coffer|crate|package|sack|satchel)\b/.test(name)
   );
+}
+
+function isKnownSalvageableNonContainer(item: MarketItem | Gw2Item): boolean {
+  if (item.flags?.includes("NoSalvage") || isLikelyContainer(item)) {
+    return false;
+  }
+
+  const salvageTypes = new Set(["Armor", "Weapon", "Trinket", "Back", "UpgradeComponent"]);
+  return salvageTypes.has(item.type) || /\bsalvageable\b|\bsalvage item\b/i.test(item.name);
 }
 
 function normalizeItemName(name: string): string {
@@ -15717,7 +16107,6 @@ function buildUnidentifiedGearContainerAnalysis(
         officialName: marketItem?.name ?? output.name,
         quantityMin: output.averageCount,
         quantityMax: output.averageCount,
-        chancePct: 100,
         note: "Estimated salvage output",
       };
     }),
@@ -15766,6 +16155,10 @@ function dropQuantityAverage(drop: ContainerDrop): number {
   return (drop.quantityMin + drop.quantityMax) / 2;
 }
 
+function formatDropAverage(value: number): string {
+  return `${value.toFixed(2).replace(/\.?0+$/u, "")}x`;
+}
+
 function summarizeDropValues(
   rows: Array<{
     drop: ContainerDrop;
@@ -15797,6 +16190,17 @@ function summarizeDropValues(
   }
 
   const hasAnyChance = values.some((row) => row.chancePct !== undefined);
+  const usesEstimatedSalvageAverages =
+    values.length > 0 && rows.every((row) => isEstimatedSalvageDrop(row.drop));
+
+  if (usesEstimatedSalvageAverages) {
+    const averageValue = values.reduce((sum, row) => sum + row.avg, 0) * openingCount;
+    return {
+      min: 0,
+      avg: averageValue,
+      max: averageValue,
+    };
+  }
 
   if (hasAnyChance) {
     return {
@@ -15857,6 +16261,8 @@ function ContainerSimulator({
       };
     });
   }, [effectiveAnalysis, catalog]);
+  const usesAverageDropColumn =
+    valuedDrops.length > 0 && valuedDrops.every((row) => isEstimatedSalvageDrop(row.drop));
   const directStats = summarizeDropValues(valuedDrops, openingCount, "direct");
   const salvageStats = summarizeDropValues(valuedDrops, openingCount, "salvage");
   const pricedRows = valuedDrops.filter((row) => row.directUnitValue > 0).length;
@@ -15877,7 +16283,9 @@ function ContainerSimulator({
             <div>
               <strong>{effectiveAnalysis.title}</strong>
               <span>
-                {effectiveAnalysis.exactChancesAvailable
+                {usesAverageDropColumn
+                  ? "Estimated salvage outputs use the modeled average amount per opened item."
+                  : effectiveAnalysis.exactChancesAvailable
                   ? "Some drop chances were parsed from the wiki."
                   : "Exact chances were not available; averages use listed market-matched drops."}
               </span>
@@ -15924,7 +16332,7 @@ function ContainerSimulator({
           <div className="loot-table">
             <div className="loot-row loot-header">
               <span>Possible drop</span>
-              <span>Chance</span>
+              <span>{usesAverageDropColumn ? "Average" : "Chance"}</span>
               <span>Sell value</span>
               <span>Salvage estimate</span>
             </div>
@@ -15947,12 +16355,18 @@ function ContainerSimulator({
                       <strong>{row.marketItem?.name ?? row.drop.officialName ?? row.drop.name}</strong>
                       <small>
                         {row.drop.quantityMin === row.drop.quantityMax
-                          ? `${row.drop.quantityMin} per open`
+                          ? `${formatDropAverage(row.drop.quantityMin)} per open`
                           : `${row.drop.quantityMin}-${row.drop.quantityMax} per open`}
                       </small>
                     </span>
                   </span>
-                  <span>{row.drop.chancePct !== undefined ? `${row.drop.chancePct}%` : "Unknown"}</span>
+                  <span className="loot-chance-value">
+                    {usesAverageDropColumn
+                      ? formatDropAverage(dropQuantityAverage(row.drop))
+                      : row.drop.chancePct !== undefined
+                        ? `${row.drop.chancePct}%`
+                        : "Unknown"}
+                  </span>
                   <span>{row.directUnitValue ? <Money value={row.directUnitValue} /> : "Not tradable"}</span>
                   <span>{row.salvageUnitValue ? <Money value={row.salvageUnitValue} /> : "Unavailable"}</span>
                 </div>
@@ -16617,12 +17031,10 @@ function RecipeSummaryRow({
 function RoutePlanner({
   item,
   recipes,
-  wikiGuide,
   accountSnapshot,
 }: {
   item: MarketItem;
   recipes: RecipeGuide[];
-  wikiGuide: WikiGuide | null;
   accountSnapshot: AccountSnapshot | null;
 }) {
   const bestRecipe = [...recipes].sort((left, right) => {
@@ -16688,20 +17100,6 @@ function RoutePlanner({
             detail={<RouteProfitLine profit={bestRecipe.netProfit} hasSellValue={hasRecipeSellValue} />}
           />
         ) : null}
-        <RouteOption
-          label="Direct"
-          value={
-            wikiGuide ? (
-              <a className="route-option-link" href={wikiGuide.url} target="_blank" rel="noreferrer">
-                Wiki route
-                <ExternalLink />
-              </a>
-            ) : (
-              "Unknown"
-            )
-          }
-          active={recommendedRoute === "direct"}
-        />
       </div>
     </section>
   );
@@ -16855,6 +17253,7 @@ function IngredientMindMap({
   const [expandedNodeKeys, setExpandedNodeKeys] = useState<Set<string>>(new Set());
   const [mapPan, setMapPan] = useState({ x: 0, y: 0 });
   const [isMapPanning, setIsMapPanning] = useState(false);
+  const [mapViewportSize, setMapViewportSize] = useState({ width: 0, height: 0 });
   const mapViewportRef = useRef<HTMLDivElement | null>(null);
   const mapDragRef = useRef<{
     pointerId: number;
@@ -16911,6 +17310,27 @@ function IngredientMindMap({
       height: viewport.height,
     }));
   }, [layout, visibleNodeKey]);
+
+  useLayoutEffect(() => {
+    const viewport = mapViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const syncViewportSize = () => {
+      const rect = viewport.getBoundingClientRect();
+      setMapViewportSize((current) =>
+        Math.abs(current.width - rect.width) < 1 && Math.abs(current.height - rect.height) < 1
+          ? current
+          : { width: rect.width, height: rect.height },
+      );
+    };
+
+    syncViewportSize();
+    const observer = new ResizeObserver(syncViewportSize);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [layout]);
 
   useEffect(() => {
     if (!recipe) {
@@ -17032,7 +17452,7 @@ function IngredientMindMap({
     }
 
     const target = event.target as HTMLElement | null;
-    if (target?.closest("button, a, input, textarea, select, .node-info")) {
+    if (target?.closest("button, a, input, textarea, select, .map-node, .node-info")) {
       return;
     }
 
@@ -17218,6 +17638,8 @@ function IngredientMindMap({
                   item={selectedNode.item}
                   anchor={{ x: selectedNode.x, y: selectedNode.y }}
                   canvas={{ width: layout.width, height: layout.height }}
+                  viewport={mapViewportSize}
+                  pan={mapPan}
                   accountSnapshot={accountSnapshot}
                   wikiAcquisition={wikiAcquisitions.get(selectedNode.item.id)}
                   onClose={() => setSelectedNode(null)}
@@ -17635,6 +18057,8 @@ function NodeInfoWindow({
   item,
   anchor,
   canvas,
+  viewport,
+  pan,
   accountSnapshot,
   wikiAcquisition,
   onClose,
@@ -17644,6 +18068,8 @@ function NodeInfoWindow({
   item: Gw2Item;
   anchor: { x: number; y: number };
   canvas: { width: number; height: number };
+  viewport: { width: number; height: number };
+  pan: { x: number; y: number };
   accountSnapshot: AccountSnapshot | null;
   wikiAcquisition?: WikiItemAcquisition | null;
   onClose: () => void;
@@ -17653,13 +18079,25 @@ function NodeInfoWindow({
   const estimatedInfoHeight = 190;
   const nodeHalfWidth = 77;
   const gap = 12;
-  const canOpenRight = anchor.x + nodeHalfWidth + gap + infoWidth <= canvas.width - 12;
-  const left = canOpenRight
+  const visibleLeft = viewport.width > 0 ? Math.max(0, -pan.x) : 0;
+  const visibleTop = viewport.height > 0 ? Math.max(0, -pan.y) : 0;
+  const visibleRight = viewport.width > 0 ? Math.min(canvas.width, visibleLeft + viewport.width) : canvas.width;
+  const visibleBottom = viewport.height > 0 ? Math.min(canvas.height, visibleTop + viewport.height) : canvas.height;
+  const canOpenRight = anchor.x + nodeHalfWidth + gap + infoWidth <= visibleRight - 12;
+  const canOpenLeft = anchor.x - nodeHalfWidth - gap - infoWidth >= visibleLeft + 12;
+  const preferredLeft = canOpenRight
     ? anchor.x + nodeHalfWidth + gap
-    : Math.max(12, anchor.x - nodeHalfWidth - gap - infoWidth);
+    : canOpenLeft
+      ? anchor.x - nodeHalfWidth - gap - infoWidth
+      : anchor.x - infoWidth / 2;
+  const left = clampNumber(
+    preferredLeft,
+    visibleLeft + 12,
+    Math.max(visibleLeft + 12, visibleRight - infoWidth - 12),
+  );
   const top = Math.min(
-    Math.max(12, anchor.y - estimatedInfoHeight / 2),
-    Math.max(12, canvas.height - estimatedInfoHeight - 12),
+    Math.max(visibleTop + 12, anchor.y - estimatedInfoHeight / 2),
+    Math.max(visibleTop + 12, visibleBottom - estimatedInfoHeight - 12),
   );
   const price = getStoredPrice(item.id);
   const owned = accountSnapshot?.holdings.get(item.id) ?? 0;

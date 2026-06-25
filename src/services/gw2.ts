@@ -3633,20 +3633,82 @@ function dedupeRecipes(recipes: Gw2Recipe[]): Gw2Recipe[] {
   return result;
 }
 
-export async function loadWikiGuide(itemName: string): Promise<WikiGuide | null> {
-  const cacheKey = getNamedCacheKey("wiki:guide", itemName);
+function wikiGuideTitleLevel(title: string): number | null {
+  const match = title.match(/\(level\s+(\d+)\)$/i);
+  return match ? Number(match[1]) : null;
+}
+
+export async function loadWikiGuide(
+  itemName: string,
+  options: { level?: number; itemId?: number } = {},
+): Promise<WikiGuide | null> {
+  const normalizedLevel = options.level && options.level > 0 ? options.level : null;
+  const cacheKey = getNamedCacheKey(
+    "wiki:guide:v2",
+    `${itemName}:${normalizedLevel ?? "any"}:${options.itemId ?? "any"}`,
+  );
   const cached = await loadSqlCache(cacheKey, SQL_CACHE_TTL.wikiDerived, isWikiGuide);
   if (cached) {
     return cached;
   }
 
-  const pages = await searchWikiGuides(`intitle:"${itemName}"`, 3);
+  const levelTitle = normalizedLevel ? `${itemName} (level ${normalizedLevel})` : "";
+  const directLevelGuide = levelTitle ? await loadWikiGuidePage(levelTitle).catch(() => null) : null;
+  if (directLevelGuide) {
+    void saveSqlCache(cacheKey, directLevelGuide);
+    return directLevelGuide;
+  }
+
+  const levelPages = levelTitle
+    ? await searchWikiGuides(`intitle:"${levelTitle}"`, 6).catch(() => [])
+    : [];
+  const levelExact = levelTitle
+    ? levelPages.find((page) => page.title.toLowerCase() === levelTitle.toLowerCase())
+    : null;
+  const pages = await searchWikiGuides(`intitle:"${itemName}"`, 8);
   const exact = pages.find((page) => page.title.toLowerCase() === itemName.toLowerCase());
-  const guide = exact ?? pages[0] ?? null;
+  const preferredLevel = normalizedLevel
+    ? pages.find((page) => wikiGuideTitleLevel(page.title) === normalizedLevel)
+    : null;
+  const withoutWrongLevel = normalizedLevel
+    ? pages.find((page) => {
+        const titleLevel = wikiGuideTitleLevel(page.title);
+        return titleLevel === null || titleLevel === normalizedLevel;
+      })
+    : null;
+  const guide = levelExact ?? preferredLevel ?? exact ?? withoutWrongLevel ?? pages[0] ?? null;
   if (guide) {
     void saveSqlCache(cacheKey, guide);
   }
   return guide;
+}
+
+async function loadWikiGuidePage(title: string): Promise<WikiGuide | null> {
+  const params = new URLSearchParams({
+    action: "query",
+    titles: title,
+    prop: "extracts|info",
+    exintro: "1",
+    explaintext: "1",
+    inprop: "url",
+    redirects: "1",
+    origin: "*",
+    format: "json",
+  });
+
+  const payload = await fetchJson<{
+    query?: {
+      pages?: Record<string, { title: string; extract?: string; fullurl?: string; missing?: string }>;
+    };
+  }>(`${WIKI_API}?${params.toString()}`);
+  const page = Object.values(payload.query?.pages ?? {}).find((candidate) => !candidate.missing && candidate.fullurl);
+  return page
+    ? {
+        title: page.title,
+        extract: page.extract ?? "",
+        url: page.fullurl!,
+      }
+    : null;
 }
 
 export async function loadWikiItemAcquisition(itemName: string): Promise<WikiItemAcquisition | null> {
