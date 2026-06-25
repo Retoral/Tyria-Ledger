@@ -22,6 +22,7 @@ import {
   RefreshCcw,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   Star,
   Toilet,
   Trophy,
@@ -30,6 +31,7 @@ import {
 } from "lucide-react";
 import {
   createContext,
+  useCallback,
   useDeferredValue,
   useEffect,
   useContext,
@@ -199,8 +201,17 @@ interface AchievementStep {
 }
 
 type HistoryRangeId = "24h" | "1w" | "1m" | "3m" | "6m" | "1y" | "2y";
+type HistoryLineKey = "buy" | "sell" | "demand";
 type DemandFilter = "none" | "unlisted" | "listed";
 type DemandCategory = DemandFilter;
+type MarketFilterRangeKey = "demand" | "sell" | "buy" | "spread" | "demandRatio" | "supply";
+
+interface MarketFilterRange {
+  min: string;
+  max: string;
+}
+
+type MarketAdvancedFilters = Record<MarketFilterRangeKey, MarketFilterRange>;
 
 interface FavoriteItemsContextValue {
   favoriteItemIds: Set<number>;
@@ -215,6 +226,8 @@ interface HistoryRange {
   days?: number;
 }
 
+type HistoryLineVisibility = Record<HistoryLineKey, boolean>;
+
 interface MarketHistoryPoint {
   itemId: number;
   recordedAt: string;
@@ -222,6 +235,18 @@ interface MarketHistoryPoint {
   sellPrice: number;
   buyQuantity: number;
   sellQuantity: number;
+  buyPriceOpen?: number;
+  buyPriceClose?: number;
+  buyPriceMin?: number;
+  buyPriceMax?: number;
+  sellPriceOpen?: number;
+  sellPriceClose?: number;
+  sellPriceMin?: number;
+  sellPriceMax?: number;
+  buyQuantityMin?: number;
+  buyQuantityMax?: number;
+  sellQuantityMin?: number;
+  sellQuantityMax?: number;
   rollup?: MarketHistoryRollup;
   sampleCount?: number;
 }
@@ -270,6 +295,12 @@ interface IngredientCraftRouteSummary {
 
 const ingredientCraftRouteCache = new Map<string, Promise<IngredientCraftRouteSummary | null>>();
 const FAVORITE_ITEM_IDS_STORAGE_KEY = "tyria-ledger:favorites:item-ids:v1";
+const HISTORY_LINE_VISIBILITY_STORAGE_KEY = "tyria-ledger:history-line-visibility:v1";
+const DEFAULT_HISTORY_LINE_VISIBILITY: HistoryLineVisibility = {
+  buy: true,
+  sell: true,
+  demand: true,
+};
 const TABLE_DRAG_SCROLL_SELECTOR = ".market-table-wrap, .craft-table-wrap, .meta-table-wrap";
 const TABLE_DRAG_SCROLL_THRESHOLD_PX = 6;
 const TABLE_DRAG_SCROLL_START_DELAY_MS = 50;
@@ -307,6 +338,32 @@ function readStoredFavoriteItemIds(): Set<number> {
     );
   } catch {
     return new Set<number>();
+  }
+}
+
+function readStoredHistoryLineVisibility(): HistoryLineVisibility {
+  if (typeof window === "undefined") {
+    return DEFAULT_HISTORY_LINE_VISIBILITY;
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(HISTORY_LINE_VISIBILITY_STORAGE_KEY);
+    if (!rawValue) {
+      return DEFAULT_HISTORY_LINE_VISIBILITY;
+    }
+
+    const parsedValue = JSON.parse(rawValue);
+    if (!parsedValue || typeof parsedValue !== "object") {
+      return DEFAULT_HISTORY_LINE_VISIBILITY;
+    }
+
+    return {
+      buy: typeof parsedValue.buy === "boolean" ? parsedValue.buy : true,
+      sell: typeof parsedValue.sell === "boolean" ? parsedValue.sell : true,
+      demand: typeof parsedValue.demand === "boolean" ? parsedValue.demand : true,
+    };
+  } catch {
+    return DEFAULT_HISTORY_LINE_VISIBILITY;
   }
 }
 
@@ -585,8 +642,9 @@ const FARM_TRACKER_IDLE_AFTER_MS = 5 * 60 * 1000;
 const FARM_TRACKER_IDLE_SNAPSHOT_MS = 5 * 60 * 1000;
 const MARKET_AUTO_SCAN_MIN_DELAY_MS = 1000;
 const MARKET_SCAN_COOLDOWN_MS = 10 * 60 * 1000;
+const MARKET_STARTUP_SCAN_COOLDOWN_MS = 30 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 const MAX_MARKET_HISTORY_POINTS_PER_ITEM = 800;
-const MARKET_HISTORY_REPLACE_WINDOW_MS = 10 * 60 * 1000;
 const MARKET_HISTORY_RAW_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MARKET_HISTORY_DAILY_WINDOW_MS = 31 * 24 * 60 * 60 * 1000;
 const MARKET_HISTORY_WEEKLY_WINDOW_MS = 8 * 31 * 24 * 60 * 60 * 1000;
@@ -594,6 +652,16 @@ const MARKET_HISTORY_MAX_AGE_MS = 2 * 366 * 24 * 60 * 60 * 1000;
 const MARKET_PRELOAD_DELAY_MS = 500;
 const MARKET_LIST_INITIAL_ITEMS = 220;
 const MARKET_LIST_BATCH_SIZE = 360;
+const RECIPE_USAGE_INITIAL_ROWS = 80;
+const RECIPE_USAGE_BATCH_SIZE = 160;
+const MARKET_ADVANCED_FILTERS_DEFAULT: MarketAdvancedFilters = {
+  demand: { min: "", max: "" },
+  sell: { min: "", max: "" },
+  buy: { min: "", max: "" },
+  spread: { min: "", max: "" },
+  demandRatio: { min: "", max: "" },
+  supply: { min: "", max: "" },
+};
 const FARMING_CALCULATOR_INITIAL_ROWS = 180;
 const FARMING_CALCULATOR_ROW_BATCH_SIZE = 360;
 const OPENABLE_BAG_ANALYSIS_LIMIT = 90;
@@ -2748,6 +2816,8 @@ function App() {
   const [pageHistoryIndex, setPageHistoryIndex] = useState(0);
   const [catalog, setCatalog] = useState<MarketItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<MarketItem | null>(null);
+  const [detailHistory, setDetailHistory] = useState<MarketItem[]>([]);
+  const [detailHistoryIndex, setDetailHistoryIndex] = useState(-1);
   const [query, setQuery] = useState(DEFAULT_QUERY);
   const deferredQuery = useDeferredValue(query);
   const [loadState, setLoadState] = useState<LoadState>("idle");
@@ -2797,8 +2867,10 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [favoriteItemIds, setFavoriteItemIds] = useState<Set<number>>(() => readStoredFavoriteItemIds());
   const activePage = pageHistory[pageHistoryIndex] ?? "account";
-  const canNavigateBack = pageHistoryIndex > 0;
-  const canNavigateForward = pageHistoryIndex < pageHistory.length - 1;
+  const canNavigateBack = detailHistoryIndex > 0 || pageHistoryIndex > 0;
+  const canNavigateForward =
+    (detailHistoryIndex >= 0 && detailHistoryIndex < detailHistory.length - 1) ||
+    pageHistoryIndex < pageHistory.length - 1;
   const marketLoadRunRef = useRef(0);
   const marketPreloadStartedRef = useRef(false);
   const catalogRef = useRef(catalog);
@@ -2845,7 +2917,10 @@ function App() {
   }, [favoriteItemIds]);
 
   useEffect(() => {
-    void migrateLocalStorageMarketHistory();
+    void (async () => {
+      await migrateLocalStorageMarketHistory();
+      await normalizePersistedMarketHistory();
+    })();
     void checkForAppUpdates({ silent: true });
 
     setMapsState("loading");
@@ -3150,21 +3225,61 @@ function App() {
     marketUpdatedAt,
   ]);
 
-  useEffect(() => {
-    if (!selectedItem) {
-      return;
-    }
-
-    let ignore = false;
-    setDetailState("loading");
+  const resetDetailData = useCallback((nextItem: MarketItem | null) => {
+    setDetailState(nextItem ? "loading" : "idle");
     setListings(null);
     setItemTransactions(null);
     setRecipes([]);
     setUsedInRecipes([]);
-    setRecipeUsageState("loading");
+    setRecipeUsageState(nextItem ? "loading" : "idle");
     setWikiGuide(null);
     setContainerAnalysis(null);
-    setContainerState(isLikelyContainer(selectedItem) ? "loading" : "idle");
+    setContainerState(nextItem && isLikelyContainer(nextItem) ? "loading" : "idle");
+  }, []);
+
+  const applySelectedDetailItem = useCallback((item: MarketItem | null) => {
+    resetDetailData(item);
+    setSelectedItem(item);
+  }, [resetDetailData]);
+
+  const clearSelectedDetailItem = useCallback(() => {
+    applySelectedDetailItem(null);
+    setDetailHistory([]);
+    setDetailHistoryIndex(-1);
+  }, [applySelectedDetailItem]);
+
+  const selectDetailItem = useCallback((item: MarketItem | null, options: { recordHistory?: boolean } = {}) => {
+    if (!item) {
+      clearSelectedDetailItem();
+      return;
+    }
+
+    applySelectedDetailItem(item);
+
+    if (options.recordHistory === false) {
+      return;
+    }
+
+    setDetailHistory((currentHistory) => {
+      const currentIndex = Math.min(detailHistoryIndex, currentHistory.length - 1);
+      const currentItem = currentIndex >= 0 ? currentHistory[currentIndex] : null;
+      if (currentItem?.id === item.id) {
+        return currentHistory;
+      }
+
+      const nextHistory = [...currentHistory.slice(0, Math.max(0, currentIndex + 1)), item];
+      setDetailHistoryIndex(nextHistory.length - 1);
+      return nextHistory;
+    });
+  }, [applySelectedDetailItem, clearSelectedDetailItem, detailHistoryIndex]);
+
+  useEffect(() => {
+    if (!selectedItem) {
+      resetDetailData(null);
+      return;
+    }
+
+    let ignore = false;
     const transactionKey = accountSnapshot ? apiKey.trim() : "";
     const hasMarketPrice =
       selectedItem.price.buys.unit_price > 0 || selectedItem.price.sells.unit_price > 0;
@@ -3221,7 +3336,7 @@ function App() {
     return () => {
       ignore = true;
     };
-  }, [accountSnapshot, apiKey, selectedItem]);
+  }, [accountSnapshot, apiKey, resetDetailData, selectedItem]);
 
   useEffect(() => {
     const navigateHistory = (direction: "back" | "forward") => {
@@ -3302,11 +3417,15 @@ function App() {
       window.removeEventListener("mousedown", handleNavigationPointer, true);
       window.removeEventListener("auxclick", handleNavigationPointer, true);
     };
-  }, [canNavigateBack, canNavigateForward, pageHistoryIndex]);
+  }, [canNavigateBack, canNavigateForward, detailHistory, detailHistoryIndex, pageHistory.length, pageHistoryIndex]);
 
-  function navigateToPage(page: ActivePage) {
+  function navigateToPage(page: ActivePage, options: { preserveSelectedItem?: boolean } = {}) {
     if (page === activePage) {
       return;
+    }
+
+    if (!options.preserveSelectedItem) {
+      clearSelectedDetailItem();
     }
 
     const nextHistory = [...pageHistory.slice(0, pageHistoryIndex + 1), page];
@@ -3315,10 +3434,32 @@ function App() {
   }
 
   function navigateBack() {
+    if (detailHistoryIndex > 0) {
+      const nextIndex = detailHistoryIndex - 1;
+      const nextItem = detailHistory[nextIndex];
+      if (nextItem) {
+        setDetailHistoryIndex(nextIndex);
+        applySelectedDetailItem(nextItem);
+        return;
+      }
+    }
+
+    clearSelectedDetailItem();
     setPageHistoryIndex((current) => Math.max(0, current - 1));
   }
 
   function navigateForward() {
+    if (detailHistoryIndex >= 0 && detailHistoryIndex < detailHistory.length - 1) {
+      const nextIndex = detailHistoryIndex + 1;
+      const nextItem = detailHistory[nextIndex];
+      if (nextItem) {
+        setDetailHistoryIndex(nextIndex);
+        applySelectedDetailItem(nextItem);
+        return;
+      }
+    }
+
+    clearSelectedDetailItem();
     setPageHistoryIndex((current) => Math.min(pageHistory.length - 1, current + 1));
   }
 
@@ -3331,12 +3472,12 @@ function App() {
 
     const match = catalog.find((item) => item.name.toLowerCase() === itemName.toLowerCase());
     if (match) {
-      setSelectedItem(match);
+      selectDetailItem(match);
     } else {
-      setSelectedItem(null);
+      selectDetailItem(null);
     }
 
-    navigateToPage("market");
+    navigateToPage("market", { preserveSelectedItem: Boolean(match) });
   }
 
   async function refreshApiStatuses(key = apiKey.trim()) {
@@ -3350,6 +3491,22 @@ function App() {
     } catch (statusError) {
       setApiStatusState("error");
       setError(statusError instanceof Error ? statusError.message : "Unable to check API status");
+    }
+  }
+
+  async function refreshMaps() {
+    setMapsState("loading");
+    setProgress("Refreshing map reference data");
+
+    try {
+      const loadedMaps = await loadMaps();
+      setMaps(loadedMaps);
+      setMapsState("ready");
+      setMapsUpdatedAt(Date.now());
+      setProgress(`${loadedMaps.length.toLocaleString()} map entries loaded`);
+    } catch (mapError) {
+      setMapsState("error");
+      setError(mapError instanceof Error ? mapError.message : "Unable to refresh maps");
     }
   }
 
@@ -3413,7 +3570,8 @@ function App() {
   ): Promise<MarketItem[]> {
     const scopeLabel = getMarketScopeLabel(scopeId);
     const currentCatalog = catalogRef.current;
-    const cooldownRemaining = getMarketScanCooldownRemaining(marketUpdatedAtRef.current);
+    const cooldownMs = options.preload ? MARKET_STARTUP_SCAN_COOLDOWN_MS : MARKET_SCAN_COOLDOWN_MS;
+    const cooldownRemaining = getMarketScanCooldownRemaining(marketUpdatedAtRef.current, Date.now(), cooldownMs);
 
     if (loadStateRef.current === "loading") {
       return currentCatalog;
@@ -3456,11 +3614,7 @@ function App() {
       setCatalog(sortedItems);
       catalogRef.current = sortedItems;
       setSelectedItem((current) => {
-        if (!current) {
-          return sortedItems[0] ?? null;
-        }
-
-        return sortedItems.find((item) => item.id === current.id) ?? current;
+        return current ? sortedItems.find((item) => item.id === current.id) ?? current : null;
       });
       setMarketUpdatedAt(updatedAt);
       marketUpdatedAtRef.current = updatedAt;
@@ -3512,7 +3666,7 @@ function App() {
         }
 
         publishCatalog(Array.from(catalogById.values()), cachedCatalog.updatedAt);
-        const cachedCooldownRemaining = getMarketScanCooldownRemaining(cachedCatalog.updatedAt);
+        const cachedCooldownRemaining = getMarketScanCooldownRemaining(cachedCatalog.updatedAt, Date.now(), cooldownMs);
         if (cachedCooldownRemaining > 0) {
           setLoadState("ready");
           loadStateRef.current = "ready";
@@ -3571,11 +3725,7 @@ function App() {
       );
       setCatalog(mergedItems);
       setSelectedItem((current) => {
-        if (!current) {
-          return mergedItems[0] ?? null;
-        }
-
-        return mergedItems.find((item) => item.id === current.id) ?? current;
+        return current ? mergedItems.find((item) => item.id === current.id) ?? current : null;
       });
       setLoadState("ready");
       loadStateRef.current = "ready";
@@ -3595,6 +3745,11 @@ function App() {
         }`,
       );
       void saveCachedMarketCatalog(scopeId, mergedItems);
+      void recordMarketHistorySnapshots(mergedItems).then((recorded) => {
+        if (recorded > 0 && isCurrentLoad()) {
+          setMarketHistoryRevision((revision) => revision + 1);
+        }
+      }).catch(() => undefined);
       return mergedItems;
     } catch (loadError) {
       if (isCurrentLoad()) {
@@ -3716,7 +3871,7 @@ function App() {
   function selectCraftOpportunity(opportunity: CraftOpportunity) {
     const marketItem = buildMarketItemFromStoredPrice(opportunity.output);
     if (marketItem) {
-      setSelectedItem(marketItem);
+      selectDetailItem(marketItem);
     }
   }
 
@@ -3754,7 +3909,7 @@ function App() {
         : importMarketHistoryToLocalStore(importedPoints);
       setMarketHistoryRevision((revision) => revision + 1);
       setProgress(
-        `${result.added.toLocaleString()} market snapshots imported - ${result.ignored.toLocaleString()} item-days skipped`,
+        `${result.added.toLocaleString()} market history buckets imported - ${result.ignored.toLocaleString()} existing buckets skipped`,
       );
       return {
         added: result.added,
@@ -3875,8 +4030,8 @@ function App() {
           analysisState={analysisState}
           onAnalyze={() => runAnalysisForKey()}
           onOpenItem={(item) => {
-            setSelectedItem(buildMarketItemForDetail(item));
-            navigateToPage("market");
+            selectDetailItem(buildMarketItemForDetail(item));
+            navigateToPage("market", { preserveSelectedItem: true });
           }}
         />
       );
@@ -3899,8 +4054,8 @@ function App() {
           containerState={containerState}
           accountSnapshot={accountSnapshot}
           marketHistoryRevision={marketHistoryRevision}
-          onCloseDetail={() => setSelectedItem(null)}
-          onSelectItem={setSelectedItem}
+          onCloseDetail={() => selectDetailItem(null)}
+          onSelectItem={selectDetailItem}
         />
       );
     }
@@ -3921,8 +4076,8 @@ function App() {
           apiKey={apiKey}
           apiKeyRemembered={apiKeyRemembered}
           onOpenItem={(item) => {
-            setSelectedItem(buildMarketItemForDetail(item));
-            navigateToPage("market");
+            selectDetailItem(buildMarketItemForDetail(item));
+            navigateToPage("market", { preserveSelectedItem: true });
           }}
           onProgress={(message, done, total) => {
             setProgress(message);
@@ -3949,6 +4104,7 @@ function App() {
             setProgress(message);
             setProgressCount(done && total ? { done, total } : null);
           }}
+          onRefreshMaps={() => refreshMaps()}
         />
       );
     }
@@ -3980,8 +4136,8 @@ function App() {
           onRefreshSnapshot={async () => {
             await refreshAccountSnapshot(apiKey.trim(), { forceRefresh: true });
           }}
-          onCloseDetail={() => setSelectedItem(null)}
-          onSelectItem={(item) => setSelectedItem(buildMarketItemForDetail(item))}
+          onCloseDetail={() => selectDetailItem(null)}
+          onSelectItem={(item) => selectDetailItem(buildMarketItemForDetail(item))}
         />
       );
     }
@@ -3995,7 +4151,7 @@ function App() {
           onLoadHighValueCrafts={loadHighValueCraftOpportunities}
           onSelectCraft={(opportunity) => {
             selectCraftOpportunity(opportunity);
-            navigateToPage("crafting");
+            navigateToPage("crafting", { preserveSelectedItem: true });
           }}
         />
       );
@@ -4023,8 +4179,8 @@ function App() {
           onQueryChange={setQuery}
           onExportMarketHistory={exportMarketHistory}
           onImportMarketHistory={importMarketHistory}
-          onCloseDetail={() => setSelectedItem(null)}
-          onSelectItem={setSelectedItem}
+          onCloseDetail={() => selectDetailItem(null)}
+          onSelectItem={selectDetailItem}
           onLoadMarket={loadCatalog}
         />
       );
@@ -4050,9 +4206,9 @@ function App() {
           accountSnapshot={accountSnapshot}
           marketHistoryRevision={marketHistoryRevision}
           onLoadCrafts={loadCraftOpportunities}
-          onCloseDetail={() => setSelectedItem(null)}
+          onCloseDetail={() => selectDetailItem(null)}
           onSelectCraft={selectCraftOpportunity}
-          onSelectItem={(item) => setSelectedItem(buildMarketItemForDetail(item))}
+          onSelectItem={(item) => selectDetailItem(buildMarketItemForDetail(item))}
         />
       );
     }
@@ -4060,6 +4216,7 @@ function App() {
     if (activePage === "profitable-crafts") {
       return (
         <ProfitableCraftsPage
+          catalog={catalog}
           accountSnapshot={accountSnapshot}
           craftLoadState={craftLoadState}
           craftsUpdatedAt={craftsUpdatedAt}
@@ -4076,9 +4233,9 @@ function App() {
           containerState={containerState}
           marketHistoryRevision={marketHistoryRevision}
           onLoadCrafts={loadCraftOpportunities}
-          onCloseDetail={() => setSelectedItem(null)}
+          onCloseDetail={() => selectDetailItem(null)}
           onSelectCraft={selectCraftOpportunity}
-          onSelectItem={(item) => setSelectedItem(buildMarketItemForDetail(item))}
+          onSelectItem={(item) => selectDetailItem(buildMarketItemForDetail(item))}
         />
       );
     }
@@ -4103,8 +4260,8 @@ function App() {
           accountSnapshot={accountSnapshot}
           marketHistoryRevision={marketHistoryRevision}
           onLoadRecipes={loadMysticForgeRecipes}
-          onCloseDetail={() => setSelectedItem(null)}
-          onSelectItem={(item) => setSelectedItem(buildMarketItemForDetail(item))}
+          onCloseDetail={() => selectDetailItem(null)}
+          onSelectItem={(item) => selectDetailItem(buildMarketItemForDetail(item))}
         />
       );
     }
@@ -4128,8 +4285,8 @@ function App() {
           analysisState={analysisState}
           marketHistoryRevision={marketHistoryRevision}
           onAnalyze={() => runAnalysisForKey()}
-          onCloseDetail={() => setSelectedItem(null)}
-          onSelectItem={(item) => setSelectedItem(buildMarketItemForDetail(item))}
+          onCloseDetail={() => selectDetailItem(null)}
+          onSelectItem={(item) => selectDetailItem(buildMarketItemForDetail(item))}
         />
       );
     }
@@ -4151,8 +4308,8 @@ function App() {
           containerState={containerState}
           accountSnapshot={accountSnapshot}
           marketHistoryRevision={marketHistoryRevision}
-          onCloseDetail={() => setSelectedItem(null)}
-          onSelectItem={setSelectedItem}
+          onCloseDetail={() => selectDetailItem(null)}
+          onSelectItem={selectDetailItem}
           onLoadMarket={loadCatalog}
         />
       );
@@ -4175,8 +4332,8 @@ function App() {
           containerState={containerState}
           accountSnapshot={accountSnapshot}
           marketHistoryRevision={marketHistoryRevision}
-          onCloseDetail={() => setSelectedItem(null)}
-          onSelectItem={setSelectedItem}
+          onCloseDetail={() => selectDetailItem(null)}
+          onSelectItem={selectDetailItem}
           onLoadMarket={loadCatalog}
         />
       );
@@ -4202,8 +4359,8 @@ function App() {
             setProgress(message);
             setProgressCount(done && total ? { done, total } : null);
           }}
-          onCloseDetail={() => setSelectedItem(null)}
-          onSelectItem={setSelectedItem}
+          onCloseDetail={() => selectDetailItem(null)}
+          onSelectItem={selectDetailItem}
         />
       );
     }
@@ -4228,8 +4385,8 @@ function App() {
             setProgress(message);
             setProgressCount(done && total ? { done, total } : null);
           }}
-          onCloseDetail={() => setSelectedItem(null)}
-          onSelectItem={setSelectedItem}
+          onCloseDetail={() => selectDetailItem(null)}
+          onSelectItem={selectDetailItem}
         />
       );
     }
@@ -4264,8 +4421,8 @@ function App() {
             setProgress(message);
             setProgressCount(done && total ? { done, total } : null);
           }}
-          onCloseDetail={() => setSelectedItem(null)}
-          onSelectItem={setSelectedItem}
+          onCloseDetail={() => selectDetailItem(null)}
+          onSelectItem={selectDetailItem}
         />
       );
     }
@@ -5284,12 +5441,16 @@ function getDelayToNextMarketHour(now = Date.now()): number {
   return Math.max(MARKET_AUTO_SCAN_MIN_DELAY_MS, nextHour.getTime() - now);
 }
 
-function getMarketScanCooldownRemaining(updatedAt: number | null, now = Date.now()): number {
+function getMarketScanCooldownRemaining(
+  updatedAt: number | null,
+  now = Date.now(),
+  cooldownMs = MARKET_SCAN_COOLDOWN_MS,
+): number {
   if (!updatedAt) {
     return 0;
   }
 
-  return Math.max(0, MARKET_SCAN_COOLDOWN_MS - (now - updatedAt));
+  return Math.max(0, cooldownMs - (now - updatedAt));
 }
 
 function formatMarketScanCooldown(ms: number): string {
@@ -6003,7 +6164,7 @@ function formatVaultPurchaseLimit(entry: WizardVaultListingValue): ReactNode {
         className="vault-purchase uncertain"
         title="The GW2 API reported this count, but the endpoint is currently known to sometimes return 0 for every purchased value."
       >
-        API {value}
+        Stale API {value}
       </span>
     );
   }
@@ -6161,6 +6322,7 @@ function AchievementsPage({
   onCatalogLoaded,
   onImportStateChange,
   onProgress,
+  onRefreshMaps,
 }: {
   accountSnapshot: AccountSnapshot | null;
   analysisState: LoadState;
@@ -6168,6 +6330,7 @@ function AchievementsPage({
   onCatalogLoaded: (count: number) => void;
   onImportStateChange: (state: LoadState, updatedAt?: number | null) => void;
   onProgress: (message: string, done?: number, total?: number) => void;
+  onRefreshMaps: () => Promise<void>;
 }) {
   const [catalog, setCatalog] = useState<AchievementCatalog | null>(null);
   const [catalogState, setCatalogState] = useState<LoadState>("idle");
@@ -6178,37 +6341,41 @@ function AchievementsPage({
   const [guideWiki, setGuideWiki] = useState<WikiGuide | null>(null);
   const [guideState, setGuideState] = useState<LoadState>("idle");
   const [guideItems, setGuideItems] = useState<Map<number, Gw2Item>>(new Map());
+  const catalogLoadRunRef = useRef(0);
 
-  useEffect(() => {
-    let ignore = false;
+  const refreshAchievementCatalog = async () => {
+    const runId = catalogLoadRunRef.current + 1;
+    catalogLoadRunRef.current = runId;
     setCatalogState("loading");
     setCatalogError(null);
     onImportStateChange("loading");
 
-    loadAchievementCatalog(onProgress)
-      .then((achievementCatalog) => {
-        if (ignore) {
-          return;
-        }
+    try {
+      const achievementCatalog = await loadAchievementCatalog(onProgress);
+      if (catalogLoadRunRef.current !== runId) {
+        return;
+      }
 
-        setCatalog(achievementCatalog);
-        setCatalogState("ready");
-        onCatalogLoaded(achievementCatalog.achievements.length);
-        onImportStateChange("ready", Date.now());
-        onProgress(`${achievementCatalog.achievements.length.toLocaleString()} achievements loaded`);
-      })
-      .catch((error) => {
-        if (ignore) {
-          return;
-        }
+      setCatalog(achievementCatalog);
+      setCatalogState("ready");
+      onCatalogLoaded(achievementCatalog.achievements.length);
+      onImportStateChange("ready", Date.now());
+      onProgress(`${achievementCatalog.achievements.length.toLocaleString()} achievements loaded`);
+    } catch (error) {
+      if (catalogLoadRunRef.current !== runId) {
+        return;
+      }
 
-        setCatalogState("error");
-        setCatalogError(error instanceof Error ? error.message : "Unable to load achievements");
-        onImportStateChange("error");
-      });
+      setCatalogState("error");
+      setCatalogError(error instanceof Error ? error.message : "Unable to load achievements");
+      onImportStateChange("error");
+    }
+  };
 
+  useEffect(() => {
+    void refreshAchievementCatalog();
     return () => {
-      ignore = true;
+      catalogLoadRunRef.current += 1;
     };
   }, []);
 
@@ -6327,6 +6494,14 @@ function AchievementsPage({
           </p>
         </div>
         <div className="page-actions">
+          <button className="icon-button" onClick={() => void refreshAchievementCatalog()}>
+            {catalogState === "loading" ? <Loader2 className="spin" /> : <Database />}
+            <span>Refresh Catalog</span>
+          </button>
+          <button className="icon-button" onClick={() => void onRefreshMaps()}>
+            <RefreshCcw />
+            <span>Refresh Maps</span>
+          </button>
           <button className="icon-button primary" onClick={onAnalyze}>
             {analysisState === "loading" ? <Loader2 className="spin" /> : <ShieldCheck />}
             <span>{accountSnapshot ? "Refresh Progress" : "Analyze API"}</span>
@@ -7060,6 +7235,7 @@ function MoneyRange({ min, max }: { min: number; max: number }) {
 
 function MarketPage({
   catalog,
+  detailCatalog,
   filteredItems,
   selectedItem,
   query,
@@ -7081,8 +7257,15 @@ function MarketPage({
   onCloseDetail,
   onSelectItem,
   onLoadMarket,
+  eyebrow = "Black Lion Trading Post",
+  title = "Market Items",
+  description = null,
+  showHistoryFileActions = true,
+  showLoadMarketAction = true,
+  emptyContent = null,
 }: {
   catalog: MarketItem[];
+  detailCatalog?: MarketItem[];
   filteredItems: MarketItem[];
   selectedItem: MarketItem | null;
   query: string;
@@ -7104,10 +7287,19 @@ function MarketPage({
   onCloseDetail: () => void;
   onSelectItem: (item: MarketItem) => void;
   onLoadMarket: () => void;
+  eyebrow?: string;
+  title?: string;
+  description?: ReactNode;
+  showHistoryFileActions?: boolean;
+  showLoadMarketAction?: boolean;
+  emptyContent?: ReactNode;
 }) {
   const [visibleItemCount, setVisibleItemCount] = useState(MARKET_LIST_INITIAL_ITEMS);
   const [demandFilter, setDemandFilter] = useState<DemandFilter>("listed");
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
+  const [advancedFilters, setAdvancedFilters] = useState<MarketAdvancedFilters>(MARKET_ADVANCED_FILTERS_DEFAULT);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const activeAdvancedFilterCount = countActiveMarketFilters(advancedFilters);
   const demandCounts = useMemo(
     () =>
       filteredItems.reduce<Record<DemandFilter, number>>(
@@ -7126,12 +7318,16 @@ function MarketPage({
       ),
     [demandFilter, filteredItems],
   );
+  const advancedFilteredItems = useMemo(
+    () => demandFilteredItems.filter((item) => marketAdvancedFiltersMatch(item, advancedFilters)),
+    [advancedFilters, demandFilteredItems],
+  );
   const {
     sortedRows: sortedFilteredItems,
     sort: marketSort,
     renderHeader,
   } = useSortableRows<MarketItem, "name" | "demand" | "sell" | "buy" | "spread" | "supply">(
-    demandFilteredItems,
+    advancedFilteredItems,
     { key: "supply", direction: "desc" },
     {
       name: (left, right) => compareStringValue(left.name, right.name),
@@ -7154,46 +7350,59 @@ function MarketPage({
 
   useEffect(() => {
     setVisibleItemCount(MARKET_LIST_INITIAL_ITEMS);
-  }, [demandFilter, loadState, marketSort, query]);
+  }, [advancedFilters, demandFilter, loadState, marketSort, query]);
+
+  const updateAdvancedFilter = (key: MarketFilterRangeKey, edge: keyof MarketFilterRange, value: string) => {
+    setAdvancedFilters((current) => ({
+      ...current,
+      [key]: {
+        ...current[key],
+        [edge]: value,
+      },
+    }));
+  };
 
   return (
     <div className={`market-workspace ${selectedItem ? "" : "detail-closed"}`}>
       <aside className="market-panel">
         <div className="panel-heading">
           <div>
-            <span className="eyebrow">Black Lion Trading Post</span>
-            <h2>Market Items</h2>
+            <span className="eyebrow">{eyebrow}</span>
+            <h2>{title}</h2>
+            {description ? <p>{description}</p> : null}
           </div>
           <div className="market-heading-actions">
             <span className="metric">{catalog.length.toLocaleString()}</span>
-            <div className="history-file-actions">
-              <button
-                className="mini-action"
-                onClick={() => void Promise.resolve(onExportMarketHistory()).catch(() => undefined)}
-                title="Export local market history"
-              >
-                Export
-              </button>
-              <button
-                className="mini-action"
-                onClick={() => importInputRef.current?.click()}
-                title="Import and merge local market history"
-              >
-                Import
-              </button>
-              <input
-                ref={importInputRef}
-                type="file"
-                accept="application/json,.json"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  event.target.value = "";
-                  if (file) {
-                    void onImportMarketHistory(file).catch(() => undefined);
-                  }
-                }}
-              />
-            </div>
+            {showHistoryFileActions ? (
+              <div className="history-file-actions">
+                <button
+                  className="mini-action"
+                  onClick={() => void Promise.resolve(onExportMarketHistory()).catch(() => undefined)}
+                  title="Export local market history"
+                >
+                  Export
+                </button>
+                <button
+                  className="mini-action"
+                  onClick={() => importInputRef.current?.click()}
+                  title="Import and merge local market history"
+                >
+                  Import
+                </button>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (file) {
+                      void onImportMarketHistory(file).catch(() => undefined);
+                    }
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -7219,6 +7428,35 @@ function MarketPage({
             </button>
           ))}
         </div>
+
+        <div className="market-filter-toolbar">
+          <button
+            type="button"
+            className={`filter-toggle ${advancedFiltersOpen ? "active" : ""}`}
+            onClick={() => setAdvancedFiltersOpen((open) => !open)}
+          >
+            <SlidersHorizontal />
+            <span>Filters</span>
+            {activeAdvancedFilterCount > 0 ? <strong>{activeAdvancedFilterCount}</strong> : null}
+          </button>
+          {activeAdvancedFilterCount > 0 ? (
+            <button
+              type="button"
+              className="mini-action"
+              onClick={() => setAdvancedFilters(MARKET_ADVANCED_FILTERS_DEFAULT)}
+            >
+              Reset
+            </button>
+          ) : null}
+        </div>
+
+        {advancedFiltersOpen ? (
+          <MarketAdvancedFilterPanel
+            filters={advancedFilters}
+            onChange={updateAdvancedFilter}
+            onReset={() => setAdvancedFilters(MARKET_ADVANCED_FILTERS_DEFAULT)}
+          />
+        ) : null}
 
         <div className="item-list">
           {visibleItems.length > 0 ? (
@@ -7288,16 +7526,18 @@ function MarketPage({
           ) : null}
 
           {loadState !== "loading" && sortedFilteredItems.length === 0 ? (
-            <p className="market-list-note">
-              No items match the current search and demand filter.
-            </p>
+            emptyContent ?? (
+              <p className="market-list-note">
+                No items match the current search and filters.
+              </p>
+            )
           ) : null}
 
           {loadState === "loading" && catalog.length > 0 ? (
             <p className="market-list-note">Loading more Trading Post items in the background.</p>
           ) : null}
 
-          {loadState === "idle" ? (
+          {loadState === "idle" && showLoadMarketAction ? (
             <button className="empty-action" onClick={onLoadMarket}>
               <RefreshCcw />
               Load live market
@@ -7308,28 +7548,141 @@ function MarketPage({
         </div>
       </aside>
 
-      {selectedItem ? (
-        <section className="detail-panel">
-          <ItemDetail
-            item={selectedItem}
-            catalog={catalog}
-            listings={listings}
-            itemTransactions={itemTransactions}
-            recipes={recipes}
-            usedInRecipes={usedInRecipes}
-            recipeUsageState={recipeUsageState}
-            wikiGuide={wikiGuide}
-            detailState={detailState}
-            containerAnalysis={containerAnalysis}
-            containerState={containerState}
-            accountSnapshot={accountSnapshot}
-            marketHistoryRevision={marketHistoryRevision}
-            onClose={onCloseDetail}
-            onOpenDetail={(detailItem) => onSelectItem(buildMarketItemForDetail(detailItem))}
-          />
-        </section>
-      ) : null}
+      <MarketItemDetailPane
+        selectedItem={selectedItem}
+        catalog={detailCatalog ?? catalog}
+        listings={listings}
+        itemTransactions={itemTransactions}
+        recipes={recipes}
+        usedInRecipes={usedInRecipes}
+        recipeUsageState={recipeUsageState}
+        wikiGuide={wikiGuide}
+        detailState={detailState}
+        containerAnalysis={containerAnalysis}
+        containerState={containerState}
+        accountSnapshot={accountSnapshot}
+        marketHistoryRevision={marketHistoryRevision}
+        onCloseDetail={onCloseDetail}
+        onSelectItem={onSelectItem}
+      />
     </div>
+  );
+}
+
+function MarketItemDetailPane({
+  selectedItem,
+  catalog,
+  listings,
+  itemTransactions,
+  recipes,
+  usedInRecipes,
+  recipeUsageState,
+  wikiGuide,
+  detailState,
+  containerAnalysis,
+  containerState,
+  accountSnapshot,
+  marketHistoryRevision,
+  onCloseDetail,
+  onSelectItem,
+}: {
+  selectedItem: MarketItem | null;
+  catalog: MarketItem[];
+  listings: CommerceListings | null;
+  itemTransactions: ItemTransactions | null;
+  recipes: RecipeGuide[];
+  usedInRecipes: RecipeGuide[];
+  recipeUsageState: LoadState;
+  wikiGuide: WikiGuide | null;
+  detailState: LoadState;
+  containerAnalysis: ContainerAnalysis | null;
+  containerState: LoadState;
+  accountSnapshot: AccountSnapshot | null;
+  marketHistoryRevision: number;
+  onCloseDetail: () => void;
+  onSelectItem: (item: MarketItem) => void;
+}) {
+  if (!selectedItem) {
+    return null;
+  }
+
+  return (
+    <section className="detail-panel">
+      <ItemDetail
+        item={selectedItem}
+        catalog={catalog}
+        listings={listings}
+        itemTransactions={itemTransactions}
+        recipes={recipes}
+        usedInRecipes={usedInRecipes}
+        recipeUsageState={recipeUsageState}
+        wikiGuide={wikiGuide}
+        detailState={detailState}
+        containerAnalysis={containerAnalysis}
+        containerState={containerState}
+        accountSnapshot={accountSnapshot}
+        marketHistoryRevision={marketHistoryRevision}
+        onClose={onCloseDetail}
+        onOpenDetail={(detailItem) => onSelectItem(buildMarketItemForDetail(detailItem))}
+      />
+    </section>
+  );
+}
+
+const MARKET_FILTER_DEFINITIONS: Array<{
+  key: MarketFilterRangeKey;
+  label: string;
+  hint: string;
+  unit?: "gold";
+}> = [
+  { key: "demand", label: "Demand", hint: "wanted quantity" },
+  { key: "sell", label: "Sell price", hint: "gold", unit: "gold" },
+  { key: "buy", label: "Buy price", hint: "gold", unit: "gold" },
+  { key: "spread", label: "Spread", hint: "gold", unit: "gold" },
+  { key: "demandRatio", label: "Demand ratio", hint: "wanted/listed" },
+  { key: "supply", label: "Supply", hint: "listed quantity" },
+];
+
+function MarketAdvancedFilterPanel({
+  filters,
+  onChange,
+  onReset,
+}: {
+  filters: MarketAdvancedFilters;
+  onChange: (key: MarketFilterRangeKey, edge: keyof MarketFilterRange, value: string) => void;
+  onReset: () => void;
+}) {
+  return (
+    <section className="market-advanced-filters" aria-label="Advanced Trading Post filters">
+      <div className="market-filter-grid">
+        {MARKET_FILTER_DEFINITIONS.map((definition) => (
+          <div className="market-filter-field" key={definition.key}>
+            <span>
+              <strong>{definition.label}</strong>
+              <small>{definition.hint}</small>
+            </span>
+            <div>
+              <input
+                inputMode="decimal"
+                value={filters[definition.key].min}
+                onChange={(event) => onChange(definition.key, "min", event.target.value)}
+                placeholder="Min"
+              />
+              <input
+                inputMode="decimal"
+                value={filters[definition.key].max}
+                onChange={(event) => onChange(definition.key, "max", event.target.value)}
+                placeholder="Max"
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+      <button type="button" className="empty-action compact-reset" onClick={onReset}>
+        <RefreshCcw />
+        Reset to default
+      </button>
+    </section>
   );
 }
 
@@ -7369,14 +7722,18 @@ function FavoritesPage({
   onSelectItem: (item: MarketItem) => void;
 }) {
   const [itemRevision, setItemRevision] = useState(0);
+  const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const favoriteIds = useMemo(
     () => Array.from(favoriteItemIds).sort((left, right) => left - right),
     [favoriteItemIds],
   );
+  const catalogById = useMemo(() => new Map(catalog.map((item) => [item.id, item])), [catalog]);
+  const catalogIdSet = useMemo(() => new Set(catalogById.keys()), [catalogById]);
 
   useEffect(() => {
     const missingIds = favoriteIds.filter(
-      (id) => !catalog.some((item) => item.id === id) && !getStoredItem(id),
+      (id) => !catalogIdSet.has(id) && !getStoredItem(id),
     );
     if (missingIds.length === 0) {
       return;
@@ -7392,127 +7749,76 @@ function FavoritesPage({
     return () => {
       ignore = true;
     };
-  }, [catalog, favoriteIds]);
+  }, [catalogIdSet, favoriteIds]);
 
   const rows = useMemo(() => {
-    const catalogById = new Map(catalog.map((item) => [item.id, item]));
     return favoriteIds
-      .map((id) => catalogById.get(id) ?? (getStoredItem(id) ? buildMarketItemForDetail(getStoredItem(id)!) : null))
+      .map((id) => {
+        const catalogItem = catalogById.get(id);
+        if (catalogItem) {
+          return catalogItem;
+        }
+
+        const storedItem = getStoredItem(id);
+        return storedItem ? buildMarketItemForDetail(storedItem) : null;
+      })
       .filter((item): item is MarketItem => Boolean(item));
-  }, [catalog, favoriteIds, itemRevision]);
-  const { sortedRows, renderHeader } = useSortableRows<MarketItem, "name" | "demand" | "sell" | "buy" | "spread" | "supply">(
-    rows,
-    { key: "name", direction: "asc" },
-    {
-      name: (left, right) => compareStringValue(left.name, right.name),
-      demand: (left, right) =>
-        compareNumberValue(
-          getDemandRatio(left.price.buys.quantity, left.price.sells.quantity),
-          getDemandRatio(right.price.buys.quantity, right.price.sells.quantity),
-        ),
-      sell: (left, right) => compareNumberValue(left.price.sells.unit_price, right.price.sells.unit_price),
-      buy: (left, right) => compareNumberValue(left.price.buys.unit_price, right.price.buys.unit_price),
-      spread: (left, right) => compareNumberValue(left.spread, right.spread),
-      supply: (left, right) => compareNumberValue(left.price.sells.quantity, right.price.sells.quantity),
-    },
-  );
-  const selectedFavoriteItem = selectedItem && favoriteItemIds.has(selectedItem.id) ? selectedItem : null;
+  }, [catalogById, favoriteIds, itemRevision]);
+  const filteredRows = useMemo(() => {
+    const normalized = deferredQuery.trim().toLowerCase();
+    if (!normalized) {
+      return rows;
+    }
+
+    return rows.filter((item) => {
+      return (
+        item.name.toLowerCase().includes(normalized) ||
+        item.type.toLowerCase().includes(normalized) ||
+        item.rarity.toLowerCase().includes(normalized)
+      );
+    });
+  }, [deferredQuery, rows]);
 
   return (
-    <div className={`market-workspace ${selectedFavoriteItem ? "" : "detail-closed"}`}>
-      <aside className="market-panel">
-        <section className="page-header compact-page-header">
-          <div>
-            <span className="eyebrow">My GW2 Account</span>
-            <h2>Favourites</h2>
-            <p>Starred items kept in one focused market list.</p>
+    <MarketPage
+      catalog={rows}
+      detailCatalog={catalog}
+      filteredItems={filteredRows}
+      selectedItem={selectedItem}
+      query={query}
+      loadState="ready"
+      listings={listings}
+      itemTransactions={itemTransactions}
+      recipes={recipes}
+      usedInRecipes={usedInRecipes}
+      recipeUsageState={recipeUsageState}
+      wikiGuide={wikiGuide}
+      detailState={detailState}
+      containerAnalysis={containerAnalysis}
+      containerState={containerState}
+      accountSnapshot={accountSnapshot}
+      marketHistoryRevision={marketHistoryRevision}
+      onQueryChange={setQuery}
+      onExportMarketHistory={() => undefined}
+      onImportMarketHistory={async () => ({ added: 0, ignored: 0, total: 0 })}
+      onCloseDetail={onCloseDetail}
+      onSelectItem={onSelectItem}
+      onLoadMarket={() => undefined}
+      eyebrow="My GW2 Account"
+      title="Favourites"
+      description="Starred items kept in one focused market list."
+      showHistoryFileActions={false}
+      showLoadMarketAction={false}
+      emptyContent={
+        rows.length === 0 ? (
+          <div className="empty-detail inline-empty">
+            <Star />
+            <h2>No favourites yet</h2>
+            <p>Open any item detail page and press the star to keep it here.</p>
           </div>
-          <span className="metric">{rows.length.toLocaleString()}</span>
-        </section>
-
-        <div className="item-list favorites-list">
-          {sortedRows.length > 0 ? (
-            <div className="market-table-wrap">
-              <table className="market-table">
-                <thead>
-                  <tr>
-                    {renderHeader("name", "Name")}
-                    {renderHeader("demand", "Demand")}
-                    {renderHeader("sell", "Sell")}
-                    {renderHeader("buy", "Buy")}
-                    {renderHeader("spread", "Spread")}
-                    {renderHeader("supply", "Supply")}
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedRows.map((item) => (
-                    <tr
-                      key={item.id}
-                      className={`market-row ${selectedFavoriteItem?.id === item.id ? "active" : ""}`}
-                      onClick={() => onSelectItem(item)}
-                    >
-                      <td>
-                        <span className="table-item-cell">
-                          <ItemIcon item={item} />
-                          <span className="item-copy">
-                            <strong>{item.name}</strong>
-                            <span>
-                              {item.rarity} {item.type}
-                            </span>
-                          </span>
-                        </span>
-                      </td>
-                      <td title="Demand uses current buy-order quantity divided by current sell-listing quantity.">
-                        <span className={`demand-ratio ${getDemandRatio(item.price.buys.quantity, item.price.sells.quantity) >= 1 ? "strong" : ""}`}>
-                          {formatDemandRatio(getDemandRatio(item.price.buys.quantity, item.price.sells.quantity))}
-                        </span>
-                        <small>
-                          {formatCompactQuantity(item.price.buys.quantity)} wanted / {formatCompactQuantity(item.price.sells.quantity)} listed
-                        </small>
-                      </td>
-                      <td>{item.price.sells.unit_price ? <Money value={item.price.sells.unit_price} /> : "Unavailable"}</td>
-                      <td>{item.price.buys.unit_price ? <Money value={item.price.buys.unit_price} /> : "Unavailable"}</td>
-                      <td className={item.spread > 0 ? "profit" : "muted-money"}>
-                        <Money value={Math.max(0, item.spread)} />
-                      </td>
-                      <td>{item.price.sells.quantity.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="empty-detail inline-empty">
-              <Star />
-              <h2>No favourites yet</h2>
-              <p>Open any item detail page and press the star to keep it here.</p>
-            </div>
-          )}
-        </div>
-      </aside>
-
-      {selectedFavoriteItem ? (
-        <section className="detail-panel">
-          <ItemDetail
-            item={selectedFavoriteItem}
-            catalog={catalog}
-            listings={listings}
-            itemTransactions={itemTransactions}
-            recipes={recipes}
-            usedInRecipes={usedInRecipes}
-            recipeUsageState={recipeUsageState}
-            wikiGuide={wikiGuide}
-            detailState={detailState}
-            containerAnalysis={containerAnalysis}
-            containerState={containerState}
-            accountSnapshot={accountSnapshot}
-            marketHistoryRevision={marketHistoryRevision}
-            onClose={onCloseDetail}
-            onOpenDetail={(detailItem) => onSelectItem(buildMarketItemForDetail(detailItem))}
-          />
-        </section>
-      ) : null}
-    </div>
+        ) : null
+      }
+    />
   );
 }
 
@@ -7863,7 +8169,7 @@ function OpenableBagsPage({
                       <small>{row.guide.expansion} - {row.guide.acquisition}</small>
                     </td>
                     <td>{renderOpenableRevenue(row.value, row.analysisState)}</td>
-                    <td className={row.value.profit !== null && row.value.profit > 0 ? "profit" : "muted-money"}>
+                    <td className={row.value.profit !== null && row.value.profit > 0 ? "profit" : row.value.profit !== null && row.value.profit < 0 ? "loss" : "muted-money"}>
                       {!row.isTradable
                         ? "Not tradable"
                         : row.value.profit !== null
@@ -8703,6 +9009,7 @@ function SlotBagInfoPanel({
 }
 
 function CraftingPlannerPage({
+  catalog,
   marketCrafts,
   craftLoadState,
   craftsUpdatedAt,
@@ -8774,7 +9081,7 @@ function CraftingPlannerPage({
         <section className="detail-panel">
           <ItemDetail
             item={selectedItem}
-            catalog={[]}
+            catalog={catalog}
             listings={listings}
             itemTransactions={itemTransactions}
             recipes={recipes}
@@ -8796,6 +9103,7 @@ function CraftingPlannerPage({
 }
 
 function ProfitableCraftsPage({
+  catalog,
   accountSnapshot,
   marketCrafts,
   craftLoadState,
@@ -8816,6 +9124,7 @@ function ProfitableCraftsPage({
   onSelectCraft,
   onSelectItem,
 }: {
+  catalog: MarketItem[];
   accountSnapshot: AccountSnapshot | null;
   marketCrafts: CraftOpportunity[];
   craftLoadState: LoadState;
@@ -8958,7 +9267,7 @@ function ProfitableCraftsPage({
         <section className="detail-panel">
           <ItemDetail
             item={selectedItem}
-            catalog={[]}
+            catalog={catalog}
             listings={listings}
             itemTransactions={itemTransactions}
             recipes={recipes}
@@ -9268,7 +9577,7 @@ function MysticForgePage({
                     </td>
                     <td>{row.guide.outputValue > 0 ? <Money value={row.guide.outputValue} /> : "No TP value"}</td>
                     <td>{row.guide.marketCost > 0 ? <Money value={row.guide.marketCost} /> : "Unknown"}</td>
-                    <td className={row.guide.netProfit > 0 ? "profit" : "muted-money"}>
+                    <td className={row.guide.netProfit > 0 ? "profit" : row.guide.netProfit < 0 ? "loss" : "muted-money"}>
                       {row.guide.marketCost > 0 && row.guide.outputValue > 0
                         ? <Money value={Math.abs(row.guide.netProfit)} />
                         : "-"}
@@ -9608,6 +9917,79 @@ function getDemandRatio(buyQuantity: number, sellQuantity: number): number {
   }
 
   return buyQuantity > 0 ? Number.POSITIVE_INFINITY : 0;
+}
+
+function getMarketFilterNumber(value: string): number | null {
+  if (!value.trim()) {
+    return null;
+  }
+
+  const parsed = Number(value.replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isGoldMarketFilter(key: MarketFilterRangeKey): boolean {
+  return key === "sell" || key === "buy" || key === "spread";
+}
+
+function getMarketFilterComparableNumber(key: MarketFilterRangeKey, value: string): number | null {
+  const parsed = getMarketFilterNumber(value);
+  if (parsed === null) {
+    return null;
+  }
+
+  return isGoldMarketFilter(key) ? Math.round(parsed * 10_000) : parsed;
+}
+
+function marketFilterRangeMatches(key: MarketFilterRangeKey, value: number, range: MarketFilterRange): boolean {
+  const min = getMarketFilterComparableNumber(key, range.min);
+  const max = getMarketFilterComparableNumber(key, range.max);
+  if (min !== null && value < min) {
+    return false;
+  }
+
+  if (max !== null && value > max) {
+    return false;
+  }
+
+  return true;
+}
+
+function getMarketFilterValue(item: MarketItem, key: MarketFilterRangeKey): number {
+  if (key === "demand") {
+    return item.price.buys.quantity;
+  }
+
+  if (key === "sell") {
+    return item.price.sells.unit_price;
+  }
+
+  if (key === "buy") {
+    return item.price.buys.unit_price;
+  }
+
+  if (key === "spread") {
+    return item.spread;
+  }
+
+  if (key === "demandRatio") {
+    return getDemandRatio(item.price.buys.quantity, item.price.sells.quantity);
+  }
+
+  return item.price.sells.quantity;
+}
+
+function marketAdvancedFiltersMatch(item: MarketItem, filters: MarketAdvancedFilters): boolean {
+  return (Object.keys(filters) as MarketFilterRangeKey[]).every((key) =>
+    marketFilterRangeMatches(key, getMarketFilterValue(item, key), filters[key]),
+  );
+}
+
+function countActiveMarketFilters(filters: MarketAdvancedFilters): number {
+  return (Object.keys(filters) as MarketFilterRangeKey[]).reduce((count, key) => {
+    const range = filters[key];
+    return count + (range.min.trim() || range.max.trim() ? 1 : 0);
+  }, 0);
 }
 
 function formatCompactQuantity(value: number): string {
@@ -10153,7 +10535,7 @@ function SalvagingPage({
                       <td><Money value={row.purchaseCost} /></td>
                       <td>{row.directSellNet ? <Money value={row.directSellNet} /> : "No buy orders"}</td>
                       <td>{row.salvageValue ? <Money value={row.salvageValue} /> : "Unmodeled"}</td>
-                      <td className={row.buySalvageProfit > 0 ? "profit" : "muted-money"}>
+                      <td className={row.buySalvageProfit > 0 ? "profit" : row.buySalvageProfit < 0 ? "loss" : "muted-money"}>
                         {row.outputs.length ? <Money value={Math.abs(row.buySalvageProfit)} /> : "Output data needed"}
                       </td>
                       <td>
@@ -10383,7 +10765,7 @@ function UnidentifiedGearPage({
                     <td>{row.quote.buyCost ? <Money value={row.quote.buyCost} /> : "Unavailable"}</td>
                     <td>{row.directSale ? <Money value={row.directSale} /> : "Unavailable"}</td>
                     <td>{row.openSalvageRevenue ? <Money value={row.openSalvageRevenue} /> : "Drop data needed"}</td>
-                    <td className={row.buyOpenSalvageProfit > 0 ? "profit" : "muted-money"}>
+                    <td className={row.buyOpenSalvageProfit > 0 ? "profit" : row.buyOpenSalvageProfit < 0 ? "loss" : "muted-money"}>
                       {row.openSalvageRevenue ? <Money value={Math.abs(row.buyOpenSalvageProfit)} /> : "Unmodeled"}
                     </td>
                     <td>{row.definition.note}</td>
@@ -11472,7 +11854,7 @@ function FarmingCalculatorPage({
                       <td>{craft.recipe.output_item_count.toLocaleString()}</td>
                       <td><Money value={craft.outputValue} /></td>
                       <td>{craft.marketCost > 0 ? <Money value={craft.marketCost} /> : "Unknown"}</td>
-                      <td className={craft.marketProfit > 0 ? "profit" : "muted-money"}>
+                      <td className={craft.marketProfit > 0 ? "profit" : craft.marketProfit < 0 ? "loss" : "muted-money"}>
                         {craft.marketCost > 0 ? <Money value={Math.abs(craft.marketProfit)} /> : "Cost needed"}
                       </td>
                       <td>
@@ -13411,6 +13793,8 @@ function ItemDetail({
         usedInRecipes={usedInRecipes}
         recipeUsageState={recipeUsageState}
         accountSnapshot={accountSnapshot}
+        catalog={catalog}
+        onOpenDetail={onOpenDetail}
       />
 
       {showMarketSections ? (
@@ -13623,19 +14007,19 @@ function Money({ value }: { value: number }) {
     <span className="money" aria-label={`${gold} gold ${silver} silver ${copper} copper`}>
       {gold > 0 ? (
         <span className="coin gold">
-          <span className="coin-dot" />
           {gold}
+          <span className="coin-dot" />
         </span>
       ) : null}
       {gold > 0 || silver > 0 ? (
         <span className="coin silver">
-          <span className="coin-dot" />
           {silver}
+          <span className="coin-dot" />
         </span>
       ) : null}
       <span className="coin copper">
-        <span className="coin-dot" />
         {copper}
+        <span className="coin-dot" />
       </span>
     </span>
   );
@@ -13650,13 +14034,16 @@ function ItemHistoryChart({
   itemTransactions: ItemTransactions | null;
   marketHistoryRevision: number;
 }) {
-  const [rangeId, setRangeId] = useState<HistoryRangeId>("6m");
+  const [rangeId, setRangeId] = useState<HistoryRangeId>("24h");
   const [marketHistory, setMarketHistory] = useState<MarketHistoryPoint[]>([]);
+  const [visibleLines, setVisibleLines] = useState<HistoryLineVisibility>(() =>
+    readStoredHistoryLineVisibility(),
+  );
 
   useEffect(() => {
     let ignore = false;
 
-    recordMarketHistorySnapshot(item)
+    readMarketHistoryForItem(item.id)
       .then((points) => {
         if (!ignore) {
           setMarketHistory(points);
@@ -13664,25 +14051,25 @@ function ItemHistoryChart({
       })
       .catch(() => {
         if (!ignore) {
-          void readMarketHistoryForItem(item.id).then((points) => {
-            if (!ignore) {
-              setMarketHistory(points);
-            }
-          });
+          setMarketHistory([]);
         }
       });
 
     return () => {
       ignore = true;
     };
-  }, [
-    item.id,
-    item.price.buys.quantity,
-    item.price.buys.unit_price,
-    item.price.sells.quantity,
-    item.price.sells.unit_price,
-    marketHistoryRevision,
-  ]);
+  }, [item.id, marketHistoryRevision]);
+
+  useEffect(() => {
+    window.localStorage.setItem(HISTORY_LINE_VISIBILITY_STORAGE_KEY, JSON.stringify(visibleLines));
+  }, [visibleLines]);
+
+  const toggleHistoryLine = useCallback((line: HistoryLineKey) => {
+    setVisibleLines((current) => ({
+      ...current,
+      [line]: !current[line],
+    }));
+  }, []);
 
   const range =
     HISTORY_RANGES.find((entry) => entry.id === rangeId) ??
@@ -13692,11 +14079,19 @@ function ItemHistoryChart({
     () => filterMarketHistoryByRange(marketHistory, range),
     [marketHistory, range],
   );
+  const chartSnapshots = useMemo(
+    () => includePreviousMarketHistoryAnchor(marketHistory, visibleSnapshots, range),
+    [marketHistory, range, visibleSnapshots],
+  );
   const personalEvents = useMemo(
     () => buildTransactionHistoryPoints(itemTransactions),
     [itemTransactions],
   );
   const chartPoints = useMemo(
+    () => buildMarketChartPoints(chartSnapshots),
+    [chartSnapshots],
+  );
+  const visibleChartPoints = useMemo(
     () => buildMarketChartPoints(visibleSnapshots),
     [visibleSnapshots],
   );
@@ -13708,7 +14103,7 @@ function ItemHistoryChart({
   const highestSale24h = getHistoryPriceExtreme(recentPersonalEvents, "sale", "max");
   const allVisiblePoints = chartPoints.filter((point) => point.value > 0);
   const latestSnapshot = visibleSnapshots[visibleSnapshots.length - 1];
-  const coverage = getHistoryCoverageLabel(chartPoints);
+  const coverage = getHistoryCoverageLabel(visibleChartPoints);
 
   return (
     <section className="surface history-panel">
@@ -13716,7 +14111,7 @@ function ItemHistoryChart({
         <TrendingUp />
         <h3>Purchase and Posted History</h3>
         <span>
-          {marketHistory.length.toLocaleString()} local snapshots -{" "}
+          {marketHistory.length.toLocaleString()} graph points -{" "}
           {personalEvents.length.toLocaleString()} personal events
         </span>
       </div>
@@ -13760,7 +14155,7 @@ function ItemHistoryChart({
         />
         <Metric
           icon={<ListChecks />}
-          label="Snapshots"
+          label="Graph Points"
           value={visibleSnapshots.length.toLocaleString()}
           tone={visibleSnapshots.length ? "positive" : "muted"}
         />
@@ -13774,17 +14169,13 @@ function ItemHistoryChart({
 
       {allVisiblePoints.length ? (
         <>
-          <HistorySvg snapshots={visibleSnapshots} range={range} />
-          <div className="history-legend">
-            <span className="legend-buy">Highest buy order</span>
-            <span className="legend-sell">Lowest posted listing</span>
-            <span className="legend-demand">Demand</span>
-          </div>
+          <HistorySvg snapshots={chartSnapshots} range={range} visibleLines={visibleLines} />
+          <HistoryLegend visibleLines={visibleLines} onToggle={toggleHistoryLine} />
         </>
       ) : (
         <p className="muted-copy">
           No Trading Post snapshots exist for this range yet. The app records local market snapshots
-          when you open an item and during automatic market scans.
+          during live market scans and market-history imports.
         </p>
       )}
 
@@ -13796,21 +14187,60 @@ function ItemHistoryChart({
   );
 }
 
+function HistoryLegend({
+  visibleLines,
+  onToggle,
+}: {
+  visibleLines: HistoryLineVisibility;
+  onToggle: (line: HistoryLineKey) => void;
+}) {
+  const entries: Array<{ id: HistoryLineKey; label: string; className: string }> = [
+    { id: "buy", label: "Highest buy order", className: "legend-buy" },
+    { id: "sell", label: "Lowest posted listing", className: "legend-sell" },
+    { id: "demand", label: "Demand", className: "legend-demand" },
+  ];
+
+  return (
+    <div className="history-legend" aria-label="Toggle chart lines">
+      {entries.map((entry) => {
+        const enabled = visibleLines[entry.id];
+
+        return (
+          <button
+            key={entry.id}
+            type="button"
+            className={`${entry.className} ${enabled ? "" : "disabled"}`}
+            aria-pressed={enabled}
+            onClick={() => onToggle(entry.id)}
+            title={enabled ? `Hide ${entry.label}` : `Show ${entry.label}`}
+          >
+            {entry.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function HistorySvg({
   snapshots,
   range,
+  visibleLines,
 }: {
   snapshots: MarketHistoryPoint[];
   range: HistoryRange;
+  visibleLines: HistoryLineVisibility;
 }) {
   type HistorySeriesPoint = {
     time: number;
+    sourceTime?: number;
     value: number;
     quantity: number;
     sellQuantity?: number;
     sampleCount: number;
   };
   type HistoryHoverPoint = {
+    id: string;
     lineName: string;
     value: number;
     quantity: number;
@@ -13821,35 +14251,41 @@ function HistorySvg({
     y: number;
     tone: "buy" | "sell" | "demand";
   };
-  type HistoryTooltipLayout = {
-    left: number;
-    top: number;
-    anchorX: number;
-    placement: "above" | "below";
-  };
-  const marketPoints = buildMarketChartPoints(snapshots);
-  const points = marketPoints.filter((point) => point.value > 0);
-  const demandSeries = snapshots
-    .map((point): HistorySeriesPoint | null => {
-      const ratio = getDemandRatio(point.buyQuantity, point.sellQuantity);
-      if (!Number.isFinite(ratio) || ratio <= 0) {
-        return null;
-      }
+  const rangeBounds = getHistoryRangeBounds(range);
+  const rangeCutoff = rangeBounds.start;
+  const fixedRangeEnd = rangeBounds.end ?? Date.now();
+  const marketPoints = useMemo(() => buildMarketChartPoints(snapshots), [snapshots]);
+  const points = useMemo(() => marketPoints.filter((point) => point.value > 0), [marketPoints]);
+  const demandSeries = useMemo(
+    () =>
+      snapshots
+        .map((point): HistorySeriesPoint | null => {
+          const ratio = getDemandRatio(point.buyQuantity, point.sellQuantity);
+          if (!Number.isFinite(ratio) || ratio <= 0) {
+            return null;
+          }
+          const sourceTime = new Date(point.recordedAt).getTime();
 
-      return {
-        time: new Date(point.recordedAt).getTime(),
-        value: ratio,
-        quantity: point.buyQuantity,
-        sellQuantity: point.sellQuantity,
-        sampleCount: Math.max(1, point.sampleCount ?? 1),
-      };
-    })
-    .filter((point): point is HistorySeriesPoint => Boolean(point));
-  const [hoverPoint, setHoverPoint] = useState<HistoryHoverPoint | null>(null);
-  const [tooltipLayout, setTooltipLayout] = useState<HistoryTooltipLayout | null>(null);
-  const chartWrapRef = useRef<HTMLDivElement | null>(null);
-  const chartSvgRef = useRef<SVGSVGElement | null>(null);
+          return {
+            time: rangeCutoff && sourceTime < rangeCutoff ? rangeCutoff : sourceTime,
+            sourceTime,
+            value: ratio,
+            quantity: point.buyQuantity,
+            sellQuantity: point.sellQuantity,
+            sampleCount: Math.max(1, point.sampleCount ?? 1),
+          };
+        })
+        .filter((point): point is HistorySeriesPoint => Boolean(point)),
+    [rangeCutoff, snapshots],
+  );
+  const hoverPointIdRef = useRef<string | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    hoverPointIdRef.current = null;
+    hideHistoryTooltipElement(tooltipRef.current);
+  }, [visibleLines]);
+
   const width = 820;
   const height = 300;
   const padding = {
@@ -13860,134 +14296,105 @@ function HistorySvg({
   };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
-  const times = [...points.map((point) => point.time), ...demandSeries.map((point) => point.time)];
-  const values = points.map((point) => point.value);
+  const times = useMemo(
+    () => [...points.map((point) => point.time), ...demandSeries.map((point) => point.time)],
+    [demandSeries, points],
+  );
+  const values = useMemo(() => points.map((point) => point.value), [points]);
   const timeMin = Math.min(...times);
   const timeMax = Math.max(...times);
   const valueMin = Math.min(...values);
   const valueMax = Math.max(...values);
-  const rangeCutoff = getHistoryRangeCutoff(range);
-  const fixedRangeEnd = Date.now();
   const timePad = rangeCutoff ? 0 : timeMin === timeMax ? 24 * 60 * 60 * 1000 : 0;
   const valuePad = valueMin === valueMax ? Math.max(1, valueMin * 0.08) : (valueMax - valueMin) * 0.08;
   const xMin = rangeCutoff ?? timeMin - timePad;
-  const xMax = fixedRangeEnd + timePad;
+  const xMax = Math.max(fixedRangeEnd, Number.isFinite(timeMax) ? timeMax : fixedRangeEnd) + timePad;
   const yMin = Math.max(0, valueMin - valuePad);
   const yMax = valueMax + valuePad;
   const shouldAverageSeries = shouldAverageHistoryRange(range);
-  const xFor = (time: number) => {
-    return padding.left + ((time - xMin) / Math.max(1, xMax - xMin)) * plotWidth;
-  };
-  const yFor = (value: number) => {
-    return padding.top + (1 - (value - yMin) / Math.max(1, yMax - yMin)) * plotHeight;
-  };
-  const buySeries = snapshots
-    .filter((point) => point.buyPrice > 0)
-    .map((point) => ({
-      time: new Date(point.recordedAt).getTime(),
-      value: point.buyPrice,
-      quantity: point.buyQuantity,
-      sampleCount: Math.max(1, point.sampleCount ?? 1),
-    }));
-  const sellSeries = snapshots
-    .filter((point) => point.sellPrice > 0)
-    .map((point) => ({
-      time: new Date(point.recordedAt).getTime(),
-      value: point.sellPrice,
-      quantity: point.sellQuantity,
-      sampleCount: Math.max(1, point.sampleCount ?? 1),
-    }));
-  const plottedBuySeries = shouldAverageSeries
-    ? averageHistorySeriesToBuckets(buySeries, xMin, xMax)
-    : buySeries;
-  const plottedSellSeries = shouldAverageSeries
-    ? averageHistorySeriesToBuckets(sellSeries, xMin, xMax)
-    : sellSeries;
-  const plottedDemandSeries = shouldAverageSeries
-    ? averageHistorySeriesToBuckets(demandSeries, xMin, xMax, false)
-    : demandSeries;
-  const demandValues = plottedDemandSeries.map((point) => point.value);
+  const buySeries = useMemo(
+    () =>
+      snapshots
+        .filter((point) => point.buyPrice > 0)
+        .map((point) => {
+          const sourceTime = new Date(point.recordedAt).getTime();
+          return {
+            time: rangeCutoff && sourceTime < rangeCutoff ? rangeCutoff : sourceTime,
+            sourceTime,
+            value: point.buyPrice,
+            quantity: point.buyQuantity,
+            sampleCount: Math.max(1, point.sampleCount ?? 1),
+          };
+        }),
+    [rangeCutoff, snapshots],
+  );
+  const sellSeries = useMemo(
+    () =>
+      snapshots
+        .filter((point) => point.sellPrice > 0)
+        .map((point) => {
+          const sourceTime = new Date(point.recordedAt).getTime();
+          return {
+            time: rangeCutoff && sourceTime < rangeCutoff ? rangeCutoff : sourceTime,
+            sourceTime,
+            value: point.sellPrice,
+            quantity: point.sellQuantity,
+            sampleCount: Math.max(1, point.sampleCount ?? 1),
+          };
+        }),
+    [rangeCutoff, snapshots],
+  );
+  const plottedBuySeries = useMemo(
+    () => (shouldAverageSeries ? averageHistorySeriesToLocalDays(buySeries) : buySeries),
+    [buySeries, shouldAverageSeries],
+  );
+  const plottedSellSeries = useMemo(
+    () => (shouldAverageSeries ? averageHistorySeriesToLocalDays(sellSeries) : sellSeries),
+    [sellSeries, shouldAverageSeries],
+  );
+  const plottedDemandSeries = useMemo(
+    () => (shouldAverageSeries ? averageHistorySeriesToLocalDays(demandSeries, false) : demandSeries),
+    [demandSeries, shouldAverageSeries],
+  );
+  const demandValues = useMemo(() => plottedDemandSeries.map((point) => point.value), [plottedDemandSeries]);
   const demandMin = demandValues.length ? Math.min(...demandValues) : 0;
   const demandMax = demandValues.length ? Math.max(...demandValues) : 0;
   const demandPad = demandMin === demandMax ? Math.max(0.1, demandMin * 0.12) : (demandMax - demandMin) * 0.12;
   const demandYMin = Math.max(0, demandMin - demandPad);
   const demandYMax = demandMax + demandPad;
-  const yForDemand = (value: number) => {
-    if (!demandValues.length) {
-      return padding.top + plotHeight;
-    }
-
-    return padding.top + (1 - (value - demandYMin) / Math.max(0.01, demandYMax - demandYMin)) * plotHeight;
-  };
-  const axisTicks = buildHistoryAxisTicks(xMin, xMax, range);
-  const valueTicks = buildHistoryValueTicks(yMin, yMax, 4);
-  const tooltipPlacement = tooltipLayout?.placement ?? (hoverPoint && hoverPoint.y < 82 ? "below" : "above");
-  const tooltipStyle = hoverPoint
-    ? ({
-        left: `${tooltipLayout?.left ?? 0}px`,
-        top: `${tooltipLayout?.top ?? 0}px`,
-        "--history-tooltip-anchor": `${tooltipLayout?.anchorX ?? 94}px`,
-        visibility: tooltipLayout ? "visible" : "hidden",
-      } satisfies CSSProperties & { "--history-tooltip-anchor": string })
-    : undefined;
-  const showHoverPoint = (point: HistoryHoverPoint) => {
-    setTooltipLayout(null);
-    setHoverPoint(point);
-  };
-
-  useLayoutEffect(() => {
-    if (!hoverPoint || !chartWrapRef.current || !chartSvgRef.current || !tooltipRef.current) {
-      setTooltipLayout(null);
+  const axisTicks = useMemo(() => buildHistoryAxisTicks(xMin, xMax, range), [range, xMax, xMin]);
+  const valueTicks = useMemo(() => buildHistoryValueTicks(yMin, yMax, 4), [yMax, yMin]);
+  const showHoverPoint = useCallback((point: HistoryHoverPoint) => {
+    if (hoverPointIdRef.current === point.id) {
       return;
     }
 
-    const edgePadding = 8;
-    const pointerGap = 16;
-    const minAnchorPadding = 14;
-    const wrapRect = chartWrapRef.current.getBoundingClientRect();
-    const svgRect = chartSvgRef.current.getBoundingClientRect();
-    const tooltipRect = tooltipRef.current.getBoundingClientRect();
-    const pointX = svgRect.left - wrapRect.left + (hoverPoint.x / width) * svgRect.width;
-    const pointY = svgRect.top - wrapRect.top + (hoverPoint.y / height) * svgRect.height;
-    const availableAbove = pointY - edgePadding;
-    const availableBelow = wrapRect.height - pointY - edgePadding;
-    let placement: HistoryTooltipLayout["placement"] =
-      availableAbove >= tooltipRect.height + pointerGap || availableAbove >= availableBelow ? "above" : "below";
-    let top =
-      placement === "above"
-        ? pointY - tooltipRect.height - pointerGap
-        : pointY + pointerGap;
-
-    if (top < edgePadding) {
-      placement = "below";
-      top = pointY + pointerGap;
-    }
-    if (top + tooltipRect.height > wrapRect.height - edgePadding && pointY - tooltipRect.height - pointerGap >= edgePadding) {
-      placement = "above";
-      top = pointY - tooltipRect.height - pointerGap;
+    hoverPointIdRef.current = point.id;
+    updateHistoryTooltipElement(tooltipRef.current, point, width, height);
+  }, []);
+  const hideHoverPoint = useCallback((id?: string) => {
+    if (id && hoverPointIdRef.current && hoverPointIdRef.current !== id) {
+      return;
     }
 
-    const left = clampNumber(pointX - tooltipRect.width / 2, edgePadding, wrapRect.width - tooltipRect.width - edgePadding);
-    const clampedTop = clampNumber(top, edgePadding, Math.max(edgePadding, wrapRect.height - tooltipRect.height - edgePadding));
-    const anchorX = clampNumber(pointX - left, minAnchorPadding, tooltipRect.width - minAnchorPadding);
+    hoverPointIdRef.current = null;
+    hideHistoryTooltipElement(tooltipRef.current);
+  }, []);
+  const chartSvgChildren = useMemo(() => {
+    const xFor = (time: number) =>
+      padding.left + ((time - xMin) / Math.max(1, xMax - xMin)) * plotWidth;
+    const yFor = (value: number) =>
+      padding.top + (1 - (value - yMin) / Math.max(1, yMax - yMin)) * plotHeight;
+    const yForDemand = (value: number) => {
+      if (!demandValues.length) {
+        return padding.top + plotHeight;
+      }
 
-    setTooltipLayout({
-      left,
-      top: clampedTop,
-      anchorX,
-      placement,
-    });
-  }, [hoverPoint]);
+      return padding.top + (1 - (value - demandYMin) / Math.max(0.01, demandYMax - demandYMin)) * plotHeight;
+    };
 
-  return (
-    <div className="history-chart-wrap" ref={chartWrapRef}>
-      <svg
-        className="history-chart"
-        ref={chartSvgRef}
-        viewBox={`0 0 ${width} ${height}`}
-        role="img"
-        aria-label="Item history chart"
-      >
+    return (
+      <>
         {valueTicks.map((tick) => {
           const y = yFor(tick);
           return (
@@ -13999,160 +14406,293 @@ function HistorySvg({
             </g>
           );
         })}
-        <path className="history-line buy-line" d={buildChartPath(plottedBuySeries, xFor, yFor)} />
-        <path className="history-line sell-line" d={buildChartPath(plottedSellSeries, xFor, yFor)} />
-        <path className="history-line demand-line" d={buildChartPath(plottedDemandSeries, xFor, yForDemand)} />
-        {plottedBuySeries.map((point) => {
+        {axisTicks.map((tick) => (
+          <text
+            key={`axis-${tick.time}-${tick.label}`}
+            className="chart-x-label"
+            x={xFor(tick.time)}
+            y={height - 8}
+            textAnchor="middle"
+          >
+            {tick.label}
+          </text>
+        ))}
+        {visibleLines.buy ? (
+          <path className="history-line buy-line" d={buildChartPath(plottedBuySeries, xFor, yFor)} />
+        ) : null}
+        {visibleLines.sell ? (
+          <path className="history-line sell-line" d={buildChartPath(plottedSellSeries, xFor, yFor)} />
+        ) : null}
+        {visibleLines.demand ? (
+          <path className="history-line demand-line" d={buildChartPath(plottedDemandSeries, xFor, yForDemand)} />
+        ) : null}
+        {visibleLines.buy ? plottedBuySeries.map((point) => {
           const x = xFor(point.time);
           const y = yFor(point.value);
+          const hoverId = `buy-${point.time}-${point.value}-${point.quantity}`;
           return (
             <g
               key={`buy-${point.time}-${point.value}-${point.quantity}`}
               onMouseEnter={() =>
                 showHoverPoint({
+                  id: hoverId,
                   lineName: "Highest buy order",
                   value: point.value,
                   quantity: point.quantity,
                   sampleCount: point.sampleCount,
-                  time: point.time,
+                  time: point.sourceTime ?? point.time,
                   x,
                   y,
                   tone: "buy",
                 })
               }
-              onMouseLeave={() => setHoverPoint(null)}
+              onMouseLeave={() => hideHoverPoint(hoverId)}
               onFocus={() =>
                 showHoverPoint({
+                  id: hoverId,
                   lineName: "Highest buy order",
                   value: point.value,
                   quantity: point.quantity,
                   sampleCount: point.sampleCount,
-                  time: point.time,
+                  time: point.sourceTime ?? point.time,
                   x,
                   y,
                   tone: "buy",
                 })
               }
-              onBlur={() => setHoverPoint(null)}
+              onBlur={() => hideHoverPoint(hoverId)}
               tabIndex={0}
             >
               <circle className="history-dot-hit" cx={x} cy={y} r="12" />
               <circle className="history-dot buy-dot" cx={x} cy={y} r="4" />
             </g>
           );
-        })}
-        {plottedSellSeries.map((point) => {
+        }) : null}
+        {visibleLines.sell ? plottedSellSeries.map((point) => {
           const x = xFor(point.time);
           const y = yFor(point.value);
+          const hoverId = `sell-${point.time}-${point.value}-${point.quantity}`;
           return (
             <g
               key={`sell-${point.time}-${point.value}-${point.quantity}`}
               onMouseEnter={() =>
                 showHoverPoint({
+                  id: hoverId,
                   lineName: "Lowest posted listing",
                   value: point.value,
                   quantity: point.quantity,
                   sampleCount: point.sampleCount,
-                  time: point.time,
+                  time: point.sourceTime ?? point.time,
                   x,
                   y,
                   tone: "sell",
                 })
               }
-              onMouseLeave={() => setHoverPoint(null)}
+              onMouseLeave={() => hideHoverPoint(hoverId)}
               onFocus={() =>
                 showHoverPoint({
+                  id: hoverId,
                   lineName: "Lowest posted listing",
                   value: point.value,
                   quantity: point.quantity,
                   sampleCount: point.sampleCount,
-                  time: point.time,
+                  time: point.sourceTime ?? point.time,
                   x,
                   y,
                   tone: "sell",
                 })
               }
-              onBlur={() => setHoverPoint(null)}
+              onBlur={() => hideHoverPoint(hoverId)}
               tabIndex={0}
             >
               <circle className="history-dot-hit" cx={x} cy={y} r="12" />
               <circle className="history-dot sell-dot" cx={x} cy={y} r="4" />
             </g>
           );
-        })}
-        {plottedDemandSeries.map((point) => {
+        }) : null}
+        {visibleLines.demand ? plottedDemandSeries.map((point) => {
           const x = xFor(point.time);
           const y = yForDemand(point.value);
+          const hoverId = `demand-${point.time}-${point.value}-${point.quantity}-${point.sellQuantity ?? 0}`;
           return (
             <g
               key={`demand-${point.time}-${point.value}-${point.quantity}-${point.sellQuantity ?? 0}`}
               onMouseEnter={() =>
                 showHoverPoint({
+                  id: hoverId,
                   lineName: "Demand",
                   value: point.value,
                   quantity: point.quantity,
                   sellQuantity: point.sellQuantity,
                   sampleCount: point.sampleCount,
-                  time: point.time,
+                  time: point.sourceTime ?? point.time,
                   x,
                   y,
                   tone: "demand",
                 })
               }
-              onMouseLeave={() => setHoverPoint(null)}
+              onMouseLeave={() => hideHoverPoint(hoverId)}
               onFocus={() =>
                 showHoverPoint({
+                  id: hoverId,
                   lineName: "Demand",
                   value: point.value,
                   quantity: point.quantity,
                   sellQuantity: point.sellQuantity,
                   sampleCount: point.sampleCount,
-                  time: point.time,
+                  time: point.sourceTime ?? point.time,
                   x,
                   y,
                   tone: "demand",
                 })
               }
-              onBlur={() => setHoverPoint(null)}
+              onBlur={() => hideHoverPoint(hoverId)}
               tabIndex={0}
             >
               <circle className="history-dot-hit" cx={x} cy={y} r="12" />
               <circle className="history-dot demand-dot" cx={x} cy={y} r="4" />
             </g>
           );
-        })}
+        }) : null}
+      </>
+    );
+  }, [
+    axisTicks,
+    demandValues.length,
+    demandYMax,
+    demandYMin,
+    hideHoverPoint,
+    padding.left,
+    padding.right,
+    padding.top,
+    plotHeight,
+    plotWidth,
+    plottedBuySeries,
+    plottedDemandSeries,
+    plottedSellSeries,
+    showHoverPoint,
+    valueTicks,
+    visibleLines,
+    xMax,
+    xMin,
+    yMax,
+    yMin,
+  ]);
+
+  return (
+    <div className="history-chart-wrap">
+      <svg
+        className="history-chart"
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Item history chart"
+      >
+        {chartSvgChildren}
       </svg>
-      {hoverPoint ? (
-        <div
-          className={`history-tooltip ${hoverPoint.tone} ${tooltipPlacement}`}
-          ref={tooltipRef}
-          style={tooltipStyle}
-        >
-          <strong>{hoverPoint.lineName}</strong>
-          <span>
-            {hoverPoint.tone === "demand" ? formatDemandRatio(hoverPoint.value) : <Money value={hoverPoint.value} />}
-          </span>
-          {hoverPoint.tone === "demand" ? (
-            <>
-              <small>Wanted {formatCompactQuantity(hoverPoint.quantity)}</small>
-              <small>Listed {formatCompactQuantity(hoverPoint.sellQuantity ?? 0)}</small>
-            </>
-          ) : (
-            <small>Quantity {hoverPoint.quantity.toLocaleString()}</small>
-          )}
-          <small>{formatHistoryTooltipDate(hoverPoint.time)}</small>
-          {hoverPoint.sampleCount > 1 ? (
-            <small>{hoverPoint.sampleCount.toLocaleString()} averaged samples</small>
-          ) : null}
-        </div>
-      ) : null}
-      <div className="chart-date-row">
-        {axisTicks.map((tick) => (
-          <span key={tick.time}>{tick.label}</span>
-        ))}
+      <div className="history-tooltip hidden" ref={tooltipRef} aria-hidden="true">
+        <strong data-history-tooltip-title />
+        <span data-history-tooltip-value />
+        <small data-history-tooltip-primary />
+        <small data-history-tooltip-secondary />
+        <small data-history-tooltip-date />
       </div>
     </div>
   );
+}
+
+function updateHistoryTooltipElement(
+  tooltip: HTMLDivElement | null,
+  point: {
+    lineName: string;
+    value: number;
+    quantity: number;
+    sellQuantity?: number;
+    time: number;
+    x: number;
+    y: number;
+    tone: "buy" | "sell" | "demand";
+  },
+  width: number,
+  height: number,
+) {
+  if (!tooltip) {
+    return;
+  }
+
+  const placement = point.y < 126 ? "below" : "above";
+  const alignment = point.x < 132 ? "align-start" : point.x > width - 132 ? "align-end" : "align-center";
+  tooltip.className = `history-tooltip ${point.tone} ${placement} ${alignment}`;
+  tooltip.style.left = `calc(${(point.x / width) * 100}% + ${10 - 20 * (point.x / width)}px)`;
+  tooltip.style.top = `calc(${(point.y / height) * 100}% + ${10 - 20 * (point.y / height)}px)`;
+  tooltip.style.setProperty(
+    "--history-tooltip-anchor",
+    alignment === "align-start" ? "18px" : alignment === "align-end" ? "calc(100% - 18px)" : "50%",
+  );
+  tooltip.setAttribute("aria-hidden", "false");
+
+  setTooltipText(tooltip, "[data-history-tooltip-title]", point.lineName);
+  const valueNode = tooltip.querySelector<HTMLElement>("[data-history-tooltip-value]");
+  if (valueNode) {
+    valueNode.hidden = false;
+    if (point.tone === "demand") {
+      valueNode.className = "";
+      valueNode.textContent = formatDemandRatio(point.value);
+    } else {
+      renderTooltipMoney(valueNode, point.value);
+    }
+  }
+
+  if (point.tone === "demand") {
+    setTooltipText(tooltip, "[data-history-tooltip-primary]", `Wanted ${formatCompactQuantity(point.quantity)}`);
+    setTooltipText(tooltip, "[data-history-tooltip-secondary]", `Listed ${formatCompactQuantity(point.sellQuantity ?? 0)}`);
+  } else {
+    setTooltipText(tooltip, "[data-history-tooltip-primary]", `Quantity ${point.quantity.toLocaleString()}`);
+    setTooltipText(tooltip, "[data-history-tooltip-secondary]", "");
+  }
+  setTooltipText(tooltip, "[data-history-tooltip-date]", formatHistoryTooltipDate(point.time));
+}
+
+function hideHistoryTooltipElement(tooltip: HTMLDivElement | null) {
+  if (!tooltip) {
+    return;
+  }
+
+  tooltip.className = "history-tooltip hidden";
+  tooltip.setAttribute("aria-hidden", "true");
+}
+
+function setTooltipText(root: HTMLElement, selector: string, value: string) {
+  const node = root.querySelector<HTMLElement>(selector);
+  if (node) {
+    node.textContent = value;
+    node.hidden = value.length === 0;
+  }
+}
+
+function renderTooltipMoney(node: HTMLElement, value: number) {
+  const safeValue = Math.max(0, Math.round(value));
+  const gold = Math.floor(safeValue / 10_000);
+  const silver = Math.floor((safeValue % 10_000) / 100);
+  const copper = safeValue % 100;
+
+  node.textContent = "";
+  node.className = "money";
+  if (gold > 0) {
+    node.appendChild(createTooltipCoin("gold", gold));
+  }
+  if (gold > 0 || silver > 0) {
+    node.appendChild(createTooltipCoin("silver", silver));
+  }
+  node.appendChild(createTooltipCoin("copper", copper));
+}
+
+function createTooltipCoin(kind: "gold" | "silver" | "copper", value: number) {
+  const coin = document.createElement("span");
+  coin.className = `coin ${kind}`;
+  const dot = document.createElement("span");
+  dot.className = "coin-dot";
+  coin.append(document.createTextNode(String(value)), dot);
+  return coin;
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -14167,7 +14707,7 @@ function buildChartPath(
   xFor: (time: number) => number,
   yFor: (value: number) => number,
 ): string {
-  return series
+  return [...series]
     .sort((left, right) => left.time - right.time)
     .map((point, index) => {
       const command = index === 0 ? "M" : "L";
@@ -14180,34 +14720,26 @@ function shouldAverageHistoryRange(range: HistoryRange): boolean {
   return range.id !== "24h";
 }
 
-function averageHistorySeriesToBuckets<T extends { time: number; value: number; quantity: number; sellQuantity?: number; sampleCount: number }>(
+function averageHistorySeriesToLocalDays<T extends { time: number; sourceTime?: number; value: number; quantity: number; sellQuantity?: number; sampleCount: number }>(
   series: T[],
-  xMin: number,
-  xMax: number,
   roundValue = true,
 ): T[] {
   if (series.length <= 1) {
     return series;
   }
 
-  const bucketCount = 24;
-  const span = Math.max(1, xMax - xMin);
-  const bucketStep = span / Math.max(1, bucketCount - 1);
   const buckets = new Map<number, T[]>();
 
   for (const point of series) {
-    const bucketIndex = Math.min(
-      bucketCount - 1,
-      Math.max(0, Math.round((point.time - xMin) / bucketStep)),
-    );
-    const bucket = buckets.get(bucketIndex) ?? [];
+    const bucketStart = getLocalHistoryDayBucketStart(point.time);
+    const bucket = buckets.get(bucketStart) ?? [];
     bucket.push(point);
-    buckets.set(bucketIndex, bucket);
+    buckets.set(bucketStart, bucket);
   }
 
   return Array.from(buckets.entries())
     .sort((left, right) => left[0] - right[0])
-    .map(([bucketIndex, bucket]) => {
+    .map(([bucketStart, bucket]) => {
       const totalSamples = bucket.reduce((sum, point) => sum + Math.max(1, point.sampleCount), 0);
       const weightedValue = bucket.reduce(
         (sum, point) => sum + point.value * Math.max(1, point.sampleCount),
@@ -14222,11 +14754,12 @@ function averageHistorySeriesToBuckets<T extends { time: number; value: number; 
         (sum, point) => sum + (point.sellQuantity ?? 0) * Math.max(1, point.sampleCount),
         0,
       );
-      const bucketTime = xMin + bucketIndex * bucketStep;
+      const bucketTime = getLocalHistoryDayBucketCenter(bucketStart);
 
       return {
         ...bucket[0],
         time: bucketTime,
+        sourceTime: bucketTime,
         value: roundValue ? Math.round(weightedValue / Math.max(1, totalSamples)) : weightedValue / Math.max(1, totalSamples),
         quantity: Math.round(weightedQuantity / Math.max(1, totalSamples)),
         ...(hasSellQuantity ? { sellQuantity: Math.round(weightedSellQuantity / Math.max(1, totalSamples)) } : {}),
@@ -14240,6 +14773,10 @@ function buildHistoryAxisTicks(
   xMax: number,
   range: HistoryRange,
 ): Array<{ time: number; label: string }> {
+  if (range.days) {
+    return buildLocalDayAxisTicks(range);
+  }
+
   const tickCount = 12;
   const span = Math.max(1, xMax - xMin);
 
@@ -14250,6 +14787,41 @@ function buildHistoryAxisTicks(
       label: formatHistoryAxisDate(time, range),
     };
   });
+}
+
+function buildLocalDayAxisTicks(range: HistoryRange): Array<{ time: number; label: string }> {
+  const bounds = getHistoryRangeBounds(range);
+  if (!bounds.start || !range.days) {
+    return [];
+  }
+
+  const stepDays = Math.max(1, Math.ceil(range.days / 12));
+  const ticks: Array<{ time: number; label: string }> = [];
+  const startDate = new Date(bounds.start);
+
+  for (let dayOffset = 0; dayOffset < range.days; dayOffset += stepDays) {
+    const tickDate = new Date(
+      startDate.getFullYear(),
+      startDate.getMonth(),
+      startDate.getDate() + dayOffset,
+      12,
+    );
+    ticks.push({
+      time: tickDate.getTime(),
+      label: formatHistoryAxisDate(tickDate.getTime(), range),
+    });
+  }
+
+  const todayTick = getLocalHistoryDayBucketCenter(getLocalHistoryDayBucketStart(Date.now()));
+  const lastTick = ticks[ticks.length - 1];
+  if (!lastTick || formatHistoryAxisDate(lastTick.time, range) !== formatHistoryAxisDate(todayTick, range)) {
+    ticks.push({
+      time: todayTick,
+      label: formatHistoryAxisDate(todayTick, range),
+    });
+  }
+
+  return ticks.slice(-12);
 }
 
 function buildHistoryValueTicks(yMin: number, yMax: number, tickCount: number): number[] {
@@ -14376,19 +14948,7 @@ function readMarketHistoryStore(): MarketHistoryPoint[] {
     const points = parsed.filter(isMarketHistoryPoint);
     const compacted = trimMarketHistoryStore(points);
 
-    const shouldRewrite =
-      compacted.length !== points.length ||
-      compacted.some((point, index) => {
-        const original = points[index];
-        return (
-          !original ||
-          point.recordedAt !== original.recordedAt ||
-          point.rollup !== original.rollup ||
-          point.sampleCount !== original.sampleCount
-        );
-      });
-
-    if (shouldRewrite) {
+    if (haveMarketHistoryPointsChanged(points, compacted)) {
       writeMarketHistoryStore(compacted);
     }
 
@@ -14396,6 +14956,30 @@ function readMarketHistoryStore(): MarketHistoryPoint[] {
   } catch {
     return [];
   }
+}
+
+function haveMarketHistoryPointsChanged(
+  previousPoints: MarketHistoryPoint[],
+  nextPoints: MarketHistoryPoint[],
+): boolean {
+  if (previousPoints.length !== nextPoints.length) {
+    return true;
+  }
+
+  return nextPoints.some((nextPoint, index) => {
+    const previousPoint = previousPoints[index];
+    return (
+      !previousPoint ||
+      nextPoint.itemId !== previousPoint.itemId ||
+      nextPoint.recordedAt !== previousPoint.recordedAt ||
+      nextPoint.rollup !== previousPoint.rollup ||
+      nextPoint.sampleCount !== previousPoint.sampleCount ||
+      nextPoint.buyPrice !== previousPoint.buyPrice ||
+      nextPoint.sellPrice !== previousPoint.sellPrice ||
+      nextPoint.buyQuantity !== previousPoint.buyQuantity ||
+      nextPoint.sellQuantity !== previousPoint.sellQuantity
+    );
+  });
 }
 
 function writeMarketHistoryStore(points: MarketHistoryPoint[]) {
@@ -14426,24 +15010,37 @@ function mergeMarketHistoryPoints(
   currentPoints: MarketHistoryPoint[],
   importedPoints: MarketHistoryPoint[],
 ): { points: MarketHistoryPoint[]; added: number; ignored: number } {
-  const currentDayKeys = new Set(
-    currentPoints
-      .map(getMarketHistoryDayKey)
-      .filter((key): key is string => Boolean(key)),
-  );
-  const importedDayKeys = new Set<string>();
   const merged = [...currentPoints];
+  const mergedIndexByKey = new Map<string, number>();
   let added = 0;
   let ignored = 0;
 
+  merged.forEach((point, index) => {
+    const key = getMarketHistoryMergeKey(point);
+    if (key) {
+      mergedIndexByKey.set(key, index);
+    }
+  });
+
   for (const point of importedPoints) {
-    const key = getMarketHistoryDayKey(point);
-    if (!key || currentDayKeys.has(key) || importedDayKeys.has(key)) {
+    const key = getMarketHistoryMergeKey(point);
+    if (!key) {
       ignored += 1;
       continue;
     }
 
-    importedDayKeys.add(key);
+    const existingIndex = mergedIndexByKey.get(key);
+    if (typeof existingIndex === "number") {
+      if (isRicherMarketHistoryPoint(point, merged[existingIndex])) {
+        merged[existingIndex] = point;
+        added += 1;
+      } else {
+        ignored += 1;
+      }
+      continue;
+    }
+
+    mergedIndexByKey.set(key, merged.length);
     merged.push(point);
     added += 1;
   }
@@ -14453,6 +15050,14 @@ function mergeMarketHistoryPoints(
     added,
     ignored,
   };
+}
+
+async function normalizePersistedMarketHistory() {
+  try {
+    await readAllMarketHistory();
+  } catch {
+    // History normalization is opportunistic; failed startup cleanup should not block the app.
+  }
 }
 
 function importMarketHistoryToLocalStore(importedPoints: MarketHistoryPoint[]): MarketHistoryImportResult {
@@ -14465,13 +15070,28 @@ function importMarketHistoryToLocalStore(importedPoints: MarketHistoryPoint[]): 
   };
 }
 
-function getMarketHistoryDayKey(point: MarketHistoryPoint): string | null {
+function getMarketHistoryMergeKey(point: MarketHistoryPoint, now = Date.now()): string | null {
   const time = new Date(point.recordedAt).getTime();
   if (!Number.isFinite(time)) {
     return null;
   }
 
-  return `${point.itemId}:${new Date(time).toISOString().slice(0, 10)}`;
+  const rollup = getMarketHistoryRollup(time, now);
+  const bucketStart =
+    rollup === "raw" ? getMarketHistoryHourlyBucketStart(time) : getMarketHistoryBucketStart(time, rollup);
+  return `${point.itemId}:${rollup}:${bucketStart}`;
+}
+
+function isRicherMarketHistoryPoint(candidate: MarketHistoryPoint, existing: MarketHistoryPoint): boolean {
+  const candidateSamples = Math.max(1, candidate.sampleCount ?? 1);
+  const existingSamples = Math.max(1, existing.sampleCount ?? 1);
+  if (candidateSamples !== existingSamples) {
+    return candidateSamples > existingSamples;
+  }
+
+  const candidateTime = new Date(candidate.recordedAt).getTime();
+  const existingTime = new Date(existing.recordedAt).getTime();
+  return Number.isFinite(candidateTime) && Number.isFinite(existingTime) && candidateTime > existingTime;
 }
 
 function trimMarketHistoryStore(points: MarketHistoryPoint[]): MarketHistoryPoint[] {
@@ -14479,7 +15099,7 @@ function trimMarketHistoryStore(points: MarketHistoryPoint[]): MarketHistoryPoin
   const groups = new Map<number, MarketHistoryPoint[]>();
 
   for (const point of compacted) {
-    if (!getMarketHistoryDayKey(point)) {
+    if (!getMarketHistoryMergeKey(point)) {
       continue;
     }
 
@@ -14514,7 +15134,6 @@ function compactMarketHistoryStore(points: MarketHistoryPoint[], now = Date.now(
 }
 
 function compactItemHistory(points: MarketHistoryPoint[], now: number): MarketHistoryPoint[] {
-  const rawPoints: MarketHistoryPoint[] = [];
   const buckets = new Map<string, MarketHistoryPoint[]>();
 
   for (const point of points) {
@@ -14524,16 +15143,8 @@ function compactItemHistory(points: MarketHistoryPoint[], now: number): MarketHi
     }
 
     const rollup = getMarketHistoryRollup(time, now);
-    if (rollup === "raw") {
-      rawPoints.push({
-        ...point,
-        rollup: "raw",
-        sampleCount: Math.max(1, point.sampleCount ?? 1),
-      });
-      continue;
-    }
-
-    const bucketStart = getMarketHistoryBucketStart(time, rollup);
+    const bucketStart =
+      rollup === "raw" ? getMarketHistoryHourlyBucketStart(time) : getMarketHistoryBucketStart(time, rollup);
     const bucketKey = `${point.itemId}:${rollup}:${bucketStart}`;
     const bucket = buckets.get(bucketKey) ?? [];
     bucket.push(point);
@@ -14545,12 +15156,12 @@ function compactItemHistory(points: MarketHistoryPoint[], now: number): MarketHi
     return averageMarketHistoryBucket(
       bucketPoints[0].itemId,
       Number(bucketStartText),
-      rollup as Exclude<MarketHistoryRollup, "raw">,
+      rollup as MarketHistoryRollup,
       bucketPoints,
     );
   });
 
-  return [...rawPoints, ...rolledPoints].sort(
+  return rolledPoints.sort(
     (left, right) => new Date(left.recordedAt).getTime() - new Date(right.recordedAt).getTime(),
   );
 }
@@ -14571,6 +15182,10 @@ function getMarketHistoryRollup(time: number, now: number): MarketHistoryRollup 
   }
 
   return "bimonth";
+}
+
+function getMarketHistoryHourlyBucketStart(time: number): number {
+  return Math.round(time / HOUR_MS) * HOUR_MS;
 }
 
 function getMarketHistoryBucketStart(time: number, rollup: Exclude<MarketHistoryRollup, "raw">): number {
@@ -14596,8 +15211,12 @@ function getMarketHistoryBucketStart(time: number, rollup: Exclude<MarketHistory
 
 function getMarketHistoryBucketRecordedAt(
   bucketStart: number,
-  rollup: Exclude<MarketHistoryRollup, "raw">,
+  rollup: MarketHistoryRollup,
 ): string {
+  if (rollup === "raw") {
+    return new Date(bucketStart).toISOString();
+  }
+
   const offset =
     rollup === "day"
       ? 12 * 60 * 60 * 1000
@@ -14613,10 +15232,15 @@ function getMarketHistoryBucketRecordedAt(
 function averageMarketHistoryBucket(
   itemId: number,
   bucketStart: number,
-  rollup: Exclude<MarketHistoryRollup, "raw">,
+  rollup: MarketHistoryRollup,
   points: MarketHistoryPoint[],
 ): MarketHistoryPoint {
-  const totals = points.reduce(
+  const sortedPoints = [...points].sort(
+    (left, right) => new Date(left.recordedAt).getTime() - new Date(right.recordedAt).getTime(),
+  );
+  const firstPoint = sortedPoints[0];
+  const lastPoint = sortedPoints[sortedPoints.length - 1];
+  const totals = sortedPoints.reduce(
     (sum, point) => {
       const weight = Math.max(1, point.sampleCount ?? 1);
       return {
@@ -14636,6 +15260,10 @@ function averageMarketHistoryBucket(
     },
   );
   const weight = Math.max(1, totals.weight);
+  const minValue = (key: keyof MarketHistoryPoint, fallbackKey: keyof MarketHistoryPoint) =>
+    Math.min(...sortedPoints.map((point) => Number(point[key] ?? point[fallbackKey])));
+  const maxValue = (key: keyof MarketHistoryPoint, fallbackKey: keyof MarketHistoryPoint) =>
+    Math.max(...sortedPoints.map((point) => Number(point[key] ?? point[fallbackKey])));
 
   return {
     itemId,
@@ -14644,6 +15272,18 @@ function averageMarketHistoryBucket(
     sellPrice: Math.round(totals.sellPrice / weight),
     buyQuantity: Math.round(totals.buyQuantity / weight),
     sellQuantity: Math.round(totals.sellQuantity / weight),
+    buyPriceOpen: firstPoint.buyPriceOpen ?? firstPoint.buyPrice,
+    buyPriceClose: lastPoint.buyPriceClose ?? lastPoint.buyPrice,
+    buyPriceMin: minValue("buyPriceMin", "buyPrice"),
+    buyPriceMax: maxValue("buyPriceMax", "buyPrice"),
+    sellPriceOpen: firstPoint.sellPriceOpen ?? firstPoint.sellPrice,
+    sellPriceClose: lastPoint.sellPriceClose ?? lastPoint.sellPrice,
+    sellPriceMin: minValue("sellPriceMin", "sellPrice"),
+    sellPriceMax: maxValue("sellPriceMax", "sellPrice"),
+    buyQuantityMin: minValue("buyQuantityMin", "buyQuantity"),
+    buyQuantityMax: maxValue("buyQuantityMax", "buyQuantity"),
+    sellQuantityMin: minValue("sellQuantityMin", "sellQuantity"),
+    sellQuantityMax: maxValue("sellQuantityMax", "sellQuantity"),
     rollup,
     sampleCount: weight,
   };
@@ -14673,11 +15313,10 @@ function isMarketHistoryPoint(value: unknown): value is MarketHistoryPoint {
   );
 }
 
-async function recordMarketHistorySnapshot(item: MarketItem): Promise<MarketHistoryPoint[]> {
-  const now = Date.now();
-  const nextPoint: MarketHistoryPoint = {
+function createMarketHistoryPoint(item: MarketItem, recordedAt = new Date().toISOString()): MarketHistoryPoint {
+  return {
     itemId: item.id,
-    recordedAt: new Date(now).toISOString(),
+    recordedAt,
     buyPrice: item.price.buys.unit_price,
     sellPrice: item.price.sells.unit_price,
     buyQuantity: item.price.buys.quantity,
@@ -14685,57 +15324,33 @@ async function recordMarketHistorySnapshot(item: MarketItem): Promise<MarketHist
     rollup: "raw",
     sampleCount: 1,
   };
-
-  if (window.gw2Desktop?.recordMarketHistory) {
-    try {
-      const points = await window.gw2Desktop.recordMarketHistory(nextPoint);
-      return points.filter(isMarketHistoryPoint);
-    } catch {
-      return recordMarketHistorySnapshotToLocalStore(item, nextPoint, now);
-    }
-  }
-
-  return recordMarketHistorySnapshotToLocalStore(item, nextPoint, now);
 }
 
-function recordMarketHistorySnapshotToLocalStore(
-  item: MarketItem,
-  nextPoint: MarketHistoryPoint,
-  now: number,
-): MarketHistoryPoint[] {
-  const store = readMarketHistoryStore();
-  const otherItems = store.filter((point) => point.itemId !== item.id);
-  const itemPoints = store
-    .filter((point) => point.itemId === item.id)
-    .sort((left, right) => new Date(left.recordedAt).getTime() - new Date(right.recordedAt).getTime());
-  const lastPoint = itemPoints[itemPoints.length - 1];
-
-  if (lastPoint) {
-    const lastTime = new Date(lastPoint.recordedAt).getTime();
-    const samePrice =
-      lastPoint.buyPrice === nextPoint.buyPrice &&
-      lastPoint.sellPrice === nextPoint.sellPrice &&
-      lastPoint.buyQuantity === nextPoint.buyQuantity &&
-      lastPoint.sellQuantity === nextPoint.sellQuantity;
-
-    if (samePrice && now - lastTime < 6 * 60 * 60 * 1000) {
-      return itemPoints;
-    }
-
-    if (now - lastTime < MARKET_HISTORY_REPLACE_WINDOW_MS) {
-      itemPoints[itemPoints.length - 1] = nextPoint;
-    } else {
-      itemPoints.push(nextPoint);
-    }
-  } else {
-    itemPoints.push(nextPoint);
+async function recordMarketHistorySnapshots(items: MarketItem[]): Promise<number> {
+  if (items.length === 0) {
+    return 0;
   }
 
-  const compactedStore = trimMarketHistoryStore([...otherItems, ...itemPoints]);
+  const recordedAt = new Date().toISOString();
+  const points = items.map((item) => createMarketHistoryPoint(item, recordedAt));
+
+  if (window.gw2Desktop?.recordMarketHistoryBatch) {
+    try {
+      const result = await window.gw2Desktop.recordMarketHistoryBatch(points);
+      return Math.max(0, Math.round(result.recorded ?? 0));
+    } catch {
+      recordMarketHistorySnapshotsToLocalStore(points);
+      return points.length;
+    }
+  }
+
+  recordMarketHistorySnapshotsToLocalStore(points);
+  return points.length;
+}
+
+function recordMarketHistorySnapshotsToLocalStore(points: MarketHistoryPoint[]) {
+  const compactedStore = trimMarketHistoryStore([...readMarketHistoryStore(), ...points]);
   writeMarketHistoryStore(compactedStore);
-  return compactedStore
-    .filter((point) => point.itemId === item.id)
-    .sort((left, right) => new Date(left.recordedAt).getTime() - new Date(right.recordedAt).getTime());
 }
 
 function filterMarketHistoryByRange(
@@ -14743,32 +15358,115 @@ function filterMarketHistoryByRange(
   range: HistoryRange,
 ): MarketHistoryPoint[] {
   const cutoff = getHistoryRangeCutoff(range);
-  if (!cutoff) {
+  const upperBound = getHistoryRangeUpperBound(range);
+  if (!cutoff && !upperBound) {
     return points;
   }
 
-  return points.filter((point) => new Date(point.recordedAt).getTime() >= cutoff);
+  return points.filter((point) => {
+    const time = new Date(point.recordedAt).getTime();
+    if (!Number.isFinite(time)) {
+      return false;
+    }
+
+    return (!cutoff || time >= cutoff) && (!upperBound || time <= upperBound);
+  });
+}
+
+function includePreviousMarketHistoryAnchor(
+  allPoints: MarketHistoryPoint[],
+  rangePoints: MarketHistoryPoint[],
+  range: HistoryRange,
+): MarketHistoryPoint[] {
+  const cutoff = getHistoryRangeCutoff(range);
+  if (!cutoff || rangePoints.length === 0) {
+    return rangePoints;
+  }
+
+  const sortedPoints = [...allPoints].sort(
+    (left, right) => new Date(left.recordedAt).getTime() - new Date(right.recordedAt).getTime(),
+  );
+  const previousPoint = sortedPoints.findLast((point) => {
+    const time = new Date(point.recordedAt).getTime();
+    return Number.isFinite(time) && time < cutoff;
+  });
+
+  if (!previousPoint) {
+    return rangePoints;
+  }
+
+  const firstRangePoint = rangePoints[0];
+  if (
+    previousPoint.itemId === firstRangePoint.itemId &&
+    previousPoint.recordedAt === firstRangePoint.recordedAt &&
+    previousPoint.rollup === firstRangePoint.rollup
+  ) {
+    return rangePoints;
+  }
+
+  return [previousPoint, ...rangePoints];
 }
 
 function filterChartPointsByRange(points: ChartPoint[], range: HistoryRange): ChartPoint[] {
   const cutoff = getHistoryRangeCutoff(range);
-  if (!cutoff) {
+  const upperBound = getHistoryRangeUpperBound(range);
+  if (!cutoff && !upperBound) {
     return points;
   }
 
-  return points.filter((point) => point.time >= cutoff);
+  return points.filter((point) => (!cutoff || point.time >= cutoff) && (!upperBound || point.time <= upperBound));
 }
 
 function getHistoryRangeCutoff(range: HistoryRange): number | null {
+  return getHistoryRangeBounds(range).start;
+}
+
+function getHistoryRangeUpperBound(range: HistoryRange): number | null {
+  return getHistoryRangeBounds(range).end;
+}
+
+function getHistoryRangeBounds(range: HistoryRange): { start: number | null; end: number | null } {
+  const now = new Date();
+
   if (range.hours) {
-    return Date.now() - range.hours * 60 * 60 * 1000;
+    const end = Date.now();
+    return {
+      start: end - range.hours * 60 * 60 * 1000,
+      end,
+    };
   }
 
   if (range.days) {
-    return Date.now() - range.days * 24 * 60 * 60 * 1000;
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (range.days - 1)).getTime();
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+    return {
+      start,
+      end,
+    };
   }
 
-  return null;
+  return {
+    start: null,
+    end: null,
+  };
+}
+
+function getLocalHistoryDayBucketStart(time: number): number {
+  const date = new Date(time);
+  const bucketSource =
+    date.getHours() === 0 &&
+    date.getMinutes() === 0 &&
+    date.getSeconds() === 0 &&
+    date.getMilliseconds() === 0
+      ? new Date(time - 1)
+      : date;
+
+  return new Date(bucketSource.getFullYear(), bucketSource.getMonth(), bucketSource.getDate()).getTime();
+}
+
+function getLocalHistoryDayBucketCenter(dayStart: number): number {
+  const date = new Date(dayStart);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12).getTime();
 }
 
 function buildMarketChartPoints(points: MarketHistoryPoint[]): ChartPoint[] {
@@ -15347,9 +16045,9 @@ function RecipeCard({
             </span>
           </span>
         </div>
-        <strong className={`recipe-profit ${guide.personalProfit > 0 ? "profit" : ""}`}>
+        <strong className={`recipe-profit ${guide.personalProfit > 0 ? "profit" : guide.personalProfit < 0 ? "loss" : ""}`}>
           <Money value={Math.abs(guide.personalProfit)} />
-          {guide.personalProfit >= 0 ? " profit" : " cost"}
+          {guide.personalProfit >= 0 ? " profit" : " loss"}
         </strong>
       </div>
 
@@ -15670,16 +16368,32 @@ function RecipeUsageSections({
   usedInRecipes,
   recipeUsageState,
   accountSnapshot,
+  catalog,
+  onOpenDetail,
 }: {
   outputRecipes: RecipeGuide[];
   usedInRecipes: RecipeGuide[];
   recipeUsageState: LoadState;
   accountSnapshot: AccountSnapshot | null;
+  catalog: MarketItem[];
+  onOpenDetail?: (item: Gw2Item) => void;
 }) {
-  const standardOutputs = outputRecipes.filter((guide) => !isMysticForgeRecipe(guide.recipe));
-  const standardUsedIn = usedInRecipes.filter((guide) => !isMysticForgeRecipe(guide.recipe));
-  const mysticOutputs = outputRecipes.filter((guide) => isMysticForgeRecipe(guide.recipe));
-  const mysticInputs = usedInRecipes.filter((guide) => isMysticForgeRecipe(guide.recipe));
+  const standardOutputs = useMemo(
+    () => outputRecipes.filter((guide) => !isMysticForgeRecipe(guide.recipe)),
+    [outputRecipes],
+  );
+  const standardUsedIn = useMemo(
+    () => usedInRecipes.filter((guide) => !isMysticForgeRecipe(guide.recipe)),
+    [usedInRecipes],
+  );
+  const mysticOutputs = useMemo(
+    () => outputRecipes.filter((guide) => isMysticForgeRecipe(guide.recipe)),
+    [outputRecipes],
+  );
+  const mysticInputs = useMemo(
+    () => usedInRecipes.filter((guide) => isMysticForgeRecipe(guide.recipe)),
+    [usedInRecipes],
+  );
 
   return (
     <section className="surface recipe-usage-section">
@@ -15688,82 +16402,215 @@ function RecipeUsageSections({
         <h3>Recipe Usage</h3>
       </div>
 
-      <details className="recipe-collapsible">
-        <summary>
-          <span>How to Make This Item</span>
-          <strong>{recipeUsageState === "loading" ? "Loading" : standardOutputs.length.toLocaleString()}</strong>
-        </summary>
-        {recipeUsageState === "loading" ? (
-          <SkeletonRows />
-        ) : standardOutputs.length > 0 ? (
-          <div className="recipe-list">
-            {standardOutputs.map((guide) => (
-              <RecipeCard key={`output-${guide.recipe.id}`} guide={guide} accountSnapshot={accountSnapshot} />
-            ))}
-          </div>
-        ) : (
-          <p className="muted-copy">No standard crafting recipe currently outputs this item.</p>
-        )}
-      </details>
+      <RecipeCollapsibleSection
+        title="How to Make This Item"
+        guides={standardOutputs}
+        state={recipeUsageState}
+        emptyText="No standard crafting recipe currently outputs this item."
+        keyPrefix="output"
+        accountSnapshot={accountSnapshot}
+        catalog={catalog}
+        onOpenDetail={onOpenDetail}
+      />
 
-      <details className="recipe-collapsible">
-        <summary>
-          <span>Recipes Using This Item</span>
-          <strong>{recipeUsageState === "loading" ? "Loading" : standardUsedIn.length.toLocaleString()}</strong>
-        </summary>
-        {recipeUsageState === "loading" ? (
-          <SkeletonRows />
-        ) : standardUsedIn.length > 0 ? (
-          <div className="recipe-list">
-            {standardUsedIn.map((guide) => (
-              <RecipeCard key={`used-${guide.recipe.id}`} guide={guide} accountSnapshot={accountSnapshot} />
-            ))}
-          </div>
-        ) : (
-          <p className="muted-copy">No standard crafting recipes currently list this item as an ingredient.</p>
-        )}
-      </details>
+      <RecipeCollapsibleSection
+        title="Recipes Using This Item"
+        guides={standardUsedIn}
+        state={recipeUsageState}
+        emptyText="No standard crafting recipes currently list this item as an ingredient."
+        keyPrefix="used"
+        accountSnapshot={accountSnapshot}
+        catalog={catalog}
+        onOpenDetail={onOpenDetail}
+      />
 
-      <details className="recipe-collapsible">
-        <summary>
-          <span>Mystic Forge Recipes</span>
-          <strong>{recipeUsageState === "loading" ? "Loading" : mysticOutputs.length.toLocaleString()}</strong>
-        </summary>
-        {recipeUsageState === "loading" ? (
-          <SkeletonRows />
-        ) : mysticOutputs.length > 0 ? (
-          <div className="recipe-list">
-            {mysticOutputs.map((guide) => (
-              <RecipeCard key={`mystic-output-${guide.recipe.id}`} guide={guide} accountSnapshot={accountSnapshot} />
-            ))}
-          </div>
-        ) : (
-          <p className="muted-copy">
-            No Mystic Forge recipe from the GW2 Wiki or official recipe data currently creates this item.
-          </p>
-        )}
-      </details>
+      <RecipeCollapsibleSection
+        title="Mystic Forge Recipes"
+        guides={mysticOutputs}
+        state={recipeUsageState}
+        emptyText="No Mystic Forge recipe from the GW2 Wiki or official recipe data currently creates this item."
+        keyPrefix="mystic-output"
+        accountSnapshot={accountSnapshot}
+        catalog={catalog}
+        onOpenDetail={onOpenDetail}
+      />
 
-      <details className="recipe-collapsible">
-        <summary>
-          <span>Used In Mystic Forge Recipes</span>
-          <strong>{recipeUsageState === "loading" ? "Loading" : mysticInputs.length.toLocaleString()}</strong>
-        </summary>
-        {recipeUsageState === "loading" ? (
-          <SkeletonRows />
-        ) : mysticInputs.length > 0 ? (
-          <div className="recipe-list">
-            {mysticInputs.map((guide) => (
-              <RecipeCard key={`mystic-input-${guide.recipe.id}`} guide={guide} accountSnapshot={accountSnapshot} />
-            ))}
-          </div>
-        ) : (
-          <p className="muted-copy">
-            No Mystic Forge recipe from the GW2 Wiki or official recipe data currently lists this item as an ingredient.
-          </p>
-        )}
-      </details>
+      <RecipeCollapsibleSection
+        title="Used In Mystic Forge Recipes"
+        guides={mysticInputs}
+        state={recipeUsageState}
+        emptyText="No Mystic Forge recipe from the GW2 Wiki or official recipe data currently lists this item as an ingredient."
+        keyPrefix="mystic-input"
+        accountSnapshot={accountSnapshot}
+        catalog={catalog}
+        onOpenDetail={onOpenDetail}
+      />
     </section>
+  );
+}
+
+function RecipeCollapsibleSection({
+  title,
+  guides,
+  state,
+  emptyText,
+  keyPrefix,
+  accountSnapshot,
+  catalog,
+  onOpenDetail,
+}: {
+  title: string;
+  guides: RecipeGuide[];
+  state: LoadState;
+  emptyText: string;
+  keyPrefix: string;
+  accountSnapshot: AccountSnapshot | null;
+  catalog: MarketItem[];
+  onOpenDetail?: (item: Gw2Item) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [visibleRecipeCount, setVisibleRecipeCount] = useState(RECIPE_USAGE_INITIAL_ROWS);
+  const visibleGuides = useMemo(
+    () => guides.slice(0, visibleRecipeCount),
+    [guides, visibleRecipeCount],
+  );
+  const remainingRecipeCount = Math.max(0, guides.length - visibleGuides.length);
+
+  useEffect(() => {
+    setVisibleRecipeCount(RECIPE_USAGE_INITIAL_ROWS);
+  }, [guides, state]);
+
+  return (
+    <details
+      className="recipe-collapsible"
+      onToggle={(event) => setIsOpen(event.currentTarget.open)}
+    >
+      <summary>
+        <span>{title}</span>
+        <strong>{state === "loading" ? "Loading" : guides.length.toLocaleString()}</strong>
+      </summary>
+      {isOpen ? (
+        state === "loading" ? (
+          <SkeletonRows />
+        ) : guides.length > 0 ? (
+          <>
+            <div className="recipe-list">
+              {visibleGuides.map((guide) => (
+                <RecipeSummaryRow
+                  key={`${keyPrefix}-${guide.recipe.id}`}
+                  guide={guide}
+                  accountSnapshot={accountSnapshot}
+                  catalog={catalog}
+                  onOpenDetail={onOpenDetail}
+                />
+              ))}
+            </div>
+            {remainingRecipeCount > 0 ? (
+              <button
+                type="button"
+                className="empty-action load-more-market"
+                onClick={() =>
+                  setVisibleRecipeCount((current) =>
+                    Math.min(guides.length, current + RECIPE_USAGE_BATCH_SIZE),
+                  )
+                }
+              >
+                <PackageSearch />
+                Show next {Math.min(RECIPE_USAGE_BATCH_SIZE, remainingRecipeCount).toLocaleString()} recipes
+              </button>
+            ) : null}
+          </>
+        ) : (
+          <p className="muted-copy">{emptyText}</p>
+        )
+      ) : null}
+    </details>
+  );
+}
+
+function RecipeSummaryRow({
+  guide,
+  accountSnapshot,
+  catalog,
+  onOpenDetail,
+}: {
+  guide: RecipeGuide;
+  accountSnapshot: AccountSnapshot | null;
+  catalog: MarketItem[];
+  onOpenDetail?: (item: Gw2Item) => void;
+}) {
+  const outputItem =
+    catalog.find((item) => item.id === guide.recipe.output_item_id) ??
+    (guide.recipe.output_item_id ? getStoredItem(guide.recipe.output_item_id) : undefined);
+  const outputName = outputItem?.name ?? "Recipe output";
+  const sourceLabel = getRecipeSourceLabel(guide.recipe);
+  const sourceUrl = getRecipeSourceUrl(guide.recipe, outputName);
+  const cost = accountSnapshot ? guide.personalCost : guide.marketCost;
+  const profit = accountSnapshot ? guide.personalProfit : guide.netProfit;
+  const canOpenDetail = Boolean(outputItem && onOpenDetail);
+  const openOutputDetail = () => {
+    if (outputItem && onOpenDetail) {
+      onOpenDetail(outputItem);
+    }
+  };
+
+  return (
+    <article
+      className={`recipe-summary-row ${canOpenDetail ? "is-clickable" : ""}`}
+      onClick={canOpenDetail ? openOutputDetail : undefined}
+      onKeyDown={
+        canOpenDetail
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openOutputDetail();
+              }
+            }
+          : undefined
+      }
+      role={canOpenDetail ? "button" : undefined}
+      tabIndex={canOpenDetail ? 0 : undefined}
+      title={canOpenDetail ? `Open ${outputName} detail page` : undefined}
+    >
+      <div className="recipe-summary-main">
+        <ItemIcon item={outputItem ?? { name: outputName }} />
+        <span className="item-copy">
+          <strong>{outputName}</strong>
+          <span>
+            {sourceLabel}
+            {guide.recipe.min_rating ? ` - Rating ${guide.recipe.min_rating}` : ""}
+            {guide.recipe.output_item_count > 1
+              ? ` - Crafts ${guide.recipe.output_item_count.toLocaleString()}`
+              : ""}
+          </span>
+        </span>
+      </div>
+      <span className="recipe-summary-meta">
+        <small>Ingredients</small>
+        <strong>{guide.ingredients.length.toLocaleString()}</strong>
+      </span>
+      <span className="recipe-summary-meta">
+        <small>{accountSnapshot ? "Personal cost" : "Crafting cost"}</small>
+        <strong>{accountSnapshot || cost > 0 ? <Money value={cost} /> : "Unavailable"}</strong>
+      </span>
+      <span className="recipe-summary-meta">
+        <small>{profit >= 0 ? "Profit" : "Loss"}</small>
+        <strong className={profit > 0 ? "profit" : profit < 0 ? "loss" : ""}>
+          {profit !== 0 ? <Money value={Math.abs(profit)} /> : <Money value={0} />}
+        </strong>
+      </span>
+      <a
+        className="recipe-summary-source"
+        href={sourceUrl}
+        target="_blank"
+        rel="noreferrer"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
+        Source
+        <ExternalLink />
+      </a>
+    </article>
   );
 }
 
@@ -15792,47 +16639,15 @@ function RoutePlanner({
       : bestRecipe.marketCost
     : Number.POSITIVE_INFINITY;
   const fullRecipeCost = bestRecipe ? bestRecipe.marketCost : Number.POSITIVE_INFINITY;
-  const hasEnoughGold = accountSnapshot ? accountSnapshot.coins >= buyCost : false;
-
-  let route = hasBuyPrice ? "Use the Trading Post" : "Follow direct acquisition";
-  let detail: ReactNode = (
-    <>
-      Buy cost <Money value={buyCost} />.
-    </>
-  );
-
-  if (!hasBuyPrice) {
-    detail = wikiGuide
-      ? `This item is not tradable. Use the wiki route for ${wikiGuide.title}.`
-      : "This item is not tradable. Use direct acquisition or crafting information when available.";
-  }
-
-  if (accountSnapshot && ownedCount > 0) {
-    route = "Already available";
-    detail = `${ownedCount.toLocaleString()} in account storage.`;
-  } else if (bestRecipe && (!hasBuyPrice || personalCraftCost < buyCost)) {
-    route = accountSnapshot ? "Craft using owned materials" : "Craft from market materials";
-    detail = accountSnapshot ? (
-      <>
-        Buy missing ingredients for <Money value={personalCraftCost} />. Full recipe cost{" "}
-        <Money value={fullRecipeCost} /> if buying every ingredient.
-      </>
-    ) : (
-      <>
-        Full recipe cost <Money value={fullRecipeCost} /> using market ingredients.
-      </>
-    );
-  } else if (accountSnapshot && hasBuyPrice && !hasEnoughGold) {
-    route = "Grind gold, then buy";
-    detail = (
-      <>
-        <Money value={Math.max(0, buyCost - accountSnapshot.coins)} /> remaining gold value.
-      </>
-    );
-  } else if (!hasBuyPrice && wikiGuide) {
-    route = "Follow direct acquisition";
-    detail = `Use the wiki route for ${wikiGuide.title}.`;
-  }
+  const hasRecipeSellValue = Boolean(bestRecipe && bestRecipe.outputValue > 0);
+  const recommendedRoute =
+    accountSnapshot && ownedCount > 0
+      ? "owned"
+      : bestRecipe && (!hasBuyPrice || personalCraftCost < buyCost)
+        ? "craft"
+        : hasBuyPrice
+          ? "buy"
+          : "direct";
 
   return (
     <section className="route-planner surface">
@@ -15840,38 +16655,53 @@ function RoutePlanner({
         <TrendingUp />
         <h3>Quickest Route</h3>
       </div>
-      <div className="route-grid">
-        <div className="route-result">
-          <span>{accountSnapshot ? "Personalized" : "Generalized"}</span>
-          <strong>{route}</strong>
-          <p>{detail}</p>
-        </div>
-        <div className="route-options">
-          {hasBuyPrice ? (
-            <RouteOption
-              label="Buy"
-              value={<Money value={buyCost} />}
-              active={!bestRecipe || buyCost <= personalCraftCost}
-            />
-          ) : null}
+      <div className="route-options">
+        {accountSnapshot && ownedCount > 0 ? (
           <RouteOption
-            label={accountSnapshot ? "Craft missing" : "Craft"}
-            value={bestRecipe ? <Money value={personalCraftCost} /> : "No recipe"}
-            active={Boolean(bestRecipe && (!hasBuyPrice || personalCraftCost < buyCost))}
+            label="Owned"
+            value={`${ownedCount.toLocaleString()} available`}
+            active={recommendedRoute === "owned"}
           />
-          {accountSnapshot && bestRecipe ? (
-            <RouteOption
-              label="Full recipe"
-              value={<Money value={fullRecipeCost} />}
-              active={false}
-            />
-          ) : null}
+        ) : null}
+        {hasBuyPrice ? (
           <RouteOption
-            label="Direct"
-            value={wikiGuide ? "Wiki route" : "Unknown"}
-            active={!item.price.sells.unit_price && Boolean(wikiGuide)}
+            label="Buy"
+            value={<Money value={buyCost} />}
+            active={recommendedRoute === "buy"}
           />
-        </div>
+        ) : null}
+        <RouteOption
+          label={accountSnapshot ? "Craft missing" : "Craft"}
+          value={bestRecipe ? <Money value={personalCraftCost} /> : "No recipe"}
+          active={recommendedRoute === "craft"}
+          detail={
+            bestRecipe ? (
+              <RouteProfitLine profit={bestRecipe.personalProfit} hasSellValue={hasRecipeSellValue} />
+            ) : null
+          }
+        />
+        {accountSnapshot && bestRecipe ? (
+          <RouteOption
+            label="Full recipe"
+            value={<Money value={fullRecipeCost} />}
+            active={false}
+            detail={<RouteProfitLine profit={bestRecipe.netProfit} hasSellValue={hasRecipeSellValue} />}
+          />
+        ) : null}
+        <RouteOption
+          label="Direct"
+          value={
+            wikiGuide ? (
+              <a className="route-option-link" href={wikiGuide.url} target="_blank" rel="noreferrer">
+                Wiki route
+                <ExternalLink />
+              </a>
+            ) : (
+              "Unknown"
+            )
+          }
+          active={recommendedRoute === "direct"}
+        />
       </div>
     </section>
   );
@@ -15881,16 +16711,42 @@ function RouteOption({
   label,
   value,
   active,
+  detail,
 }: {
   label: string;
   value: ReactNode;
   active: boolean;
+  detail?: ReactNode;
 }) {
   return (
     <div className={`route-option ${active ? "active" : ""}`}>
+      {active ? <span className="route-option-badge">Recommended</span> : null}
       <span>{label}</span>
       <strong>{value}</strong>
+      {detail ? <div className="route-option-detail">{detail}</div> : null}
     </div>
+  );
+}
+
+function RouteProfitLine({
+  profit,
+  hasSellValue,
+}: {
+  profit: number;
+  hasSellValue: boolean;
+}) {
+  if (!hasSellValue) {
+    return <span className="route-profit muted">No sell value</span>;
+  }
+
+  if (profit === 0) {
+    return <span className="route-profit muted">Break even</span>;
+  }
+
+  return (
+    <span className={`route-profit ${profit > 0 ? "profit" : "loss"}`}>
+      {profit > 0 ? "Profit" : "Loss"} <Money value={Math.abs(profit)} />
+    </span>
   );
 }
 

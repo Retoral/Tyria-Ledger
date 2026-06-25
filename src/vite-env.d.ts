@@ -9,6 +9,18 @@ interface DesktopMarketHistoryPoint {
   sellPrice: number;
   buyQuantity: number;
   sellQuantity: number;
+  buyPriceOpen?: number;
+  buyPriceClose?: number;
+  buyPriceMin?: number;
+  buyPriceMax?: number;
+  sellPriceOpen?: number;
+  sellPriceClose?: number;
+  sellPriceMin?: number;
+  sellPriceMax?: number;
+  buyQuantityMin?: number;
+  buyQuantityMax?: number;
+  sellQuantityMin?: number;
+  sellQuantityMax?: number;
   rollup?: "raw" | "day" | "week" | "month" | "bimonth";
   sampleCount?: number;
 }
@@ -103,7 +115,7 @@ declare global {
       deleteApiKey: () => Promise<boolean>;
       listMarketHistory: () => Promise<DesktopMarketHistoryPoint[]>;
       loadMarketHistoryForItem: (itemId: number) => Promise<DesktopMarketHistoryPoint[]>;
-      recordMarketHistory: (point: DesktopMarketHistoryPoint) => Promise<DesktopMarketHistoryPoint[]>;
+      recordMarketHistoryBatch: (points: DesktopMarketHistoryPoint[]) => Promise<{ recorded: number }>;
       importMarketHistory: (points: DesktopMarketHistoryPoint[]) => Promise<DesktopMarketHistoryImportResult>;
       migrateMarketHistory: (points: DesktopMarketHistoryPoint[]) => Promise<DesktopMarketHistoryImportResult>;
       loadMarketCatalog: (scopeId: string) => Promise<DesktopMarketCatalogResult | null>;

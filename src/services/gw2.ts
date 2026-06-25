@@ -5832,6 +5832,7 @@ function normalizeAccountWizardVaultListings(raw: unknown): AccountWizardVaultLi
       ? raw.listings
       : [];
   const lookup = createEmptyAccountWizardVaultListingLookup();
+  const itemMatches = new Map<number, AccountWizardVaultListingState[]>();
 
   for (const row of rows.filter(isRecord)) {
     const listingId =
@@ -5885,7 +5886,15 @@ function normalizeAccountWizardVaultListings(raw: unknown): AccountWizardVaultLi
     }
 
     if (itemId !== null) {
-      lookup.byItemId.set(itemId, state);
+      const matches = itemMatches.get(itemId) ?? [];
+      matches.push(state);
+      itemMatches.set(itemId, matches);
+    }
+  }
+
+  for (const [itemId, matches] of itemMatches.entries()) {
+    if (matches.length === 1) {
+      lookup.byItemId.set(itemId, matches[0]);
     }
   }
 

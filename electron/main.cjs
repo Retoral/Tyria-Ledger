@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, nativeTheme, safeStorage, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, nativeTheme, safeStorage, screen, shell } = require("electron");
 const fs = require("node:fs/promises");
 const fsSync = require("node:fs");
 const path = require("node:path");
@@ -14,13 +14,49 @@ const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 let mainWindow;
 let database;
 
-const MARKET_HISTORY_REPLACE_WINDOW_MS = 10 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 const MARKET_HISTORY_RAW_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MARKET_HISTORY_DAILY_WINDOW_MS = 31 * 24 * 60 * 60 * 1000;
 const MARKET_HISTORY_WEEKLY_WINDOW_MS = 8 * 31 * 24 * 60 * 60 * 1000;
 const MARKET_HISTORY_MAX_AGE_MS = 2 * 366 * 24 * 60 * 60 * 1000;
 const MAX_MARKET_HISTORY_POINTS_PER_ITEM = 800;
 const VALID_ROLLUPS = new Set(["raw", "day", "week", "month", "bimonth"]);
+const MARKET_HISTORY_COLUMNS = [
+  ["item_id", "INTEGER NOT NULL"],
+  ["recorded_at", "TEXT NOT NULL"],
+  ["buy_price", "INTEGER NOT NULL"],
+  ["sell_price", "INTEGER NOT NULL"],
+  ["buy_quantity", "INTEGER NOT NULL"],
+  ["sell_quantity", "INTEGER NOT NULL"],
+  ["buy_price_open", "INTEGER"],
+  ["buy_price_close", "INTEGER"],
+  ["buy_price_min", "INTEGER"],
+  ["buy_price_max", "INTEGER"],
+  ["sell_price_open", "INTEGER"],
+  ["sell_price_close", "INTEGER"],
+  ["sell_price_min", "INTEGER"],
+  ["sell_price_max", "INTEGER"],
+  ["buy_quantity_min", "INTEGER"],
+  ["buy_quantity_max", "INTEGER"],
+  ["sell_quantity_min", "INTEGER"],
+  ["sell_quantity_max", "INTEGER"],
+  ["rollup", "TEXT NOT NULL DEFAULT 'raw'"],
+  ["sample_count", "INTEGER NOT NULL DEFAULT 1"],
+];
+const MARKET_HISTORY_EXTRA_COLUMN_FALLBACKS = {
+  buy_price_open: "buy_price",
+  buy_price_close: "buy_price",
+  buy_price_min: "buy_price",
+  buy_price_max: "buy_price",
+  sell_price_open: "sell_price",
+  sell_price_close: "sell_price",
+  sell_price_min: "sell_price",
+  sell_price_max: "sell_price",
+  buy_quantity_min: "buy_quantity",
+  buy_quantity_max: "buy_quantity",
+  sell_quantity_min: "sell_quantity",
+  sell_quantity_max: "sell_quantity",
+};
 const UPDATE_REPOSITORY_OWNER = "Retoral";
 const UPDATE_REPOSITORY_NAME = "Tyria-Ledger";
 const UPDATE_API_URL = `https://api.github.com/repos/${UPDATE_REPOSITORY_OWNER}/${UPDATE_REPOSITORY_NAME}/releases/latest`;
@@ -28,6 +64,75 @@ const UPDATE_RELEASES_URL = `https://github.com/${UPDATE_REPOSITORY_OWNER}/${UPD
 const WINDOW_BACKGROUND_COLOR = "#090d0f";
 const WINDOW_CHROME_COLOR = "#151a1d";
 const WINDOW_CHROME_SYMBOL_COLOR = "#d6ddd8";
+const DEFAULT_WINDOW_BOUNDS = {
+  width: 1440,
+  height: 920,
+};
+const MIN_WINDOW_BOUNDS = {
+  width: 1120,
+  height: 720,
+};
+
+function windowStatePath() {
+  return path.join(app.getPath("userData"), "window-state.json");
+}
+
+function readWindowState() {
+  try {
+    const raw = fsSync.readFileSync(windowStatePath(), "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+
+    const width = Math.max(MIN_WINDOW_BOUNDS.width, Math.round(Number(parsed.width)));
+    const height = Math.max(MIN_WINDOW_BOUNDS.height, Math.round(Number(parsed.height)));
+    const x = Number.isFinite(parsed.x) ? Math.round(parsed.x) : undefined;
+    const y = Number.isFinite(parsed.y) ? Math.round(parsed.y) : undefined;
+    if (!Number.isFinite(width) || !Number.isFinite(height)) {
+      return null;
+    }
+
+    const restoredBounds = {
+      width,
+      height,
+      ...(Number.isFinite(x) && Number.isFinite(y) ? { x, y } : {}),
+    };
+
+    if (Number.isFinite(restoredBounds.x) && Number.isFinite(restoredBounds.y)) {
+      const display = screen.getDisplayMatching(restoredBounds);
+      const area = display.workArea;
+      const intersectsDisplay =
+        restoredBounds.x + restoredBounds.width > area.x &&
+        restoredBounds.x < area.x + area.width &&
+        restoredBounds.y + restoredBounds.height > area.y &&
+        restoredBounds.y < area.y + area.height;
+
+      if (!intersectsDisplay) {
+        delete restoredBounds.x;
+        delete restoredBounds.y;
+      }
+    }
+
+    return restoredBounds;
+  } catch {
+    return null;
+  }
+}
+
+function writeWindowState(window) {
+  if (!window || window.isDestroyed() || window.isMinimized() || window.isFullScreen()) {
+    return;
+  }
+
+  try {
+    const bounds = window.getBounds();
+    fsSync.mkdirSync(app.getPath("userData"), { recursive: true });
+    fsSync.writeFileSync(windowStatePath(), JSON.stringify(bounds), "utf8");
+  } catch {
+    // Window state is a convenience only.
+  }
+}
 
 function getWindowChromeOptions() {
   if (process.platform !== "win32" && process.platform !== "linux") {
@@ -71,78 +176,206 @@ function openDatabase() {
 
   fsSync.mkdirSync(app.getPath("userData"), { recursive: true });
   database = new DatabaseSync(databasePath());
-  database.exec(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA synchronous = NORMAL;
-    CREATE TABLE IF NOT EXISTS market_history (
-      item_id INTEGER NOT NULL,
-      recorded_at TEXT NOT NULL,
-      buy_price INTEGER NOT NULL,
-      sell_price INTEGER NOT NULL,
-      buy_quantity INTEGER NOT NULL,
-      sell_quantity INTEGER NOT NULL,
-      rollup TEXT NOT NULL DEFAULT 'raw',
-      sample_count INTEGER NOT NULL DEFAULT 1,
+  try {
+    database.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = NORMAL;
+      CREATE TABLE IF NOT EXISTS market_history (
+        item_id INTEGER NOT NULL,
+        recorded_at TEXT NOT NULL,
+        buy_price INTEGER NOT NULL,
+        sell_price INTEGER NOT NULL,
+        buy_quantity INTEGER NOT NULL,
+        sell_quantity INTEGER NOT NULL,
+        buy_price_open INTEGER,
+        buy_price_close INTEGER,
+        buy_price_min INTEGER,
+        buy_price_max INTEGER,
+        sell_price_open INTEGER,
+        sell_price_close INTEGER,
+        sell_price_min INTEGER,
+        sell_price_max INTEGER,
+        buy_quantity_min INTEGER,
+        buy_quantity_max INTEGER,
+        sell_quantity_min INTEGER,
+        sell_quantity_max INTEGER,
+        rollup TEXT NOT NULL DEFAULT 'raw',
+        sample_count INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (item_id, recorded_at, rollup)
+      );
+      CREATE INDEX IF NOT EXISTS idx_market_history_item_time
+        ON market_history (item_id, recorded_at);
+      CREATE INDEX IF NOT EXISTS idx_market_history_item_rollup_time
+        ON market_history (item_id, rollup, recorded_at);
+      CREATE TABLE IF NOT EXISTS market_catalog_cache (
+        scope_id TEXT PRIMARY KEY,
+        updated_at TEXT NOT NULL,
+        items_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS market_catalog_items (
+        scope_id TEXT NOT NULL,
+        item_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        rarity TEXT NOT NULL,
+        type TEXT NOT NULL,
+        sell_price INTEGER NOT NULL,
+        buy_price INTEGER NOT NULL,
+        sell_quantity INTEGER NOT NULL,
+        buy_quantity INTEGER NOT NULL,
+        updated_at TEXT NOT NULL,
+        item_json TEXT NOT NULL,
+        PRIMARY KEY (scope_id, item_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_market_catalog_items_scope_supply
+        ON market_catalog_items (scope_id, sell_quantity DESC, sell_price DESC);
+      CREATE INDEX IF NOT EXISTS idx_market_catalog_items_scope_name
+        ON market_catalog_items (scope_id, name COLLATE NOCASE);
+      CREATE TABLE IF NOT EXISTS recipe_cache (
+        recipe_id INTEGER PRIMARY KEY,
+        updated_at TEXT NOT NULL,
+        recipe_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS item_cache (
+        item_id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        rarity TEXT NOT NULL,
+        type TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        item_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_item_cache_name
+        ON item_cache (name COLLATE NOCASE);
+      CREATE TABLE IF NOT EXISTS wiki_container_cache (
+        cache_key TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        analysis_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS app_cache (
+        cache_key TEXT PRIMARY KEY,
+        updated_at TEXT NOT NULL,
+        value_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_app_cache_updated_at
+        ON app_cache (updated_at);
+    `);
+
+    ensureMarketHistorySchema(database);
+  } catch (error) {
+    try {
+      database.close();
+    } catch {
+      // The original schema error is more useful than a close failure.
+    }
+    database = null;
+    throw error;
+  }
+
+  return database;
+}
+
+function createMarketHistoryTableSql(tableName) {
+  return `
+    CREATE TABLE ${tableName} (
+      ${MARKET_HISTORY_COLUMNS.map(([name, definition]) => `${name} ${definition}`).join(",\n      ")},
       PRIMARY KEY (item_id, recorded_at, rollup)
-    );
+    )
+  `;
+}
+
+function createMarketHistoryIndexes(db) {
+  db.exec(`
     CREATE INDEX IF NOT EXISTS idx_market_history_item_time
       ON market_history (item_id, recorded_at);
     CREATE INDEX IF NOT EXISTS idx_market_history_item_rollup_time
       ON market_history (item_id, rollup, recorded_at);
-    CREATE TABLE IF NOT EXISTS market_catalog_cache (
-      scope_id TEXT PRIMARY KEY,
-      updated_at TEXT NOT NULL,
-      items_json TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS market_catalog_items (
-      scope_id TEXT NOT NULL,
-      item_id INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      rarity TEXT NOT NULL,
-      type TEXT NOT NULL,
-      sell_price INTEGER NOT NULL,
-      buy_price INTEGER NOT NULL,
-      sell_quantity INTEGER NOT NULL,
-      buy_quantity INTEGER NOT NULL,
-      updated_at TEXT NOT NULL,
-      item_json TEXT NOT NULL,
-      PRIMARY KEY (scope_id, item_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_market_catalog_items_scope_supply
-      ON market_catalog_items (scope_id, sell_quantity DESC, sell_price DESC);
-    CREATE INDEX IF NOT EXISTS idx_market_catalog_items_scope_name
-      ON market_catalog_items (scope_id, name COLLATE NOCASE);
-    CREATE TABLE IF NOT EXISTS recipe_cache (
-      recipe_id INTEGER PRIMARY KEY,
-      updated_at TEXT NOT NULL,
-      recipe_json TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS item_cache (
-      item_id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL,
-      rarity TEXT NOT NULL,
-      type TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      item_json TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_item_cache_name
-      ON item_cache (name COLLATE NOCASE);
-    CREATE TABLE IF NOT EXISTS wiki_container_cache (
-      cache_key TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      analysis_json TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS app_cache (
-      cache_key TEXT PRIMARY KEY,
-      updated_at TEXT NOT NULL,
-      value_json TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_app_cache_updated_at
-      ON app_cache (updated_at);
   `);
+}
 
-  return database;
+function getTableColumns(db, tableName) {
+  return db.prepare(`PRAGMA table_info(${tableName})`).all();
+}
+
+function getPrimaryKeyColumns(columns) {
+  return columns
+    .filter((column) => Number(column.pk) > 0)
+    .sort((left, right) => Number(left.pk) - Number(right.pk))
+    .map((column) => column.name);
+}
+
+function ensureMarketHistorySchema(db) {
+  let columns = getTableColumns(db, "market_history");
+  const existingNames = new Set(columns.map((column) => column.name));
+  const primaryKeyColumns = getPrimaryKeyColumns(columns);
+  const needsRebuild = primaryKeyColumns.join(",") !== "item_id,recorded_at,rollup";
+
+  if (needsRebuild) {
+    rebuildMarketHistoryTable(db, columns);
+    columns = getTableColumns(db, "market_history");
+  } else {
+    for (const [name, definition] of MARKET_HISTORY_COLUMNS) {
+      if (!existingNames.has(name)) {
+        db.exec(`ALTER TABLE market_history ADD COLUMN ${name} ${definition}`);
+      }
+    }
+  }
+
+  const finalColumns = getTableColumns(db, "market_history");
+  const finalNames = new Set(finalColumns.map((column) => column.name));
+  const missingColumns = MARKET_HISTORY_COLUMNS
+    .map(([name]) => name)
+    .filter((name) => !finalNames.has(name));
+  if (missingColumns.length) {
+    throw new Error(`Unable to upgrade market history database. Missing columns: ${missingColumns.join(", ")}`);
+  }
+
+  createMarketHistoryIndexes(db);
+}
+
+function rebuildMarketHistoryTable(db, columns) {
+  const existingNames = new Set(columns.map((column) => column.name));
+  const targetColumns = MARKET_HISTORY_COLUMNS.map(([name]) => name);
+  const selectExpressions = targetColumns.map((name) => {
+    if (name === "rollup") {
+      return existingNames.has("rollup") ? "COALESCE(rollup, 'raw') AS rollup" : "'raw' AS rollup";
+    }
+
+    if (name === "sample_count") {
+      return existingNames.has("sample_count") ? "COALESCE(sample_count, 1) AS sample_count" : "1 AS sample_count";
+    }
+
+    if (existingNames.has(name)) {
+      return name;
+    }
+
+    const fallback = MARKET_HISTORY_EXTRA_COLUMN_FALLBACKS[name];
+    if (fallback && existingNames.has(fallback)) {
+      return `${fallback} AS ${name}`;
+    }
+
+    throw new Error(`Unable to rebuild market history database. Missing source column: ${name}`);
+  });
+
+  db.exec("BEGIN");
+  try {
+    db.exec(`
+      DROP TABLE IF EXISTS market_history_migration_new;
+      ${createMarketHistoryTableSql("market_history_migration_new")};
+      INSERT OR REPLACE INTO market_history_migration_new (${targetColumns.join(", ")})
+        SELECT ${selectExpressions.join(", ")}
+        FROM market_history;
+      DROP TABLE market_history;
+      ALTER TABLE market_history_migration_new RENAME TO market_history;
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // Preserve the original migration error.
+    }
+    throw error;
+  }
 }
 
 function normalizeMarketScopeId(rawScopeId) {
@@ -297,6 +530,18 @@ function normalizeMarketHistoryPoint(value) {
   const sellPrice = Number(value.sellPrice ?? value.sell_price);
   const buyQuantity = Number(value.buyQuantity ?? value.buy_quantity);
   const sellQuantity = Number(value.sellQuantity ?? value.sell_quantity);
+  const buyPriceOpen = getOptionalHistoryNumber(value.buyPriceOpen ?? value.buy_price_open, buyPrice);
+  const buyPriceClose = getOptionalHistoryNumber(value.buyPriceClose ?? value.buy_price_close, buyPrice);
+  const buyPriceMin = getOptionalHistoryNumber(value.buyPriceMin ?? value.buy_price_min, buyPrice);
+  const buyPriceMax = getOptionalHistoryNumber(value.buyPriceMax ?? value.buy_price_max, buyPrice);
+  const sellPriceOpen = getOptionalHistoryNumber(value.sellPriceOpen ?? value.sell_price_open, sellPrice);
+  const sellPriceClose = getOptionalHistoryNumber(value.sellPriceClose ?? value.sell_price_close, sellPrice);
+  const sellPriceMin = getOptionalHistoryNumber(value.sellPriceMin ?? value.sell_price_min, sellPrice);
+  const sellPriceMax = getOptionalHistoryNumber(value.sellPriceMax ?? value.sell_price_max, sellPrice);
+  const buyQuantityMin = getOptionalHistoryNumber(value.buyQuantityMin ?? value.buy_quantity_min, buyQuantity);
+  const buyQuantityMax = getOptionalHistoryNumber(value.buyQuantityMax ?? value.buy_quantity_max, buyQuantity);
+  const sellQuantityMin = getOptionalHistoryNumber(value.sellQuantityMin ?? value.sell_quantity_min, sellQuantity);
+  const sellQuantityMax = getOptionalHistoryNumber(value.sellQuantityMax ?? value.sell_quantity_max, sellQuantity);
   const rollup = VALID_ROLLUPS.has(value.rollup) ? value.rollup : "raw";
   const sampleCount = Math.max(1, Math.round(Number(value.sampleCount ?? value.sample_count ?? 1)));
 
@@ -318,9 +563,26 @@ function normalizeMarketHistoryPoint(value) {
     sellPrice: Math.round(sellPrice),
     buyQuantity: Math.round(buyQuantity),
     sellQuantity: Math.round(sellQuantity),
+    buyPriceOpen,
+    buyPriceClose,
+    buyPriceMin,
+    buyPriceMax,
+    sellPriceOpen,
+    sellPriceClose,
+    sellPriceMin,
+    sellPriceMax,
+    buyQuantityMin,
+    buyQuantityMax,
+    sellQuantityMin,
+    sellQuantityMax,
     rollup,
     sampleCount,
   };
+}
+
+function getOptionalHistoryNumber(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.round(numeric) : Math.round(fallback);
 }
 
 function rowToMarketHistoryPoint(row) {
@@ -331,9 +593,25 @@ function rowToMarketHistoryPoint(row) {
     sellPrice: row.sell_price,
     buyQuantity: row.buy_quantity,
     sellQuantity: row.sell_quantity,
+    buyPriceOpen: row.buy_price_open ?? row.buy_price,
+    buyPriceClose: row.buy_price_close ?? row.buy_price,
+    buyPriceMin: row.buy_price_min ?? row.buy_price,
+    buyPriceMax: row.buy_price_max ?? row.buy_price,
+    sellPriceOpen: row.sell_price_open ?? row.sell_price,
+    sellPriceClose: row.sell_price_close ?? row.sell_price,
+    sellPriceMin: row.sell_price_min ?? row.sell_price,
+    sellPriceMax: row.sell_price_max ?? row.sell_price,
+    buyQuantityMin: row.buy_quantity_min ?? row.buy_quantity,
+    buyQuantityMax: row.buy_quantity_max ?? row.buy_quantity,
+    sellQuantityMin: row.sell_quantity_min ?? row.sell_quantity,
+    sellQuantityMax: row.sell_quantity_max ?? row.sell_quantity,
     rollup: row.rollup,
     sampleCount: row.sample_count,
   };
+}
+
+function getMarketHistoryHourlyBucketStart(time) {
+  return Math.round(time / HOUR_MS) * HOUR_MS;
 }
 
 function getMarketHistoryRollup(time, now) {
@@ -367,6 +645,10 @@ function getMarketHistoryBucketStart(time, rollup) {
 }
 
 function getMarketHistoryBucketRecordedAt(bucketStart, rollup) {
+  if (rollup === "raw") {
+    return new Date(bucketStart).toISOString();
+  }
+
   const offset =
     rollup === "day"
       ? 12 * 60 * 60 * 1000
@@ -380,7 +662,12 @@ function getMarketHistoryBucketRecordedAt(bucketStart, rollup) {
 }
 
 function averageMarketHistoryBucket(itemId, bucketStart, rollup, points) {
-  const totals = points.reduce(
+  const sortedPoints = [...points].sort(
+    (left, right) => new Date(left.recordedAt).getTime() - new Date(right.recordedAt).getTime(),
+  );
+  const firstPoint = sortedPoints[0];
+  const lastPoint = sortedPoints[sortedPoints.length - 1];
+  const totals = sortedPoints.reduce(
     (sum, point) => {
       const weight = Math.max(1, point.sampleCount ?? 1);
       return {
@@ -400,6 +687,10 @@ function averageMarketHistoryBucket(itemId, bucketStart, rollup, points) {
     },
   );
   const weight = Math.max(1, totals.weight);
+  const minValue = (key, fallbackKey) =>
+    Math.min(...sortedPoints.map((point) => Number(point[key] ?? point[fallbackKey])));
+  const maxValue = (key, fallbackKey) =>
+    Math.max(...sortedPoints.map((point) => Number(point[key] ?? point[fallbackKey])));
 
   return {
     itemId,
@@ -408,6 +699,18 @@ function averageMarketHistoryBucket(itemId, bucketStart, rollup, points) {
     sellPrice: Math.round(totals.sellPrice / weight),
     buyQuantity: Math.round(totals.buyQuantity / weight),
     sellQuantity: Math.round(totals.sellQuantity / weight),
+    buyPriceOpen: firstPoint.buyPriceOpen ?? firstPoint.buyPrice,
+    buyPriceClose: lastPoint.buyPriceClose ?? lastPoint.buyPrice,
+    buyPriceMin: minValue("buyPriceMin", "buyPrice"),
+    buyPriceMax: maxValue("buyPriceMax", "buyPrice"),
+    sellPriceOpen: firstPoint.sellPriceOpen ?? firstPoint.sellPrice,
+    sellPriceClose: lastPoint.sellPriceClose ?? lastPoint.sellPrice,
+    sellPriceMin: minValue("sellPriceMin", "sellPrice"),
+    sellPriceMax: maxValue("sellPriceMax", "sellPrice"),
+    buyQuantityMin: minValue("buyQuantityMin", "buyQuantity"),
+    buyQuantityMax: maxValue("buyQuantityMax", "buyQuantity"),
+    sellQuantityMin: minValue("sellQuantityMin", "sellQuantity"),
+    sellQuantityMax: maxValue("sellQuantityMax", "sellQuantity"),
     rollup,
     sampleCount: weight,
   };
@@ -434,18 +737,13 @@ function compactMarketHistoryPoints(points, now = Date.now()) {
   }
 
   return Array.from(byItem.values()).flatMap((itemPoints) => {
-    const rawPoints = [];
     const buckets = new Map();
 
     for (const point of itemPoints) {
       const time = new Date(point.recordedAt).getTime();
       const rollup = getMarketHistoryRollup(time, now);
-      if (rollup === "raw") {
-        rawPoints.push({ ...point, rollup: "raw", sampleCount: Math.max(1, point.sampleCount ?? 1) });
-        continue;
-      }
-
-      const bucketStart = getMarketHistoryBucketStart(time, rollup);
+      const bucketStart =
+        rollup === "raw" ? getMarketHistoryHourlyBucketStart(time) : getMarketHistoryBucketStart(time, rollup);
       const key = `${point.itemId}:${rollup}:${bucketStart}`;
       const bucket = buckets.get(key) ?? [];
       bucket.push(point);
@@ -457,7 +755,7 @@ function compactMarketHistoryPoints(points, now = Date.now()) {
       return averageMarketHistoryBucket(bucketPoints[0].itemId, Number(bucketStartText), rollup, bucketPoints);
     });
 
-    return [...rawPoints, ...rolledPoints]
+    return rolledPoints
       .sort((left, right) => new Date(left.recordedAt).getTime() - new Date(right.recordedAt).getTime())
       .slice(-MAX_MARKET_HISTORY_POINTS_PER_ITEM);
   });
@@ -472,9 +770,21 @@ function insertMarketHistoryPoints(db, points) {
       sell_price,
       buy_quantity,
       sell_quantity,
+      buy_price_open,
+      buy_price_close,
+      buy_price_min,
+      buy_price_max,
+      sell_price_open,
+      sell_price_close,
+      sell_price_min,
+      sell_price_max,
+      buy_quantity_min,
+      buy_quantity_max,
+      sell_quantity_min,
+      sell_quantity_max,
       rollup,
       sample_count
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   for (const point of points) {
@@ -485,10 +795,137 @@ function insertMarketHistoryPoints(db, points) {
       point.sellPrice,
       point.buyQuantity,
       point.sellQuantity,
+      point.buyPriceOpen ?? point.buyPrice,
+      point.buyPriceClose ?? point.buyPrice,
+      point.buyPriceMin ?? point.buyPrice,
+      point.buyPriceMax ?? point.buyPrice,
+      point.sellPriceOpen ?? point.sellPrice,
+      point.sellPriceClose ?? point.sellPrice,
+      point.sellPriceMin ?? point.sellPrice,
+      point.sellPriceMax ?? point.sellPrice,
+      point.buyQuantityMin ?? point.buyQuantity,
+      point.buyQuantityMax ?? point.buyQuantity,
+      point.sellQuantityMin ?? point.sellQuantity,
+      point.sellQuantityMax ?? point.sellQuantity,
       point.rollup ?? "raw",
       Math.max(1, point.sampleCount ?? 1),
     );
   }
+}
+
+function insertOrMergeMarketHistoryPoints(db, points) {
+  const upsert = db.prepare(`
+    INSERT INTO market_history (
+      item_id,
+      recorded_at,
+      buy_price,
+      sell_price,
+      buy_quantity,
+      sell_quantity,
+      buy_price_open,
+      buy_price_close,
+      buy_price_min,
+      buy_price_max,
+      sell_price_open,
+      sell_price_close,
+      sell_price_min,
+      sell_price_max,
+      buy_quantity_min,
+      buy_quantity_max,
+      sell_quantity_min,
+      sell_quantity_max,
+      rollup,
+      sample_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(item_id, recorded_at, rollup) DO UPDATE SET
+      buy_price = ROUND(
+        (market_history.buy_price * market_history.sample_count + excluded.buy_price * excluded.sample_count) /
+        CAST(market_history.sample_count + excluded.sample_count AS REAL)
+      ),
+      sell_price = ROUND(
+        (market_history.sell_price * market_history.sample_count + excluded.sell_price * excluded.sample_count) /
+        CAST(market_history.sample_count + excluded.sample_count AS REAL)
+      ),
+      buy_quantity = ROUND(
+        (market_history.buy_quantity * market_history.sample_count + excluded.buy_quantity * excluded.sample_count) /
+        CAST(market_history.sample_count + excluded.sample_count AS REAL)
+      ),
+      sell_quantity = ROUND(
+        (market_history.sell_quantity * market_history.sample_count + excluded.sell_quantity * excluded.sample_count) /
+        CAST(market_history.sample_count + excluded.sample_count AS REAL)
+      ),
+      buy_price_open = COALESCE(market_history.buy_price_open, market_history.buy_price),
+      buy_price_close = excluded.buy_price_close,
+      buy_price_min = MIN(COALESCE(market_history.buy_price_min, market_history.buy_price), excluded.buy_price_min),
+      buy_price_max = MAX(COALESCE(market_history.buy_price_max, market_history.buy_price), excluded.buy_price_max),
+      sell_price_open = COALESCE(market_history.sell_price_open, market_history.sell_price),
+      sell_price_close = excluded.sell_price_close,
+      sell_price_min = MIN(COALESCE(market_history.sell_price_min, market_history.sell_price), excluded.sell_price_min),
+      sell_price_max = MAX(COALESCE(market_history.sell_price_max, market_history.sell_price), excluded.sell_price_max),
+      buy_quantity_min = MIN(COALESCE(market_history.buy_quantity_min, market_history.buy_quantity), excluded.buy_quantity_min),
+      buy_quantity_max = MAX(COALESCE(market_history.buy_quantity_max, market_history.buy_quantity), excluded.buy_quantity_max),
+      sell_quantity_min = MIN(COALESCE(market_history.sell_quantity_min, market_history.sell_quantity), excluded.sell_quantity_min),
+      sell_quantity_max = MAX(COALESCE(market_history.sell_quantity_max, market_history.sell_quantity), excluded.sell_quantity_max),
+      sample_count = market_history.sample_count + excluded.sample_count
+  `);
+
+  for (const point of points) {
+    upsert.run(
+      point.itemId,
+      point.recordedAt,
+      point.buyPrice,
+      point.sellPrice,
+      point.buyQuantity,
+      point.sellQuantity,
+      point.buyPriceOpen ?? point.buyPrice,
+      point.buyPriceClose ?? point.buyPrice,
+      point.buyPriceMin ?? point.buyPrice,
+      point.buyPriceMax ?? point.buyPrice,
+      point.sellPriceOpen ?? point.sellPrice,
+      point.sellPriceClose ?? point.sellPrice,
+      point.sellPriceMin ?? point.sellPrice,
+      point.sellPriceMax ?? point.sellPrice,
+      point.buyQuantityMin ?? point.buyQuantity,
+      point.buyQuantityMax ?? point.buyQuantity,
+      point.sellQuantityMin ?? point.sellQuantity,
+      point.sellQuantityMax ?? point.sellQuantity,
+      point.rollup ?? "raw",
+      Math.max(1, point.sampleCount ?? 1),
+    );
+  }
+}
+
+function bucketMarketHistoryPoint(point, now = Date.now()) {
+  const time = new Date(point.recordedAt).getTime();
+  if (!Number.isFinite(time)) {
+    return null;
+  }
+
+  const rollup = getMarketHistoryRollup(time, now);
+  const bucketStart =
+    rollup === "raw" ? getMarketHistoryHourlyBucketStart(time) : getMarketHistoryBucketStart(time, rollup);
+  return averageMarketHistoryBucket(point.itemId, bucketStart, rollup, [point]);
+}
+
+function haveMarketHistoryPointsChanged(previousPoints, nextPoints) {
+  if (previousPoints.length !== nextPoints.length) {
+    return true;
+  }
+
+  return nextPoints.some((nextPoint, index) => {
+    const previousPoint = previousPoints[index];
+    return (
+      !previousPoint ||
+      nextPoint.itemId !== previousPoint.itemId ||
+      nextPoint.recordedAt !== previousPoint.recordedAt ||
+      nextPoint.rollup !== previousPoint.rollup ||
+      nextPoint.sampleCount !== previousPoint.sampleCount ||
+      nextPoint.buyPrice !== previousPoint.buyPrice ||
+      nextPoint.sellPrice !== previousPoint.sellPrice ||
+      nextPoint.buyQuantity !== previousPoint.buyQuantity ||
+      nextPoint.sellQuantity !== previousPoint.sellQuantity
+    );
+  });
 }
 
 function replaceAllMarketHistory(points) {
@@ -533,7 +970,7 @@ function getAllMarketHistory() {
     .map(rowToMarketHistoryPoint);
 
   const compacted = compactMarketHistoryPoints(rows);
-  if (compacted.length !== rows.length) {
+  if (haveMarketHistoryPointsChanged(rows, compacted)) {
     replaceAllMarketHistory(compacted);
   }
 
@@ -553,20 +990,35 @@ function getItemMarketHistory(_event, rawItemId) {
     .map(rowToMarketHistoryPoint);
   const compacted = compactMarketHistoryPoints(rows).filter((point) => point.itemId === Math.round(itemId));
 
-  if (compacted.length !== rows.length) {
+  if (haveMarketHistoryPointsChanged(rows, compacted)) {
     replaceItemMarketHistory(Math.round(itemId), compacted);
   }
 
   return compacted;
 }
 
-function getMarketHistoryDayKey(point) {
+function getMarketHistoryMergeKey(point, now = Date.now()) {
   const time = new Date(point.recordedAt).getTime();
   if (!Number.isFinite(time)) {
     return null;
   }
 
-  return `${point.itemId}:${new Date(time).toISOString().slice(0, 10)}`;
+  const rollup = getMarketHistoryRollup(time, now);
+  const bucketStart =
+    rollup === "raw" ? getMarketHistoryHourlyBucketStart(time) : getMarketHistoryBucketStart(time, rollup);
+  return `${point.itemId}:${rollup}:${bucketStart}`;
+}
+
+function isRicherMarketHistoryPoint(candidate, existing) {
+  const candidateSamples = Math.max(1, candidate.sampleCount ?? 1);
+  const existingSamples = Math.max(1, existing.sampleCount ?? 1);
+  if (candidateSamples !== existingSamples) {
+    return candidateSamples > existingSamples;
+  }
+
+  const candidateTime = new Date(candidate.recordedAt).getTime();
+  const existingTime = new Date(existing.recordedAt).getTime();
+  return Number.isFinite(candidateTime) && Number.isFinite(existingTime) && candidateTime > existingTime;
 }
 
 function importMarketHistory(_event, rawPoints) {
@@ -574,20 +1026,37 @@ function importMarketHistory(_event, rawPoints) {
   const importedPoints = Array.isArray(rawPoints)
     ? rawPoints.map(normalizeMarketHistoryPoint).filter(Boolean)
     : [];
-  const currentDayKeys = new Set(currentPoints.map(getMarketHistoryDayKey).filter(Boolean));
-  const importedDayKeys = new Set();
   const merged = [...currentPoints];
+  const mergedIndexByKey = new Map();
   let added = 0;
   let ignored = 0;
 
+  merged.forEach((point, index) => {
+    const key = getMarketHistoryMergeKey(point);
+    if (key) {
+      mergedIndexByKey.set(key, index);
+    }
+  });
+
   for (const point of importedPoints) {
-    const key = getMarketHistoryDayKey(point);
-    if (!key || currentDayKeys.has(key) || importedDayKeys.has(key)) {
+    const key = getMarketHistoryMergeKey(point);
+    if (!key) {
       ignored += 1;
       continue;
     }
 
-    importedDayKeys.add(key);
+    const existingIndex = mergedIndexByKey.get(key);
+    if (typeof existingIndex === "number") {
+      if (isRicherMarketHistoryPoint(point, merged[existingIndex])) {
+        merged[existingIndex] = point;
+        added += 1;
+      } else {
+        ignored += 1;
+      }
+      continue;
+    }
+
+    mergedIndexByKey.set(key, merged.length);
     merged.push(point);
     added += 1;
   }
@@ -600,38 +1069,34 @@ function importMarketHistory(_event, rawPoints) {
   };
 }
 
-function recordMarketHistory(_event, rawPoint) {
-  const point = normalizeMarketHistoryPoint(rawPoint);
-  if (!point) {
-    throw new Error("Invalid market history point.");
+function recordMarketHistoryBatch(_event, rawPoints) {
+  const points = Array.isArray(rawPoints)
+    ? rawPoints
+        .map(normalizeMarketHistoryPoint)
+        .filter(Boolean)
+        .map((point) => bucketMarketHistoryPoint(point))
+        .filter(Boolean)
+    : [];
+
+  if (points.length === 0) {
+    return {
+      recorded: 0,
+    };
   }
 
-  const itemPoints = getItemMarketHistory(null, point.itemId);
-  const lastPoint = itemPoints[itemPoints.length - 1];
-  const now = new Date(point.recordedAt).getTime();
-
-  if (lastPoint) {
-    const lastTime = new Date(lastPoint.recordedAt).getTime();
-    const samePrice =
-      lastPoint.buyPrice === point.buyPrice &&
-      lastPoint.sellPrice === point.sellPrice &&
-      lastPoint.buyQuantity === point.buyQuantity &&
-      lastPoint.sellQuantity === point.sellQuantity;
-
-    if (samePrice && now - lastTime < 6 * 60 * 60 * 1000) {
-      return itemPoints;
-    }
-
-    if (now - lastTime < MARKET_HISTORY_REPLACE_WINDOW_MS) {
-      itemPoints[itemPoints.length - 1] = point;
-    } else {
-      itemPoints.push(point);
-    }
-  } else {
-    itemPoints.push(point);
+  const db = openDatabase();
+  db.exec("BEGIN");
+  try {
+    insertOrMergeMarketHistoryPoints(db, points);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
   }
 
-  return replaceItemMarketHistory(point.itemId, itemPoints);
+  return {
+    recorded: points.length,
+  };
 }
 
 function loadMarketCatalog(_event, rawScopeId) {
@@ -1282,11 +1747,13 @@ async function openUpdateDownload(_event, updateInfo) {
 }
 
 function createWindow() {
+  const savedWindowBounds = readWindowState();
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 920,
-    minWidth: 1120,
-    minHeight: 720,
+    width: DEFAULT_WINDOW_BOUNDS.width,
+    height: DEFAULT_WINDOW_BOUNDS.height,
+    minWidth: MIN_WINDOW_BOUNDS.width,
+    minHeight: MIN_WINDOW_BOUNDS.height,
+    ...savedWindowBounds,
     backgroundColor: WINDOW_BACKGROUND_COLOR,
     darkTheme: true,
     icon: getWindowIconPath(),
@@ -1335,6 +1802,10 @@ function createWindow() {
     mainWindow.show();
   });
 
+  mainWindow.on("close", () => {
+    writeWindowState(mainWindow);
+  });
+
   if (isDev) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
@@ -1375,7 +1846,7 @@ if (!hasSingleInstanceLock) {
     ipcMain.handle("gw2-api-key:delete", deleteApiKey);
     ipcMain.handle("market-history:list", getAllMarketHistory);
     ipcMain.handle("market-history:item", getItemMarketHistory);
-    ipcMain.handle("market-history:record", recordMarketHistory);
+    ipcMain.handle("market-history:record-batch", recordMarketHistoryBatch);
     ipcMain.handle("market-history:import", importMarketHistory);
     ipcMain.handle("market-history:migrate", importMarketHistory);
     ipcMain.handle("market-catalog:load", loadMarketCatalog);

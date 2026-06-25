@@ -72,6 +72,27 @@ function requiredArtifactNames(releaseVersion) {
   ];
 }
 
+function ensureMacArtifactAliases(releaseVersion) {
+  const aliases = [
+    [`Tyria Ledger-${releaseVersion}.dmg`, `Tyria-Ledger-${releaseVersion}.dmg`],
+    [`Tyria Ledger-${releaseVersion}.dmg.blockmap`, `Tyria-Ledger-${releaseVersion}.dmg.blockmap`],
+    [`Tyria Ledger-${releaseVersion}-mac.zip`, `Tyria-Ledger-${releaseVersion}-mac.zip`],
+    [`Tyria Ledger-${releaseVersion}-mac.zip.blockmap`, `Tyria-Ledger-${releaseVersion}-mac.zip.blockmap`],
+    [`Tyria Ledger-${releaseVersion}-arm64.dmg`, `Tyria-Ledger-${releaseVersion}-arm64.dmg`],
+    [`Tyria Ledger-${releaseVersion}-arm64.dmg.blockmap`, `Tyria-Ledger-${releaseVersion}-arm64.dmg.blockmap`],
+    [`Tyria Ledger-${releaseVersion}-arm64-mac.zip`, `Tyria-Ledger-${releaseVersion}-arm64-mac.zip`],
+    [`Tyria Ledger-${releaseVersion}-arm64-mac.zip.blockmap`, `Tyria-Ledger-${releaseVersion}-arm64-mac.zip.blockmap`],
+  ];
+
+  for (const [sourceName, aliasName] of aliases) {
+    const sourcePath = path.join(releaseDir, sourceName);
+    const aliasPath = path.join(releaseDir, aliasName);
+    if (fs.existsSync(sourcePath) && !fs.existsSync(aliasPath)) {
+      fs.copyFileSync(sourcePath, aliasPath);
+    }
+  }
+}
+
 function validateEnvironment() {
   try {
     output("gh", ["--version"]);
@@ -104,6 +125,8 @@ function collectArtifacts() {
   if (!fs.existsSync(releaseDir)) {
     fail("The release directory does not exist yet. Build release artifacts first.");
   }
+
+  ensureMacArtifactAliases(version);
 
   const artifacts = requiredArtifactNames(version).map((name) => path.join(releaseDir, name));
   const missing = artifacts.filter((artifact) => !fs.existsSync(artifact));

@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld("gw2Desktop", {
   deleteApiKey: () => ipcRenderer.invoke("gw2-api-key:delete"),
   listMarketHistory: () => ipcRenderer.invoke("market-history:list"),
   loadMarketHistoryForItem: (itemId) => ipcRenderer.invoke("market-history:item", itemId),
-  recordMarketHistory: (point) => ipcRenderer.invoke("market-history:record", point),
+  recordMarketHistoryBatch: (points) => ipcRenderer.invoke("market-history:record-batch", points),
   importMarketHistory: (points) => ipcRenderer.invoke("market-history:import", points),
   migrateMarketHistory: (points) => ipcRenderer.invoke("market-history:migrate", points),
   loadMarketCatalog: (scopeId) => ipcRenderer.invoke("market-catalog:load", scopeId),

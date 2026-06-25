@@ -15,7 +15,7 @@
   --coin-silver-dot: #c6cbd0;
   --coin-copper-dot: #c77742;
   --titlebar-height: env(titlebar-area-height, 0px);
-  --app-viewport-height: calc(100vh - var(--titlebar-height));
+  --app-viewport-height: calc(100dvh - var(--titlebar-height));
 }
 
 * {
@@ -32,9 +32,9 @@ body,
 
 body {
   margin: 0;
-  min-width: 1180px;
-  min-height: 720px;
-  height: 100vh;
+  min-width: 0;
+  min-height: 0;
+  height: 100dvh;
   padding-top: var(--titlebar-height);
   background:
     radial-gradient(circle at 18% 6%, rgba(0, 124, 122, 0.16), transparent 32%),
@@ -42,7 +42,7 @@ body {
 }
 
 body::before {
-  content: "Tyria Ledger";
+  content: "";
   position: fixed;
   top: env(titlebar-area-y, 0);
   left: env(titlebar-area-x, 0);
@@ -396,10 +396,18 @@ svg {
 }
 
 .content-main {
+  display: block;
   min-width: 0;
   min-height: 0;
+  max-width: 100%;
+  height: 100%;
   padding: 0 18px 18px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.content-main > .market-workspace {
+  min-height: 0;
 }
 
 .content-shell .status-strip {
@@ -501,7 +509,7 @@ svg {
 }
 
 .coin.gold {
-  color: var(--money-text);
+  color: var(--coin-gold-dot);
 }
 
 .coin.gold .coin-dot {
@@ -509,7 +517,7 @@ svg {
 }
 
 .coin.silver {
-  color: var(--money-text);
+  color: var(--coin-silver-dot);
 }
 
 .coin.silver .coin-dot {
@@ -517,7 +525,7 @@ svg {
 }
 
 .coin.copper {
-  color: var(--money-text);
+  color: var(--coin-copper-dot);
 }
 
 .coin.copper .coin-dot {
@@ -1940,10 +1948,13 @@ svg {
 
 .market-workspace {
   display: grid;
-  grid-template-columns: minmax(560px, 0.95fr) minmax(430px, 1.05fr);
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
   gap: 14px;
   align-items: stretch;
-  height: calc(var(--app-viewport-height) - 88px);
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -1960,8 +1971,8 @@ svg {
 .topbar,
 .status-strip,
 .workspace {
-  width: min(100%, 1600px);
-  margin: 0 auto;
+  width: 100%;
+  margin: 0;
 }
 
 .topbar {
@@ -1989,7 +2000,10 @@ svg {
   position: sticky;
   top: 0;
   z-index: 8;
-  padding-right: 98px;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 34px 34px;
+  align-items: start;
+  padding-right: 12px;
 }
 
 .detail-close-button,
@@ -2013,6 +2027,11 @@ svg {
 
 .detail-favorite-button {
   right: 52px;
+}
+
+.item-title-row .detail-close-button,
+.item-title-row .detail-favorite-button {
+  position: static;
 }
 
 .detail-favorite-button.active {
@@ -2248,9 +2267,17 @@ p {
 .market-workspace .market-panel,
 .market-workspace .detail-panel {
   min-height: 0;
+  min-width: 0;
   max-height: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.market-workspace .market-panel {
+  display: flex;
+  flex-direction: column;
 }
 
 .market-panel,
@@ -2391,12 +2418,114 @@ p {
   font-size: 12px;
 }
 
+.market-filter-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #cfd5cc;
+  border-radius: 8px;
+  color: #3e463d;
+  background: #fff;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.filter-toggle svg {
+  width: 16px;
+  height: 16px;
+  color: #007c7a;
+}
+
+.filter-toggle strong {
+  display: inline-grid;
+  min-width: 20px;
+  min-height: 20px;
+  place-items: center;
+  border-radius: 999px;
+  color: #fff;
+  background: #007c7a;
+  font-size: 11px;
+}
+
+.filter-toggle.active {
+  border-color: #007c7a;
+  color: #003d3b;
+  background: #dff8f5;
+}
+
+.market-advanced-filters {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #cfd5cc;
+  border-radius: 8px;
+  background: #f7f8f5;
+}
+
+.market-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.market-filter-field {
+  display: grid;
+  gap: 6px;
+}
+
+.market-filter-field > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: #313830;
+}
+
+.market-filter-field small {
+  color: #69736b;
+  font-size: 11px;
+}
+
+.market-filter-field > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.market-filter-field input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid #cfd5cc;
+  border-radius: 6px;
+  color: #191a17;
+  background: #fff;
+  font-weight: 800;
+}
+
+.compact-reset {
+  min-height: 34px;
+}
+
 .item-list {
   display: grid;
   align-content: start;
   gap: 8px;
-  height: calc(var(--app-viewport-height) - 270px);
-  min-height: 480px;
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
   margin-top: 12px;
   padding-right: 4px;
   overflow: auto;
@@ -3171,7 +3300,7 @@ p {
 }
 
 .crafting-workspace {
-  grid-template-columns: minmax(640px, 1fr) minmax(430px, 0.9fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.95fr);
 }
 
 .craft-table-panel {
@@ -3477,6 +3606,18 @@ p {
 
 .detail-panel {
   min-width: 0;
+  overflow-x: hidden;
+}
+
+.item-detail {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.item-detail > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .empty-detail {
@@ -3505,6 +3646,10 @@ p {
   background: #fff;
 }
 
+.item-title-row > div {
+  min-width: 0;
+}
+
 .item-title-row .item-icon {
   width: 64px;
   height: 64px;
@@ -3519,11 +3664,13 @@ p {
   margin-top: 3px;
   font-size: 28px;
   line-height: 1.12;
+  overflow-wrap: anywhere;
 }
 
 .item-title-row p {
   margin-top: 4px;
   color: #687064;
+  overflow-wrap: anywhere;
 }
 
 .rarity {
@@ -3562,7 +3709,7 @@ p {
 
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
   gap: 10px;
 }
 
@@ -3614,6 +3761,14 @@ p {
 .metric-card.positive strong,
 .profit {
   color: #0b7a3b;
+}
+
+.loss {
+  color: #a34d32;
+}
+
+.loss .coin {
+  color: currentColor;
 }
 
 .metric-card.muted strong {
@@ -3671,6 +3826,8 @@ p {
   position: relative;
   display: grid;
   gap: 6px;
+  contain: layout;
+  overflow: visible;
   padding: 10px;
   border: 1px solid #dce3da;
   border-radius: 8px;
@@ -3679,6 +3836,7 @@ p {
 
 .history-chart {
   width: 100%;
+  max-width: 100%;
   min-height: 260px;
 }
 
@@ -3693,11 +3851,18 @@ p {
   font-weight: 800;
 }
 
+.chart-x-label {
+  fill: #687064;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .history-line {
   fill: none;
   stroke-width: 3;
   stroke-linecap: round;
   stroke-linejoin: round;
+  pointer-events: none;
 }
 
 .buy-line {
@@ -3720,8 +3885,9 @@ p {
 
 .history-dot-hit {
   cursor: pointer;
-  fill: transparent;
-  stroke: transparent;
+  fill: rgba(255, 255, 255, 0.001);
+  stroke: rgba(255, 255, 255, 0.001);
+  pointer-events: all;
 }
 
 .buy-dot,
@@ -3752,21 +3918,6 @@ p {
   fill: #b23b45;
 }
 
-.chart-date-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 22px 0 96px;
-  color: #687064;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.chart-date-row span {
-  min-width: max-content;
-  text-align: center;
-}
-
 .history-legend {
   display: flex;
   flex-wrap: wrap;
@@ -3776,27 +3927,44 @@ p {
   font-weight: 900;
 }
 
-.history-legend span {
+.history-legend button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
 }
 
-.history-legend span::before {
+.history-legend button::before {
   content: "";
   width: 10px;
   height: 10px;
+  flex: 0 0 auto;
   border-radius: 999px;
+}
+
+.history-legend button.disabled {
+  color: #7f8a85;
+  text-decoration: line-through;
+}
+
+.history-legend button.disabled::before {
+  background: #303b3f;
+  box-shadow: inset 0 0 0 1px #4b565a;
 }
 
 .history-tooltip {
   --history-tooltip-anchor: 50%;
   position: absolute;
-  z-index: 3;
+  z-index: 12;
   display: grid;
   gap: 5px;
-  min-width: 188px;
-  max-width: 260px;
+  box-sizing: border-box;
+  width: 220px;
   padding: 10px;
   border: 1px solid #303b3f;
   border-radius: 8px;
@@ -3804,6 +3972,32 @@ p {
   background: #101416;
   box-shadow: 0 16px 30px rgba(0, 0, 0, 0.32);
   pointer-events: none;
+  transform: translate(-50%, calc(-100% - 16px));
+  will-change: transform;
+}
+
+.history-tooltip.hidden {
+  visibility: hidden;
+}
+
+.history-tooltip.below {
+  transform: translate(-50%, 16px);
+}
+
+.history-tooltip.align-start {
+  transform: translate(0, calc(-100% - 16px));
+}
+
+.history-tooltip.below.align-start {
+  transform: translate(0, 16px);
+}
+
+.history-tooltip.align-end {
+  transform: translate(-100%, calc(-100% - 16px));
+}
+
+.history-tooltip.below.align-end {
+  transform: translate(-100%, 16px);
 }
 
 .history-tooltip::after {
@@ -4052,7 +4246,7 @@ p {
 
 .transaction-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
 }
 
@@ -4089,28 +4283,11 @@ p {
   border-color: #c8ded9;
 }
 
-.route-grid {
-  display: grid;
-  grid-template-columns: minmax(220px, 0.95fr) minmax(360px, 1.05fr);
-  gap: 12px;
-  align-items: stretch;
-}
-
-.route-result,
 .route-option {
   border-radius: 8px;
   background: #f3f8f6;
 }
 
-.route-result {
-  display: grid;
-  align-content: center;
-  gap: 6px;
-  min-height: 104px;
-  padding: 14px;
-}
-
-.route-result span,
 .route-option span {
   color: #687064;
   font-size: 12px;
@@ -4118,26 +4295,19 @@ p {
   text-transform: uppercase;
 }
 
-.route-result strong {
-  color: #006f6e;
-  font-size: 22px;
-}
-
-.route-result p {
-  color: #4f564d;
-}
-
 .route-options {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
   gap: 10px;
 }
 
 .route-option {
+  position: relative;
   display: grid;
-  align-content: center;
+  align-content: start;
   gap: 6px;
-  min-height: 104px;
+  min-width: 0;
+  min-height: 112px;
   padding: 12px;
   border: 1px solid #d8ddd4;
 }
@@ -4148,7 +4318,61 @@ p {
 }
 
 .route-option strong {
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.route-option-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #006f6e;
+  text-decoration: none;
+}
+
+.route-option-link svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.route-option-badge {
+  justify-self: start;
+  width: auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: #053936;
+  background: #89e7de;
+  font-size: 10px;
+  line-height: 1.1;
+}
+
+.route-option-detail {
+  min-width: 0;
+}
+
+.route-option .route-profit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  color: #687064;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.25;
+  text-transform: none;
+}
+
+.route-option .route-profit .money {
+  flex: 0 0 auto;
+}
+
+.route-option .route-profit.profit {
+  color: #0b7a3b;
+}
+
+.route-option .route-profit.loss {
+  color: #a34d32;
 }
 
 .vendor-source-section {
@@ -4294,9 +4518,21 @@ p {
   outline-offset: 3px;
 }
 
+.map-node .item-icon-frame {
+  width: 38px;
+  height: 38px;
+}
+
 .map-node .item-icon {
   width: 38px;
   height: 38px;
+}
+
+.map-node .item-favorite-badge {
+  top: -6px;
+  right: -6px;
+  width: 17px;
+  height: 17px;
 }
 
 .map-node strong {
@@ -4307,7 +4543,9 @@ p {
   white-space: nowrap;
 }
 
-.map-node span {
+.map-node .node-required-count,
+.map-node .node-owned-count,
+.map-node .node-total-price {
   width: 100%;
   color: #687064;
   font-size: 11px;
@@ -4814,6 +5052,86 @@ p {
   min-width: 0;
 }
 
+.recipe-summary-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(76px, auto) minmax(132px, auto) minmax(104px, auto) minmax(72px, auto);
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid #d8ddd4;
+  border-radius: 8px;
+  background: #f2f4ef;
+}
+
+.recipe-summary-row.is-clickable {
+  cursor: pointer;
+}
+
+.recipe-summary-row.is-clickable:focus-visible {
+  outline: 2px solid #76f3eb;
+  outline-offset: 2px;
+}
+
+.recipe-summary-main {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.recipe-summary-main .item-icon,
+.recipe-summary-main .item-icon-frame {
+  width: 42px;
+  height: 42px;
+}
+
+.recipe-summary-meta {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  min-width: 0;
+  text-align: right;
+}
+
+.recipe-summary-meta small {
+  color: #687064;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.recipe-summary-meta strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: max-content;
+  color: #191a17;
+  font-size: 13px;
+}
+
+.recipe-summary-source {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  color: #006f6e;
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.recipe-summary-source svg {
+  width: 14px;
+  height: 14px;
+}
+
 .ingredient-list {
   display: grid;
   gap: 6px;
@@ -4963,6 +5281,8 @@ body,
 	.key-row input,
 	.search-box,
 	.market-demand-filter button,
+	.filter-toggle,
+	.market-filter-field input,
 	.opening-input input,
 	.build-filter-panel select,
 	.craft-filter-panel select,
@@ -4986,9 +5306,34 @@ body,
   background: #06423f;
 }
 
+.filter-toggle.active {
+  border-color: #22d9cf;
+  color: #f3fffb;
+  background: #06423f;
+}
+
+.filter-toggle strong {
+  color: #061111;
+  background: #22d9cf;
+}
+
+.market-advanced-filters {
+  border-color: #303b3f;
+  background: rgba(15, 20, 23, 0.92);
+}
+
+.market-filter-field > span {
+  color: #f5faf7;
+}
+
+.market-filter-field small {
+  color: #9aa7a2;
+}
+
 .nav-search input::placeholder,
 .search-box input::placeholder,
-.key-row input::placeholder {
+.key-row input::placeholder,
+.market-filter-field input::placeholder {
   color: #687873;
 }
 
@@ -5044,13 +5389,11 @@ body,
 .ingredient-row small,
 .opportunity-row span,
 .history-title span,
-.chart-date-row,
 .history-legend,
 .history-note,
 .wiki-box p,
-.route-result span,
 .route-option span,
-.route-result p,
+.route-option .route-profit.muted,
 .node-info-head span,
 .node-info-grid span,
 .node-info p,
@@ -5117,6 +5460,7 @@ body,
 .detail-close-button,
 .detail-favorite-button,
 .mini-action,
+.filter-toggle,
 .update-status-button,
 .key-row button,
 .empty-action,
@@ -5159,6 +5503,7 @@ body,
 .icon-button:hover,
 .detail-close-button:hover,
 .mini-action:hover,
+.filter-toggle:hover,
 .history-controls button:hover,
 .range-tabs button:hover,
 .segment-row button:hover,
@@ -5234,7 +5579,6 @@ body,
 .market-workspace,
 .stat-grid,
 .split-section,
-.route-grid,
 .transaction-grid,
 .history-stats,
 .simulator-stats {
@@ -5255,7 +5599,6 @@ body,
 .order-row,
 .transaction-row,
 .history-event,
-.route-result,
 .route-option,
 .recipe-collapsible,
 .recipe-card,
@@ -5273,6 +5616,7 @@ body,
 .market-table-wrap,
 .craft-table-wrap,
 .slot-bag-facts > span,
+.recipe-summary-row,
 .recipe-source-note,
 .vendor-source-summary > div,
 .vendor-offer-list > div,
@@ -5284,7 +5628,8 @@ body,
 
 .meta-farm-title p,
 .meta-table td small,
-.money-range > span:not(.money) {
+.money-range > span:not(.money),
+.recipe-summary-meta small {
   color: #9aa7a2;
 }
 
@@ -5365,10 +5710,33 @@ body,
 .recipe-collapsible summary strong,
 .node-source-list a,
 .cost-line a,
+.recipe-summary-source,
+.route-option-link,
 .inline-link,
 .permanent-node-links a,
 .map-chip {
   color: #7ee9e2;
+}
+
+.recipe-summary-meta strong {
+  color: #edf5ef;
+}
+
+.route-option .route-option-badge {
+  color: #061111;
+  background: #7ee9e2;
+}
+
+.loss {
+  color: #ff8a5b;
+}
+
+.route-option .route-profit.profit {
+  color: #20d487;
+}
+
+.route-option .route-profit.loss {
+  color: #ff8a5b;
 }
 
 .confidence-high {
@@ -5394,6 +5762,7 @@ body,
 .achievement-row.active,
 .item-row:hover,
 .item-row.active,
+.recipe-summary-row:hover,
 .route-option.active,
 .ingredient-node:hover,
 .output-node:hover {
@@ -5533,7 +5902,8 @@ body,
   stroke: #303b3f;
 }
 
-.chart-y-label {
+.chart-y-label,
+.chart-x-label {
   fill: #9aa7a2;
 }
 
@@ -5594,7 +5964,7 @@ body,
 }
 
 .coin.gold {
-  color: var(--money-text);
+  color: var(--coin-gold-dot);
 }
 
 .coin.gold .coin-dot {
@@ -5602,7 +5972,7 @@ body,
 }
 
 .coin.silver {
-  color: var(--money-text);
+  color: var(--coin-silver-dot);
 }
 
 .coin.silver .coin-dot {
@@ -5610,11 +5980,15 @@ body,
 }
 
 .coin.copper {
-  color: var(--money-text);
+  color: var(--coin-copper-dot);
 }
 
 .coin.copper .coin-dot {
   background: var(--coin-copper-dot);
+}
+
+.loss .coin {
+  color: currentColor;
 }
 
 .spin {
@@ -5634,10 +6008,6 @@ body,
 }
 
 @media (max-width: 1240px) {
-  body {
-    min-width: 960px;
-  }
-
   .workspace {
     grid-template-columns: 330px minmax(460px, 1fr);
   }
