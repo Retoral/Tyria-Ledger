@@ -2446,6 +2446,10 @@ p {
   background: transparent;
 }
 
+.legendary-search {
+  margin-bottom: 12px;
+}
+
 .market-demand-filter {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2637,6 +2641,25 @@ p {
 
 .craft-profit-table {
   min-width: 980px;
+}
+
+.craft-opportunity-table {
+  min-width: 820px;
+  table-layout: fixed;
+}
+
+.craft-opportunity-table th:first-child,
+.craft-opportunity-table td:first-child {
+  width: 300px;
+}
+
+.craft-opportunity-table.compact-profit-columns th:nth-child(2),
+.craft-opportunity-table.compact-profit-columns td:nth-child(2) {
+  width: 130px;
+}
+
+.craft-opportunity-table .table-item-cell {
+  min-width: 0;
 }
 
 .market-table th,
@@ -3821,8 +3844,49 @@ p {
   color: #0b7a3b;
 }
 
+.metric-card.negative strong,
 .loss {
   color: #a34d32;
+}
+
+.fee-note {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.fee-note .money {
+  font-size: inherit;
+}
+
+.seller-price {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: max-content;
+}
+
+.seller-price > .money {
+  width: max-content;
+}
+
+.seller-price .fee-note {
+  margin-top: 0;
+}
+
+.recipe-profit .fee-note,
+.route-profit .fee-note {
+  flex-basis: 100%;
+  justify-content: flex-end;
+  margin-top: 0;
 }
 
 .loss .coin {

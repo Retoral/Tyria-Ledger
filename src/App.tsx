@@ -99,6 +99,7 @@ import type {
   Gw2Achievement,
   Gw2Item,
   Gw2Map,
+  Gw2Recipe,
   ItemTransactions,
   MarketItem,
   PermanentGatheringNode,
@@ -671,6 +672,7 @@ interface SalvageEstimateRow {
   purchaseCost: number;
   directSellNet: number;
   salvageValue: number;
+  salvageFee: number;
   buySalvageProfit: number;
   salvageInsteadOfSell: number;
   outputs: SalvageOutputEstimate[];
@@ -724,6 +726,10 @@ type WizardVaultSectionFilter = WizardVaultObjectiveSection["id"];
 type WizardVaultTrackFilter = "all" | "PvE" | "PvP" | "WvW";
 
 const DEFAULT_QUERY = "";
+const TRADING_POST_LISTING_FEE_RATE = 0.05;
+const TRADING_POST_EXCHANGE_FEE_RATE = 0.1;
+const TRADING_POST_FEE_RATE = TRADING_POST_LISTING_FEE_RATE + TRADING_POST_EXCHANGE_FEE_RATE;
+const TRADING_POST_NET_RATE = 1 - TRADING_POST_FEE_RATE;
 const MARKET_HISTORY_STORAGE_KEY = "tyria-ledger.market-history.v1";
 const FARM_TRACKER_STORAGE_KEY = "tyria-ledger.farm-tracker.v1";
 const FARM_TRACKER_TRACK_LOOT_STORAGE_KEY = "tyria-ledger.farm-tracker.track-loot.v1";
@@ -4778,7 +4784,7 @@ async function loadCachedMarketCatalog(
         continue;
       }
 
-      const items = cached.items.filter(isCachedMarketItem);
+      const items = cached.items.filter(isCachedMarketItem).map(normalizeMarketItemPricing);
       if (items.length === 0) {
         continue;
       }
@@ -4810,25 +4816,39 @@ async function saveCachedMarketCatalog(scopeId: MarketScopeId, items: MarketItem
 }
 
 function mergeMarketItemMetadata(next: MarketItem, previous?: MarketItem): MarketItem {
+  const normalizedNext = normalizeMarketItemPricing(next);
+
   if (!previous) {
-    return next;
+    return normalizedNext;
   }
 
   return {
     ...previous,
-    ...next,
-    icon: next.icon || previous.icon,
-    description: next.description ?? previous.description,
-    chat_link: next.chat_link ?? previous.chat_link,
-    details: next.details ?? previous.details,
-    default_skin: next.default_skin ?? previous.default_skin,
-    flags: next.flags ?? previous.flags,
-    game_types: next.game_types ?? previous.game_types,
-    restrictions: next.restrictions ?? previous.restrictions,
-    price: next.price,
-    netSellPrice: next.netSellPrice,
-    spread: next.spread,
-    spreadPercent: next.spreadPercent,
+    ...normalizedNext,
+    icon: normalizedNext.icon || previous.icon,
+    description: normalizedNext.description ?? previous.description,
+    chat_link: normalizedNext.chat_link ?? previous.chat_link,
+    details: normalizedNext.details ?? previous.details,
+    default_skin: normalizedNext.default_skin ?? previous.default_skin,
+    flags: normalizedNext.flags ?? previous.flags,
+    game_types: normalizedNext.game_types ?? previous.game_types,
+    restrictions: normalizedNext.restrictions ?? previous.restrictions,
+    price: normalizedNext.price,
+    netSellPrice: normalizedNext.netSellPrice,
+    spread: normalizedNext.spread,
+    spreadPercent: normalizedNext.spreadPercent,
+  };
+}
+
+function normalizeMarketItemPricing(item: MarketItem): MarketItem {
+  const netSellPrice = getTradingPostNetValue(item.price.sells.unit_price);
+  const spread = getMarketNetSpread(item);
+
+  return {
+    ...item,
+    netSellPrice,
+    spread,
+    spreadPercent: item.price.buys.unit_price > 0 ? (spread / item.price.buys.unit_price) * 100 : 0,
   };
 }
 
@@ -5442,7 +5462,7 @@ function buildOwnedItemRows(
     .map(([id, count]) => {
       const item = accountItems.get(id) ?? getStoredItem(id);
       const price = getStoredPrice(id);
-      const value = price?.buys.unit_price ? Math.floor(price.buys.unit_price * count * 0.85) : 0;
+      const value = price?.buys.unit_price ? getTradingPostNetValue(price.buys.unit_price, count) : 0;
       const materialCount = materialCounts.get(id) ?? 0;
 
       return {
@@ -7432,7 +7452,7 @@ function MarketPage({
         ),
       sell: (left, right) => compareNumberValue(left.price.sells.unit_price, right.price.sells.unit_price),
       buy: (left, right) => compareNumberValue(left.price.buys.unit_price, right.price.buys.unit_price),
-      spread: (left, right) => compareNumberValue(left.spread, right.spread),
+      spread: (left, right) => compareNumberValue(getMarketNetSpread(left), getMarketNetSpread(right)),
       supply: (left, right) => compareNumberValue(left.price.sells.quantity, right.price.sells.quantity),
     },
   );
@@ -7567,7 +7587,9 @@ function MarketPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleItems.map((item) => (
+                  {visibleItems.map((item) => {
+                    const netSpread = getMarketNetSpread(item);
+                    return (
                     <tr
                       key={item.id}
                       className={`market-row ${selectedItem?.id === item.id ? "active" : ""}`}
@@ -7592,14 +7614,15 @@ function MarketPage({
                           {formatCompactQuantity(item.price.buys.quantity)} wanted / {formatCompactQuantity(item.price.sells.quantity)} listed
                         </small>
                       </td>
-                      <td><Money value={item.price.sells.unit_price} /></td>
+                      <td><SellerPrice value={item.price.sells.unit_price} /></td>
                       <td><Money value={item.price.buys.unit_price} /></td>
-                      <td className={item.spread > 0 ? "profit" : "muted-money"}>
-                        <Money value={Math.abs(item.spread)} />
+                      <td className={netSpread > 0 ? "profit" : netSpread < 0 ? "loss" : "muted-money"}>
+                        <Money value={Math.abs(netSpread)} />
                       </td>
                       <td>{item.price.sells.quantity.toLocaleString()}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -7928,6 +7951,7 @@ interface OpenableBagGuide {
 
 interface OpenableBagValue {
   revenue: number;
+  fee: number;
   profit: number | null;
   bestChoice: {
     name: string;
@@ -8269,7 +8293,12 @@ function OpenableBagsPage({
                       {!row.isTradable
                         ? "Not tradable"
                         : row.value.profit !== null
-                          ? <Money value={Math.abs(row.value.profit)} />
+                          ? (
+                            <>
+                              <Money value={Math.abs(row.value.profit)} />
+                              <FeeNote fee={row.value.fee} />
+                            </>
+                          )
                           : "Unknown"}
                     </td>
                     <td>
@@ -8353,6 +8382,7 @@ function estimateOpenableBagValue(
     const fallbackRevenue = item.netSellPrice || item.price.buys.unit_price || 0;
     return {
       revenue: 0,
+      fee: 0,
       profit: null,
       bestChoice: null,
       matchedRows: fallbackRevenue ? 1 : 0,
@@ -8380,6 +8410,10 @@ function estimateOpenableBagValue(
   const directStats = summarizeDropValues(valuedDrops, 1, "direct");
   const salvageStats = summarizeDropValues(valuedDrops, 1, "salvage");
   const revenue = Math.max(directStats.avg, salvageStats.avg);
+  const fee = Math.max(
+    summarizeDropFees(valuedDrops, 1, "direct").avg,
+    summarizeDropFees(valuedDrops, 1, "salvage").avg,
+  );
   const marketCost = item.price.sells.unit_price || 0;
   const bestChoice = valuedDrops
     .filter((row) => row.directUnitValue > 0)
@@ -8387,6 +8421,7 @@ function estimateOpenableBagValue(
 
   return {
     revenue,
+    fee,
     profit: revenue > 0 && marketCost > 0 ? revenue - marketCost : null,
     bestChoice: bestChoice
       ? {
@@ -9650,7 +9685,9 @@ function MysticForgePage({
                 </tr>
               </thead>
               <tbody>
-                {sortedRows.map((row) => (
+                {sortedRows.map((row) => {
+                  const grossOutputValue = getRecipeOutputGrossValue(row.guide.recipe);
+                  return (
                   <tr
                     key={row.output.id}
                     className={selectedItem?.id === row.output.id ? "selected-row" : ""}
@@ -9679,11 +9716,13 @@ function MysticForgePage({
                       {row.guide.ingredients.length.toLocaleString()}
                       <small>{row.ingredientCount.toLocaleString()} total items</small>
                     </td>
-                    <td>{row.guide.outputValue > 0 ? <Money value={row.guide.outputValue} /> : "No TP value"}</td>
+                    <td>{grossOutputValue > 0 ? <SellerPrice value={grossOutputValue} /> : "No TP value"}</td>
                     <td>{row.guide.marketCost > 0 ? <Money value={row.guide.marketCost} /> : "Unknown"}</td>
                     <td className={row.guide.netProfit > 0 ? "profit" : row.guide.netProfit < 0 ? "loss" : "muted-money"}>
                       {row.guide.marketCost > 0 && row.guide.outputValue > 0
-                        ? <Money value={Math.abs(row.guide.netProfit)} />
+                        ? (
+                          <Money value={Math.abs(row.guide.netProfit)} />
+                        )
                         : "-"}
                     </td>
                     <td>
@@ -9702,7 +9741,8 @@ function MysticForgePage({
                       )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -9885,7 +9925,7 @@ function CraftProfitTable({
 
   return (
     <div className="craft-table-wrap">
-      <table className="craft-profit-table">
+      <table className={`craft-profit-table craft-opportunity-table ${hideQuantityAndPerItem ? "compact-profit-columns" : ""}`}>
         <thead>
           <tr>
             {renderHeader("name", "Name")}
@@ -9922,13 +9962,16 @@ function CraftProfitTable({
                     {formatCompactQuantity(buyQuantity)} wanted / {formatCompactQuantity(sellQuantity)} listed
                   </small>
                 </td>
-                {!hideQuantityAndPerItem ? <td className="profit"><Money value={profitPerItem} /></td> : null}
-                <td className="profit"><Money value={opportunity.marketProfit} /></td>
-                <td><Money value={opportunity.marketCost} /></td>
-                <td>
-                  <Money value={opportunity.outputValue} />
-                  <small>gross <Money value={grossPrice * quantity} /></small>
+                {!hideQuantityAndPerItem ? (
+                  <td className="profit">
+                    <Money value={profitPerItem} />
+                  </td>
+                ) : null}
+                <td className="profit">
+                  <Money value={opportunity.marketProfit} />
                 </td>
+                <td><Money value={opportunity.marketCost} /></td>
+                <td><SellerPrice value={grossPrice * quantity} /></td>
                 {!compact ? (
                   <td>
                     <span>{recipeLabel}</span>
@@ -10082,7 +10125,7 @@ function getMarketFilterValue(item: MarketItem, key: MarketFilterRangeKey): numb
   }
 
   if (key === "spread") {
-    return item.spread;
+    return getMarketNetSpread(item);
   }
 
   if (key === "demandRatio") {
@@ -10242,17 +10285,44 @@ function LegendaryReadinessPage({
   onSelectItem: (item: Gw2Item) => void;
 }) {
   const legendaries = analysis?.legendaries ?? [];
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredLegendaries = useMemo(
+    () =>
+      normalizedQuery
+        ? legendaries.filter((entry) => {
+          const recipeState = entry.recipeUnlocked ? "unlocked" : "recipe locked";
+          const priority =
+            entry.recipeUnlocked && entry.ownedCoverage >= 0.75
+              ? "quickest"
+              : entry.ownedCoverage >= 0.4
+                ? "medium"
+                : "long-term";
+
+          return (
+            entry.item.name.toLowerCase().includes(normalizedQuery) ||
+            entry.item.type.toLowerCase().includes(normalizedQuery) ||
+            recipeState.includes(normalizedQuery) ||
+            priority.includes(normalizedQuery)
+          );
+        })
+        : legendaries,
+    [legendaries, normalizedQuery],
+  );
   const { sortedRows: sortedLegendaries, renderHeader } = useSortableRows<
     (typeof legendaries)[number],
     "legendary" | "owned" | "personalCost" | "marketCost" | "recipe" | "priority"
   >(
-    legendaries,
+    filteredLegendaries,
     { key: "owned", direction: "desc" },
     {
       legendary: (left, right) => compareStringValue(left.item.name, right.item.name),
       owned: (left, right) => compareNumberValue(left.ownedCoverage, right.ownedCoverage),
       personalCost: (left, right) => compareNumberValue(left.personalCost, right.personalCost),
-      marketCost: (left, right) => compareNumberValue(left.marketCost, right.marketCost),
+      marketCost: (left, right) => compareNumberValue(
+        getLegendaryDisplayMarketCost(left),
+        getLegendaryDisplayMarketCost(right),
+      ),
       recipe: (left, right) => compareStringValue(left.recipeUnlocked ? "Unlocked" : "Recipe locked", right.recipeUnlocked ? "Unlocked" : "Recipe locked"),
       priority: (left, right) => compareNumberValue(getLegendaryPriorityRank(left), getLegendaryPriorityRank(right)),
     },
@@ -10282,84 +10352,102 @@ function LegendaryReadinessPage({
   return (
     <div className={`market-workspace crafting-workspace ${selectedItem ? "" : "detail-closed"}`}>
       <aside className="market-panel craft-table-panel">
-      <section className="page-header">
-        <div>
-          <span className="eyebrow">Personal Account Scan</span>
-          <h2>Legendary Readiness</h2>
-          <p>
-            Routes ranked for {accountSnapshot.tokenInfo.name} by owned material coverage, recipe
-            unlocks, and remaining personal cost.
-          </p>
-        </div>
-        <button className="icon-button primary" onClick={() => void onAnalyze()}>
-          <RefreshCcw />
-          <span>{analysisState === "loading" ? "Analyzing" : "Refresh Scan"}</span>
-        </button>
-      </section>
+        <section className="page-header">
+          <div>
+            <span className="eyebrow">Personal Account Scan</span>
+            <h2>Legendary Readiness</h2>
+            <p>
+              Routes ranked for {accountSnapshot.tokenInfo.name} by owned material coverage, recipe
+              unlocks, and remaining personal cost.
+            </p>
+          </div>
+          <button className="icon-button primary" onClick={() => void onAnalyze()}>
+            <RefreshCcw />
+            <span>{analysisState === "loading" ? "Analyzing" : "Refresh Scan"}</span>
+          </button>
+        </section>
 
-      <section className="surface craft-profit-surface">
-        {analysisState === "loading" && legendaries.length === 0 ? <SkeletonRows /> : null}
-        {legendaries.length ? (
-          <div className="craft-table-wrap">
-            <table className="craft-profit-table">
-              <thead>
-                <tr>
-                  {renderHeader("legendary", "Legendary")}
-                  {renderHeader("owned", "Owned")}
-                  {renderHeader("personalCost", "Remaining Personal Cost")}
-                  {renderHeader("marketCost", "Market Cost")}
-                  {renderHeader("recipe", "Recipe")}
-                  {renderHeader("priority", "Priority")}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedLegendaries.map((entry) => (
-                  <tr
-                    key={`${entry.recipe.id}-${entry.item.id}`}
-                    className={selectedItem?.id === entry.item.id ? "selected-row" : ""}
-                    onClick={() => onSelectItem(entry.item)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        onSelectItem(entry.item);
-                      }
-                    }}
-                    role="button"
-                    tabIndex={0}
-                  >
-                    <td>
-                      <span className="table-item-cell">
-                        <ItemIcon item={entry.item} />
-                        <span className="item-copy">
-                          <strong>{entry.item.name}</strong>
-                          <span>{entry.item.type}</span>
-                        </span>
-                      </span>
-                    </td>
-                    <td>{Math.round(entry.ownedCoverage * 100)}%</td>
-                    <td><Money value={entry.personalCost} /></td>
-                    <td><Money value={entry.marketCost} /></td>
-                    <td>{entry.recipeUnlocked ? "Unlocked" : "Recipe locked"}</td>
-                    <td>
-                      {entry.recipeUnlocked && entry.ownedCoverage >= 0.75
-                        ? "Quickest"
-                        : entry.ownedCoverage >= 0.4
-                          ? "Medium"
-                          : "Long-term"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : analysisState !== "loading" ? (
-          <div className="empty-detail inline-empty">
-            <ShieldCheck />
-            <h2>No legendary routes ranked yet</h2>
-            <p>Refresh the account scan to compare your unlocked recipes and stored materials.</p>
-          </div>
-        ) : null}
-      </section>
+        <section className="surface craft-profit-surface">
+          {analysisState === "loading" && legendaries.length === 0 ? <SkeletonRows /> : null}
+          {legendaries.length ? (
+            <>
+              <label className="search-box legendary-search">
+                <Search />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search legendary item, gift, recipe state"
+                />
+              </label>
+              {sortedLegendaries.length ? (
+                <div className="craft-table-wrap">
+                  <table className="craft-profit-table">
+                    <thead>
+                      <tr>
+                        {renderHeader("legendary", "Legendary")}
+                        {renderHeader("owned", "Owned")}
+                        {renderHeader("personalCost", "Remaining Personal Cost")}
+                        {renderHeader("marketCost", "Market Cost")}
+                        {renderHeader("recipe", "Recipe")}
+                        {renderHeader("priority", "Priority")}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedLegendaries.map((entry) => (
+                        <tr
+                          key={`${entry.recipe.id}-${entry.item.id}`}
+                          className={selectedItem?.id === entry.item.id ? "selected-row" : ""}
+                          onClick={() => onSelectItem(entry.item)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              onSelectItem(entry.item);
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                        >
+                          <td>
+                            <span className="table-item-cell">
+                              <ItemIcon item={entry.item} />
+                              <span className="item-copy">
+                                <strong>{entry.item.name}</strong>
+                                <span>{entry.item.type}</span>
+                              </span>
+                            </span>
+                          </td>
+                          <td>{Math.round(entry.ownedCoverage * 100)}%</td>
+                          <td><Money value={entry.personalCost} /></td>
+                          <td>{entry.outputValue > 0 ? <Money value={entry.marketCost} /> : <span className="muted-copy">-</span>}</td>
+                          <td>{entry.recipeUnlocked ? "Unlocked" : "Recipe locked"}</td>
+                          <td>
+                            {entry.recipeUnlocked && entry.ownedCoverage >= 0.75
+                              ? "Quickest"
+                              : entry.ownedCoverage >= 0.4
+                                ? "Medium"
+                                : "Long-term"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="empty-detail inline-empty">
+                  <Search />
+                  <h2>No legendary items found</h2>
+                  <p>No readiness rows match “{query.trim()}”.</p>
+                </div>
+              )}
+            </>
+          ) : analysisState !== "loading" ? (
+            <div className="empty-detail inline-empty">
+              <ShieldCheck />
+              <h2>No legendary routes ranked yet</h2>
+              <p>Refresh the account scan to compare your unlocked recipes and stored materials.</p>
+            </div>
+          ) : null}
+        </section>
       </aside>
 
       <MarketSplitHandle />
@@ -10399,6 +10487,10 @@ function getLegendaryPriorityRank(entry: { recipeUnlocked: boolean; ownedCoverag
   }
 
   return 1;
+}
+
+function getLegendaryDisplayMarketCost(entry: { outputValue: number; marketCost: number }): number {
+  return entry.outputValue > 0 ? entry.marketCost : -1;
 }
 
 function SalvagingPage({
@@ -10651,7 +10743,12 @@ function SalvagingPage({
                       <td>{row.directSellNet ? <Money value={row.directSellNet} /> : "No buy orders"}</td>
                       <td>{row.salvageValue ? <Money value={row.salvageValue} /> : "Unmodeled"}</td>
                       <td className={row.buySalvageProfit > 0 ? "profit" : row.buySalvageProfit < 0 ? "loss" : "muted-money"}>
-                        {row.outputs.length ? <Money value={Math.abs(row.buySalvageProfit)} /> : "Output data needed"}
+                        {row.outputs.length ? (
+                          <>
+                            <Money value={Math.abs(row.buySalvageProfit)} />
+                            <FeeNote fee={row.salvageFee} />
+                          </>
+                        ) : "Output data needed"}
                       </td>
                       <td>
                         <SalvageOutputList outputs={row.outputs} catalog={catalog} />
@@ -10780,6 +10877,7 @@ function UnidentifiedGearPage({
         const resolvedItem = resolvedGearItems.get(definition.itemId) ?? getStoredItem(definition.itemId);
         const detailItem = quote.item ?? (resolvedItem ? buildMarketItemForDetail(resolvedItem) : null);
         const revenue = estimateSalvageOutputValue(definition.outputs, catalog);
+        const fee = estimateSalvageOutputFee(definition.outputs, catalog);
         const directSale = quote.instantSellNet || quote.listedSellNet;
 
         return {
@@ -10788,6 +10886,7 @@ function UnidentifiedGearPage({
           detailItem,
           directSale,
           openSalvageRevenue: revenue,
+          openSalvageFee: fee,
           buyOpenSalvageProfit: revenue - quote.buyCost,
         };
       }),
@@ -10883,7 +10982,12 @@ function UnidentifiedGearPage({
                     <td>{row.directSale ? <Money value={row.directSale} /> : "Unavailable"}</td>
                     <td>{row.openSalvageRevenue ? <Money value={row.openSalvageRevenue} /> : "Drop data needed"}</td>
                     <td className={row.buyOpenSalvageProfit > 0 ? "profit" : row.buyOpenSalvageProfit < 0 ? "loss" : "muted-money"}>
-                      {row.openSalvageRevenue ? <Money value={Math.abs(row.buyOpenSalvageProfit)} /> : "Unmodeled"}
+                      {row.openSalvageRevenue ? (
+                        <>
+                          <Money value={Math.abs(row.buyOpenSalvageProfit)} />
+                          <FeeNote fee={row.openSalvageFee} />
+                        </>
+                      ) : "Unmodeled"}
                     </td>
                     <td>{row.definition.note}</td>
                   </tr>
@@ -10944,11 +11048,11 @@ function getGatheringYieldUnitValue(
 
   const marketItem = catalogById.get(yieldInfo.itemId);
   if (marketItem) {
-    return marketItem.netSellPrice || Math.floor((marketItem.price.buys.unit_price || 0) * 0.85);
+    return marketItem.netSellPrice || getTradingPostNetValue(marketItem.price.buys.unit_price || 0);
   }
 
   const price = getStoredPrice(yieldInfo.itemId);
-  return Math.floor((price?.buys.unit_price || price?.sells.unit_price || 0) * 0.85);
+  return getTradingPostNetValue(price?.buys.unit_price || price?.sells.unit_price || 0);
 }
 
 function getGatheringYieldValue(
@@ -10962,7 +11066,7 @@ function getGatheringYieldValue(
   }
 
   const fallbackPrice = getStoredPrice(source.item.id);
-  return Math.floor((fallbackPrice?.buys.unit_price || fallbackPrice?.sells.unit_price || 0) * 0.85);
+  return getTradingPostNetValue(fallbackPrice?.buys.unit_price || fallbackPrice?.sells.unit_price || 0);
 }
 
 function getPermanentGatheringDropValue(
@@ -10971,11 +11075,11 @@ function getPermanentGatheringDropValue(
 ): number {
   const marketItem = catalogById.get(drop.id);
   if (marketItem) {
-    return marketItem.netSellPrice || Math.floor((marketItem.price.buys.unit_price || 0) * 0.85);
+    return marketItem.netSellPrice || getTradingPostNetValue(marketItem.price.buys.unit_price || 0);
   }
 
   const price = getStoredPrice(drop.id);
-  return Math.floor((price?.buys.unit_price || price?.sells.unit_price || 0) * 0.85);
+  return getTradingPostNetValue(price?.buys.unit_price || price?.sells.unit_price || 0);
 }
 
 function getPermanentGatheringNodeValue(
@@ -11701,7 +11805,7 @@ function SalvageProfilePanel({
     () => estimateSalvageOutputValue(profile.outputs, catalog),
     [catalog, outputRevision, profile.outputs],
   );
-  const directSellNet = item.price.buys.unit_price ? Math.floor(item.price.buys.unit_price * 0.85) : item.netSellPrice;
+  const directSellNet = item.price.buys.unit_price ? getTradingPostNetValue(item.price.buys.unit_price) : item.netSellPrice;
   const delta = salvageValue - directSellNet;
   const getOutputMarketValue = (output: SalvageOutputEstimate): number => {
     const quote = getMarketQuoteForSalvageOutput(catalog, output);
@@ -12189,7 +12293,11 @@ function FarmingCalculatorPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleHighestValueCrafts.map((craft) => (
+                  {visibleHighestValueCrafts.map((craft) => {
+                    const outputPrice = getStoredPrice(craft.output.id);
+                    const outputUnitPrice = outputPrice?.sells.unit_price || outputPrice?.buys.unit_price || 0;
+                    const grossOutputValue = outputUnitPrice * craft.recipe.output_item_count;
+                    return (
                     <tr key={`${craft.recipe.id}-${craft.output.id}`} onClick={() => onSelectCraft(craft)}>
                       <td>
                         <span className="table-item-cell">
@@ -12201,17 +12309,20 @@ function FarmingCalculatorPage({
                         </span>
                       </td>
                       <td>{craft.recipe.output_item_count.toLocaleString()}</td>
-                      <td><Money value={craft.outputValue} /></td>
+                      <td>{grossOutputValue > 0 ? <SellerPrice value={grossOutputValue} /> : "No TP value"}</td>
                       <td>{craft.marketCost > 0 ? <Money value={craft.marketCost} /> : "Unknown"}</td>
                       <td className={craft.marketProfit > 0 ? "profit" : craft.marketProfit < 0 ? "loss" : "muted-money"}>
-                        {craft.marketCost > 0 ? <Money value={Math.abs(craft.marketProfit)} /> : "Cost needed"}
+                        {craft.marketCost > 0 ? (
+                          <Money value={Math.abs(craft.marketProfit)} />
+                        ) : "Cost needed"}
                       </td>
                       <td>
                         <span>{isMysticForgeCraft(craft) ? "Mystic Forge / special" : craft.recipe.disciplines.join(", ") || "Recipe"}</span>
                         <small>Rating {craft.recipe.min_rating}</small>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -12382,7 +12493,7 @@ function FarmTrackerPage({
       .map(([id, count]) => {
         const item = accountItems.get(id) ?? trackerItems.get(id) ?? getStoredItem(id);
         const price = getStoredPrice(id);
-        const unitValue = Math.floor((price?.buys.unit_price || price?.sells.unit_price || 0) * 0.85);
+        const unitValue = getTradingPostNetValue(price?.buys.unit_price || price?.sells.unit_price || 0);
         const salvageProfile = item ? getSalvageEstimateForItem(item) : null;
         const salvageUnitValue = salvageProfile?.outputs.length
           ? estimateSalvageOutputValue(salvageProfile.outputs, catalog)
@@ -13391,6 +13502,7 @@ function buildSalvageEstimateRows(catalog: MarketItem[]): SalvageEstimateRow[] {
       const quote = getMarketQuoteForItem(item);
       const estimate = getSalvageEstimateForItem(item);
       const salvageValue = estimateSalvageOutputValue(estimate.outputs, catalog);
+      const salvageFee = estimateSalvageOutputFee(estimate.outputs, catalog);
       const directSellNet = quote.instantSellNet || quote.listedSellNet;
 
       return {
@@ -13398,6 +13510,7 @@ function buildSalvageEstimateRows(catalog: MarketItem[]): SalvageEstimateRow[] {
         purchaseCost: quote.buyCost,
         directSellNet,
         salvageValue,
+        salvageFee,
         buySalvageProfit: salvageValue - quote.buyCost,
         salvageInsteadOfSell: salvageValue - directSellNet,
         outputs: estimate.outputs,
@@ -13618,6 +13731,16 @@ function estimateSalvageOutputValue(outputs: SalvageOutputEstimate[], catalog: M
   );
 }
 
+function estimateSalvageOutputFee(outputs: SalvageOutputEstimate[], catalog: MarketItem[]): number {
+  return Math.round(
+    outputs.reduce((sum, output) => {
+      const quote = getMarketQuoteForSalvageOutput(catalog, output);
+      const grossUnitValue = quote.item?.price.buys.unit_price || quote.item?.price.sells.unit_price || 0;
+      return sum + getTradingPostFee(grossUnitValue) * output.averageCount;
+    }, 0),
+  );
+}
+
 function getMarketQuoteForSalvageOutput(catalog: MarketItem[], output: SalvageOutputEstimate): MarketQuote {
   return output.itemId
     ? getMarketQuoteForId(catalog, output.itemId, [output.name])
@@ -13665,7 +13788,7 @@ function getMarketQuoteForItem(item: MarketItem | undefined): MarketQuote {
   return {
     item,
     buyCost: item.price.sells.unit_price,
-    instantSellNet: Math.floor((item.price.buys.unit_price || 0) * 0.85),
+    instantSellNet: getTradingPostNetValue(item.price.buys.unit_price || 0),
     listedSellNet: item.netSellPrice,
   };
 }
@@ -13940,6 +14063,7 @@ function ItemDetail({
   const [wikiAcquisition, setWikiAcquisition] = useState<WikiItemAcquisition | null>(null);
   const [wikiAcquisitionState, setWikiAcquisitionState] = useState<LoadState>("idle");
   const isFavorite = isFavoriteItem(item);
+  const netSpread = getMarketNetSpread(item);
 
   useEffect(() => {
     let ignore = false;
@@ -14024,14 +14148,14 @@ function ItemDetail({
 
       {showMarketSections ? (
         <section className="stat-grid">
-          <Metric icon={<Coins />} label="Lowest Sell" value={<Money value={item.price.sells.unit_price} />} />
+          <Metric icon={<Coins />} label="Lowest Sell" value={<SellerPrice value={item.price.sells.unit_price} />} />
           <Metric icon={<TrendingUp />} label="Highest Buy" value={<Money value={item.price.buys.unit_price} />} />
           <Metric icon={<Hammer />} label="After Fees" value={<Money value={item.netSellPrice} />} />
           <Metric
             icon={<Boxes />}
             label="Spread"
-            value={<Money value={Math.max(0, item.spread)} />}
-            tone={item.spread > 0 ? "positive" : "muted"}
+            value={<Money value={Math.abs(netSpread)} />}
+            tone={netSpread > 0 ? "positive" : netSpread < 0 ? "negative" : "muted"}
           />
         </section>
       ) : null}
@@ -14312,6 +14436,71 @@ function VendorWikiLink({ offer }: { offer: WikiVendorOffer }) {
   );
 }
 
+function getTradingPostNetValue(unitPrice: number, count = 1): number {
+  return Math.floor(Math.max(0, unitPrice) * Math.max(0, count) * TRADING_POST_NET_RATE);
+}
+
+function getTradingPostFee(unitPrice: number, count = 1): number {
+  const gross = Math.max(0, unitPrice) * Math.max(0, count);
+  if (gross <= 0) {
+    return 0;
+  }
+
+  return gross - getTradingPostNetValue(unitPrice, count);
+}
+
+function getMarketNetSpread(item: MarketItem): number {
+  return getTradingPostNetValue(item.price.sells.unit_price) - item.price.buys.unit_price;
+}
+
+function getRecipeOutputGrossValue(recipe: Gw2Recipe): number {
+  if (!recipe.output_item_id || recipe.output_item_count <= 0) {
+    return 0;
+  }
+
+  const price = getStoredPrice(recipe.output_item_id);
+  const unitPrice = price?.sells.unit_price || price?.buys.unit_price || 0;
+  return unitPrice * recipe.output_item_count;
+}
+
+function getRecipeTradingPostFee(guide: RecipeGuide): number {
+  const grossValue = getRecipeOutputGrossValue(guide.recipe);
+  if (grossValue > 0) {
+    return grossValue - guide.outputValue;
+  }
+
+  if (guide.outputValue <= 0) {
+    return 0;
+  }
+
+  return Math.max(0, Math.round(guide.outputValue / TRADING_POST_NET_RATE) - guide.outputValue);
+}
+
+function FeeNote({ fee }: { fee: number }) {
+  if (fee <= 0) {
+    return null;
+  }
+
+  return (
+    <small className="fee-note" title="Trading Post fees included in the displayed profit: 5% listing fee + 10% exchange fee.">
+      Fee <Money value={fee} />
+    </small>
+  );
+}
+
+function SellerPrice({ value, count = 1 }: { value: number; count?: number }) {
+  if (value <= 0) {
+    return <span>Unavailable</span>;
+  }
+
+  return (
+    <span className="seller-price">
+      <Money value={value} />
+      <FeeNote fee={getTradingPostFee(value, count)} />
+    </span>
+  );
+}
+
 function Metric({
   icon,
   label,
@@ -14321,7 +14510,7 @@ function Metric({
   icon: ReactNode;
   label: string;
   value: ReactNode;
-  tone?: "default" | "positive" | "muted";
+  tone?: "default" | "positive" | "negative" | "muted";
 }) {
   return (
     <div className={`metric-card ${tone}`}>
@@ -14340,7 +14529,7 @@ function buildMarketItemFromStoredPrice(item: Gw2Item): MarketItem | null {
     return null;
   }
 
-  const netSellPrice = Math.floor(price.sells.unit_price * 0.85);
+  const netSellPrice = getTradingPostNetValue(price.sells.unit_price);
   const spread = netSellPrice - price.buys.unit_price;
 
   return {
@@ -14359,7 +14548,7 @@ function buildMarketItemForDetail(item: Gw2Item): MarketItem {
       buys: { quantity: 0, unit_price: 0 },
       sells: { quantity: 0, unit_price: 0 },
     };
-  const netSellPrice = Math.floor(price.sells.unit_price * 0.85);
+  const netSellPrice = getTradingPostNetValue(price.sells.unit_price);
   const spread = netSellPrice - price.buys.unit_price;
 
   return {
@@ -15948,9 +16137,11 @@ function getHistoryCoverageLabel(points: ChartPoint[]): string {
 function OrderBook({
   title,
   rows,
+  showSellerFee = false,
 }: {
   title: string;
   rows: Array<{ listings: number; unit_price: number; quantity: number }>;
+  showSellerFee?: boolean;
 }) {
   return (
     <div className="order-book">
@@ -15963,7 +16154,9 @@ function OrderBook({
       <div className="order-list">
         {rows.slice(0, 60).map((row) => (
           <div key={`${title}-${row.unit_price}-${row.quantity}`} className="order-row">
-            <span className="order-price"><Money value={row.unit_price} /></span>
+            <span className="order-price">
+              {showSellerFee ? <SellerPrice value={row.unit_price} /> : <Money value={row.unit_price} />}
+            </span>
             <span title="Quantity available at this price">{row.quantity.toLocaleString()}</span>
             <span title="Number of listings at this price">{row.listings.toLocaleString()}</span>
           </div>
@@ -16001,8 +16194,20 @@ function TransactionSummary({ transactions }: { transactions: ItemTransactions }
           <div key={`${transaction.type}-${transaction.id}`} className="transaction-row">
             <span>{transaction.type}</span>
             <span>{transaction.quantity.toLocaleString()}</span>
-            <span><Money value={transaction.price} /></span>
-            <span><Money value={transaction.price * transaction.quantity} /></span>
+            <span>
+              {transaction.type === "Sold" ? (
+                <SellerPrice value={transaction.price} />
+              ) : (
+                <Money value={transaction.price} />
+              )}
+            </span>
+            <span>
+              {transaction.type === "Sold" ? (
+                <SellerPrice value={transaction.price * transaction.quantity} />
+              ) : (
+                <Money value={transaction.price * transaction.quantity} />
+              )}
+            </span>
             <span>
               {new Date(transaction.purchased ?? transaction.created).toLocaleDateString()}
             </span>
@@ -16164,6 +16369,7 @@ function summarizeDropValues(
     drop: ContainerDrop;
     directUnitValue: number;
     salvageUnitValue: number;
+    marketItem?: MarketItem;
   }>,
   openingCount: number,
   mode: "direct" | "salvage",
@@ -16202,6 +16408,59 @@ function summarizeDropValues(
     };
   }
 
+  if (hasAnyChance) {
+    return {
+      min: 0,
+      avg:
+        values.reduce((sum, row) => {
+          const chance = (row.chancePct ?? 0) / 100;
+          return sum + row.avg * chance;
+        }, 0) * openingCount,
+      max: values.reduce((sum, row) => sum + row.max, 0) * openingCount,
+    };
+  }
+
+  return {
+    min: Math.min(...values.map((row) => row.min)) * openingCount,
+    avg: (values.reduce((sum, row) => sum + row.avg, 0) / values.length) * openingCount,
+    max: Math.max(...values.map((row) => row.max)) * openingCount,
+  };
+}
+
+function summarizeDropFees(
+  rows: Array<{
+    drop: ContainerDrop;
+    directUnitValue: number;
+    salvageUnitValue: number;
+    marketItem?: MarketItem;
+  }>,
+  openingCount: number,
+  mode: "direct" | "salvage",
+) {
+  const values = rows
+    .map((row) => {
+      const unit = mode === "direct" ? row.directUnitValue : row.salvageUnitValue;
+      const grossUnitValue = row.marketItem?.price.buys.unit_price || row.marketItem?.price.sells.unit_price || 0;
+      const fee = unit > 0 ? getTradingPostFee(grossUnitValue) : 0;
+      return {
+        min: row.drop.quantityMin * fee,
+        avg: dropQuantityAverage(row.drop) * fee,
+        max: row.drop.quantityMax * fee,
+        chancePct: row.drop.chancePct,
+        fee,
+      };
+    })
+    .filter((row) => row.fee > 0);
+
+  if (values.length === 0) {
+    return {
+      min: 0,
+      avg: 0,
+      max: 0,
+    };
+  }
+
+  const hasAnyChance = values.some((row) => row.chancePct !== undefined);
   if (hasAnyChance) {
     return {
       min: 0,
@@ -16442,6 +16701,7 @@ function RecipeCard({
   const pricedIngredientCount = guide.ingredients.filter((ingredient) => ingredient.totalPrice > 0).length;
   const hasCompleteMarketCost = pricedIngredientCount === guide.ingredients.length;
   const marketCostLabel = hasCompleteMarketCost ? "TP ingredient cost" : pricedIngredientCount > 0 ? "Priced TP cost" : "TP ingredient cost";
+  const fee = getRecipeTradingPostFee(guide);
 
   return (
     <article className="recipe-card">
@@ -16462,6 +16722,7 @@ function RecipeCard({
         <strong className={`recipe-profit ${guide.personalProfit > 0 ? "profit" : guide.personalProfit < 0 ? "loss" : ""}`}>
           <Money value={Math.abs(guide.personalProfit)} />
           {guide.personalProfit >= 0 ? " profit" : " loss"}
+          <FeeNote fee={fee} />
         </strong>
       </div>
 
@@ -17052,6 +17313,7 @@ function RoutePlanner({
     : Number.POSITIVE_INFINITY;
   const fullRecipeCost = bestRecipe ? bestRecipe.marketCost : Number.POSITIVE_INFINITY;
   const hasRecipeSellValue = Boolean(bestRecipe && bestRecipe.outputValue > 0);
+  const bestRecipeFee = bestRecipe ? getRecipeTradingPostFee(bestRecipe) : 0;
   const recommendedRoute =
     accountSnapshot && ownedCount > 0
       ? "owned"
@@ -17088,7 +17350,7 @@ function RoutePlanner({
           active={recommendedRoute === "craft"}
           detail={
             bestRecipe ? (
-              <RouteProfitLine profit={bestRecipe.personalProfit} hasSellValue={hasRecipeSellValue} />
+              <RouteProfitLine profit={bestRecipe.personalProfit} hasSellValue={hasRecipeSellValue} fee={bestRecipeFee} />
             ) : null
           }
         />
@@ -17097,7 +17359,7 @@ function RoutePlanner({
             label="Full recipe"
             value={<Money value={fullRecipeCost} />}
             active={false}
-            detail={<RouteProfitLine profit={bestRecipe.netProfit} hasSellValue={hasRecipeSellValue} />}
+            detail={<RouteProfitLine profit={bestRecipe.netProfit} hasSellValue={hasRecipeSellValue} fee={bestRecipeFee} />}
           />
         ) : null}
       </div>
@@ -17129,9 +17391,11 @@ function RouteOption({
 function RouteProfitLine({
   profit,
   hasSellValue,
+  fee,
 }: {
   profit: number;
   hasSellValue: boolean;
+  fee?: number;
 }) {
   if (!hasSellValue) {
     return <span className="route-profit muted">No sell value</span>;
@@ -17144,6 +17408,7 @@ function RouteProfitLine({
   return (
     <span className={`route-profit ${profit > 0 ? "profit" : "loss"}`}>
       {profit > 0 ? "Profit" : "Loss"} <Money value={Math.abs(profit)} />
+      <FeeNote fee={fee ?? 0} />
     </span>
   );
 }
@@ -18154,7 +18419,7 @@ function NodeInfoWindow({
           </>
         ) : null}
         <span>Sell</span>
-        <strong>{sellValue ? <Money value={sellValue} /> : "Unavailable"}</strong>
+        <strong>{sellValue ? <SellerPrice value={sellValue} /> : "Unavailable"}</strong>
         <span>Owned</span>
         <strong>{accountSnapshot ? owned.toLocaleString() : "General"}</strong>
       </div>

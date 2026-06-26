@@ -58,6 +58,7 @@ import {
 
 const GW2_API = "https://api.guildwars2.com/v2";
 const WIKI_API = "https://wiki.guildwars2.com/api.php";
+const TRADING_POST_NET_RATE = 0.85;
 const CHUNK_SIZE = 180;
 const COMMERCE_PAGE_SIZE = 200;
 const COMMERCE_PAGE_CONCURRENCY = 12;
@@ -195,6 +196,65 @@ const MYSTIC_FORGE_SEED_PAGES = [
   "Mystic Crystal/Material promotion recipes",
   "Philosopher's Stone/crafting materials",
 ];
+const LEGENDARY_READINESS_OUTPUT_NAMES = new Set([
+  "Mystic Clover",
+  "Mystic Tribute",
+  "Gift of Battle",
+  "Gift of Condensed Magic",
+  "Gift of Condensed Might",
+  "Gift of Craftsmanship",
+  "Gift of Dedication",
+  "Gift of Desert Mastery",
+  "Gift of Exploration",
+  "Gift of Fortune",
+  "Gift of Jade Mastery",
+  "Gift of Maguuma Mastery",
+  "Gift of Mastery",
+  "Gift of Prosperity",
+  "Gift of Prowess",
+  "Gift of the Mists",
+]);
+const LEGENDARY_READINESS_OUTPUT_PATTERNS = [
+  /^Gift of\b/i,
+  /\blegendary\b/i,
+  /\bprecursor\b/i,
+  /\benvoy\b/i,
+  /\btribute\b/i,
+];
+const LEGENDARY_READINESS_EXOTIC_INGREDIENT_TYPES = new Set(["Weapon", "Armor"]);
+const LEGENDARY_READINESS_UNIQUE_INGREDIENT_TYPES = new Set([
+  "Armor",
+  "Back",
+  "Container",
+  "Gizmo",
+  "Trophy",
+  "Trinket",
+  "UpgradeComponent",
+  "Weapon",
+]);
+const LEGENDARY_READINESS_EXCLUDED_UNIQUE_INGREDIENT_TYPES = new Set([
+  "CraftingMaterial",
+  "Gathering",
+  "MiniPet",
+  "Tool",
+]);
+const LEGENDARY_READINESS_UNIQUE_INGREDIENT_PATTERNS = [
+  /^Gift of\b/i,
+  /\bprecursor\b/i,
+  /\blegendary\b/i,
+  /\btribute\b/i,
+  /\baurene\b/i,
+  /\bdragon\b/i,
+  /\bvision\b/i,
+  /\baurora\b/i,
+  /\bad infinitum\b/i,
+  /\bcoalescence\b/i,
+  /\bconflux\b/i,
+  /\btranscendence\b/i,
+  /\bprismatic\b/i,
+  /\bgen(eration)?\s*(1|2|3)\b/i,
+];
+const LEGENDARY_READINESS_DIRECT_RECIPE_ID_BASE = -900_000_000;
 const CRAFTING_DISCIPLINES = [
   "Armorsmith",
   "Artificer",
@@ -595,7 +655,7 @@ async function mapWithConcurrency<T, R>(
 }
 
 function netSellValue(unitPrice: number, count = 1): number {
-  return Math.floor(unitPrice * count * 0.85);
+  return Math.floor(unitPrice * count * TRADING_POST_NET_RATE);
 }
 
 function toMarketItem(item: Gw2Item, price: CommercePrice): MarketItem {
@@ -6178,11 +6238,14 @@ export async function analyzeAccount(
   onProgress?: ProgressCallback,
 ): Promise<AccountAnalysis> {
   onProgress?.("Loading account snapshot");
-  const [account, recipes] = await Promise.all([
+  const [account, officialRecipes, wikiMysticRecipes, allItems] = await Promise.all([
     loadAccountSnapshot(apiKey),
     loadAllRecipes(onProgress),
+    loadWikiMysticForgeRecipes(onProgress).catch(() => []),
+    loadAllItemsCatalog(onProgress).catch(() => []),
     ensureCommercePrices(onProgress),
-  ]).then(([account, recipes]) => [account, recipes] as const);
+  ]).then(([account, officialRecipes, wikiMysticRecipes, allItems]) => [account, officialRecipes, wikiMysticRecipes, allItems] as const);
+  const recipes = dedupeRecipes([...officialRecipes, ...wikiMysticRecipes]);
   const ingredientIds = Array.from(
     new Set(recipes.flatMap((recipe) => recipe.ingredients.map((item) => item.item_id))),
   );
@@ -6209,39 +6272,282 @@ export async function analyzeAccount(
 
   onProgress?.("Ranking legendary readiness");
   const unlockedRecipes = new Set(account.recipes);
-  const legendaries: LegendaryReadiness[] = recipes
-    .map((recipe) => {
-      const item = recipe.output_item_id ? itemCache.get(recipe.output_item_id) : undefined;
-      if (!item || item.rarity !== "Legendary") {
-        return null;
-      }
+  const legendaryOutputRecipes = recipes.filter((recipe) => {
+    const item = recipe.output_item_id ? itemCache.get(recipe.output_item_id) : undefined;
+    return Boolean(item && isLegendaryReadinessOutput(item));
+  });
+  const legendaryExoticIngredientIds = getLegendaryReadinessExoticIngredientIds(legendaryOutputRecipes);
+  const legendaryUniqueIngredientIds = getLegendaryReadinessUniqueIngredientIds(
+    legendaryOutputRecipes,
+    recipes,
+  );
+  const legendaryItemIds = new Set(
+    allItems
+      .filter((item) => item.rarity === "Legendary")
+      .map((item) => item.id),
+  );
+  const legendaryCandidates = [
+    ...Array.from(legendaryItemIds)
+      .map((itemId) => {
+        const item = itemCache.get(itemId);
+        if (!item) {
+          return null;
+        }
 
-      const guide = buildRecipeGuide(recipe, account.holdings);
-      return {
-        item,
-        recipe,
-        outputValue: guide.outputValue,
-        marketCost: guide.marketCost,
-        personalCost: guide.personalCost,
-        ownedCoverage: guide.ownedCoverage,
-        recipeUnlocked: unlockedRecipes.has(recipe.id),
-      };
-    })
-    .filter((item): item is LegendaryReadiness => Boolean(item))
-    .sort((left, right) => {
-      if (right.ownedCoverage !== left.ownedCoverage) {
-        return right.ownedCoverage - left.ownedCoverage;
-      }
+        const recipe = selectBestReadinessRecipeForItem(item.id, recipes, account.holdings)
+          ?? createDirectLegendaryIngredientRecipe(item);
+        return buildLegendaryReadinessEntry(
+          item,
+          recipe,
+          account.holdings,
+          recipe.id < 0 || unlockedRecipes.has(recipe.id),
+        );
+      })
+      .filter((item): item is LegendaryReadiness => Boolean(item)),
+    ...legendaryOutputRecipes
+      .map((recipe) => {
+        const item = recipe.output_item_id ? itemCache.get(recipe.output_item_id) : undefined;
+        return item
+          ? buildLegendaryReadinessEntry(item, recipe, account.holdings, unlockedRecipes.has(recipe.id))
+          : null;
+      })
+      .filter((item): item is LegendaryReadiness => Boolean(item)),
+    ...Array.from(new Set([...legendaryExoticIngredientIds, ...legendaryUniqueIngredientIds]))
+      .map((itemId) => {
+        const item = itemCache.get(itemId);
+        if (!item) {
+          return null;
+        }
 
-      return left.personalCost - right.personalCost;
-    })
-    .slice(0, 18);
+        const recipe = selectBestReadinessRecipeForItem(item.id, recipes, account.holdings)
+          ?? createDirectLegendaryIngredientRecipe(item);
+        return buildLegendaryReadinessEntry(
+          item,
+          recipe,
+          account.holdings,
+          recipe.id < 0 || unlockedRecipes.has(recipe.id),
+        );
+      })
+      .filter((item): item is LegendaryReadiness => Boolean(item)),
+  ];
+  const bestLegendaryByItemId = new Map<number, LegendaryReadiness>();
+  for (const candidate of legendaryCandidates) {
+    const previous = bestLegendaryByItemId.get(candidate.item.id);
+    if (!previous || compareLegendaryReadinessCandidate(candidate, previous) < 0) {
+      bestLegendaryByItemId.set(candidate.item.id, candidate);
+    }
+  }
+  const legendaries = Array.from(bestLegendaryByItemId.values()).sort((left, right) => {
+    if (right.ownedCoverage !== left.ownedCoverage) {
+      return right.ownedCoverage - left.ownedCoverage;
+    }
+
+    return left.personalCost - right.personalCost;
+  });
 
   return {
     account,
     opportunities,
     legendaries,
   };
+}
+
+function isLegendaryReadinessOutput(item: Gw2Item): boolean {
+  if (item.rarity === "Legendary") {
+    return true;
+  }
+
+  if (LEGENDARY_READINESS_OUTPUT_NAMES.has(item.name)) {
+    return true;
+  }
+
+  return LEGENDARY_READINESS_OUTPUT_PATTERNS.some((pattern) => pattern.test(item.name));
+}
+
+function getLegendaryReadinessExoticIngredientIds(recipes: Gw2Recipe[]): Set<number> {
+  const itemIds = new Set<number>();
+
+  for (const recipe of recipes) {
+    for (const ingredient of recipe.ingredients) {
+      const item = itemCache.get(ingredient.item_id);
+      if (item && isLegendaryReadinessExoticIngredient(item)) {
+        itemIds.add(item.id);
+      }
+    }
+  }
+
+  return itemIds;
+}
+
+function getLegendaryReadinessUniqueIngredientIds(
+  legendaryRecipes: Gw2Recipe[],
+  allRecipes: Gw2Recipe[],
+): Set<number> {
+  const itemIds = new Set<number>();
+  const allRecipeUseCounts = countRecipeIngredientUses(allRecipes);
+  const legendaryRecipeUseCounts = countRecipeIngredientUses(legendaryRecipes);
+
+  for (const itemId of legendaryRecipeUseCounts.keys()) {
+    const item = itemCache.get(itemId);
+    if (!item) {
+      continue;
+    }
+
+    if (
+      isLegendaryReadinessUniqueIngredient(
+        item,
+        allRecipeUseCounts.get(itemId) ?? 0,
+        legendaryRecipeUseCounts.get(itemId) ?? 0,
+      )
+    ) {
+      itemIds.add(item.id);
+    }
+  }
+
+  return itemIds;
+}
+
+function countRecipeIngredientUses(recipes: Gw2Recipe[]): Map<number, number> {
+  const counts = new Map<number, number>();
+
+  for (const recipe of recipes) {
+    const recipeIngredientIds = new Set(recipe.ingredients.map((ingredient) => ingredient.item_id));
+    for (const itemId of recipeIngredientIds) {
+      counts.set(itemId, (counts.get(itemId) ?? 0) + 1);
+    }
+  }
+
+  return counts;
+}
+
+function isLegendaryReadinessExoticIngredient(item: Gw2Item): boolean {
+  return (
+    item.rarity === "Exotic" &&
+    LEGENDARY_READINESS_EXOTIC_INGREDIENT_TYPES.has(item.type)
+  );
+}
+
+function isLegendaryReadinessUniqueIngredient(
+  item: Gw2Item,
+  allRecipeUseCount: number,
+  legendaryRecipeUseCount: number,
+): boolean {
+  if (isLegendaryReadinessOutput(item) || isLegendaryReadinessExoticIngredient(item)) {
+    return true;
+  }
+
+  if (LEGENDARY_READINESS_EXCLUDED_UNIQUE_INGREDIENT_TYPES.has(item.type)) {
+    return false;
+  }
+
+  if (LEGENDARY_READINESS_UNIQUE_INGREDIENT_PATTERNS.some((pattern) => pattern.test(item.name))) {
+    return true;
+  }
+
+  if (!LEGENDARY_READINESS_UNIQUE_INGREDIENT_TYPES.has(item.type)) {
+    return false;
+  }
+
+  return legendaryRecipeUseCount > 0 && allRecipeUseCount === legendaryRecipeUseCount;
+}
+
+function buildLegendaryReadinessEntry(
+  item: Gw2Item,
+  recipe: Gw2Recipe,
+  holdings: Map<number, number>,
+  recipeUnlocked: boolean,
+): LegendaryReadiness {
+  const guide = buildRecipeGuide(recipe, holdings);
+  const ownedCoverage = getLegendaryReadinessOwnedCoverage(recipe, holdings);
+
+  return {
+    item,
+    recipe,
+    outputValue: guide.outputValue,
+    marketCost: guide.marketCost,
+    personalCost: guide.personalCost,
+    ownedCoverage,
+    recipeUnlocked,
+  };
+}
+
+function getLegendaryReadinessOwnedCoverage(
+  recipe: Gw2Recipe,
+  holdings: Map<number, number>,
+): number {
+  const ingredients = recipe.ingredients.filter((ingredient) => ingredient.count > 0);
+  if (ingredients.length === 0) {
+    const outputId = recipe.output_item_id;
+    const outputCount = Math.max(1, recipe.output_item_count);
+    return outputId && (holdings.get(outputId) ?? 0) >= outputCount ? 1 : 0;
+  }
+
+  const totalCoverage = ingredients.reduce((sum, ingredient) => {
+    const ownedCount = holdings.get(ingredient.item_id) ?? 0;
+    return sum + Math.min(1, ownedCount / ingredient.count);
+  }, 0);
+
+  return totalCoverage / ingredients.length;
+}
+
+function selectBestReadinessRecipeForItem(
+  itemId: number,
+  recipes: Gw2Recipe[],
+  holdings: Map<number, number>,
+): Gw2Recipe | null {
+  const candidates = recipes.filter((recipe) => recipe.output_item_id === itemId);
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return candidates.reduce((best, recipe) => {
+    const bestGuide = buildRecipeGuide(best, holdings);
+    const recipeGuide = buildRecipeGuide(recipe, holdings);
+    if (recipeGuide.personalCost !== bestGuide.personalCost) {
+      return recipeGuide.personalCost < bestGuide.personalCost ? recipe : best;
+    }
+
+    if (recipeGuide.marketCost !== bestGuide.marketCost) {
+      return recipeGuide.marketCost < bestGuide.marketCost ? recipe : best;
+    }
+
+    return recipe.id < best.id ? recipe : best;
+  }, candidates[0]);
+}
+
+function createDirectLegendaryIngredientRecipe(item: Gw2Item): Gw2Recipe {
+  return {
+    id: LEGENDARY_READINESS_DIRECT_RECIPE_ID_BASE - item.id,
+    type: "Legendary Ingredient",
+    output_item_id: item.id,
+    output_item_count: 1,
+    time_to_craft_ms: 0,
+    disciplines: [],
+    min_rating: 0,
+    flags: [],
+    ingredients: [{ item_id: item.id, count: 1 }],
+    source: "wiki",
+    sourceName: "Legendary ingredient",
+  };
+}
+
+function compareLegendaryReadinessCandidate(
+  left: LegendaryReadiness,
+  right: LegendaryReadiness,
+): number {
+  if (right.ownedCoverage !== left.ownedCoverage) {
+    return left.ownedCoverage > right.ownedCoverage ? -1 : 1;
+  }
+
+  if (left.personalCost !== right.personalCost) {
+    return left.personalCost - right.personalCost;
+  }
+
+  if (left.marketCost !== right.marketCost) {
+    return left.marketCost - right.marketCost;
+  }
+
+  return left.recipe.id - right.recipe.id;
 }
 
 export function formatCoin(value: number): string {
