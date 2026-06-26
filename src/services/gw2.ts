@@ -612,7 +612,7 @@ async function fetchAccountJson<T>(
   options: { required?: boolean } = {},
 ): Promise<T> {
   try {
-    return await fetchJson<T>(gw2AuthenticatedUrl(path, apiKey));
+    return await fetchJson<T>(gw2AuthenticatedUrl(path, apiKey), { cache: "no-store" });
   } catch (error) {
     if (options.required) {
       throw getAccountEndpointError(path, error);
@@ -5268,53 +5268,98 @@ export async function loadAccountSnapshot(
   options: { forceRefresh?: boolean } = {},
 ): Promise<AccountSnapshot> {
   const trimmedKey = apiKey.trim();
-  const tokenInfo = await fetchJson<TokenInfo>(gw2AuthenticatedUrl("/tokeninfo", trimmedKey));
-  assertAccountAnalysisPermissions(tokenInfo);
+  let tokenInfo: TokenInfo;
+
+  try {
+    tokenInfo = await fetchJson<TokenInfo>(gw2AuthenticatedUrl("/tokeninfo", trimmedKey), { cache: "no-store" });
+    assertAccountAnalysisPermissions(tokenInfo);
+  } catch (error) {
+    if (!options.forceRefresh) {
+      const cachedSnapshot = await loadAccountSnapshotFallback(trimmedKey);
+      if (cachedSnapshot) {
+        return cachedSnapshot;
+      }
+    }
+
+    throw error;
+  }
 
   const cacheKey = `account:snapshot:${tokenInfo.id}`;
-  if (!options.forceRefresh) {
+
+  try {
+    const [materials, bank, inventory, characters, wallet, recipes, achievements] = await Promise.all([
+      fetchAccountJson<AccountMaterial[]>(trimmedKey, "/account/materials", [], { required: true }),
+      fetchAccountJson<AccountItemStack[]>(trimmedKey, "/account/bank", [], { required: true }),
+      fetchAccountJson<AccountItemStack[]>(trimmedKey, "/account/inventory", [], { required: true }),
+      fetchAccountJson<AccountCharacter[]>(trimmedKey, "/characters?ids=all", [], { required: true }),
+      fetchAccountJson<AccountWalletEntry[]>(trimmedKey, "/account/wallet", [], { required: true }),
+      fetchAccountJson<number[]>(trimmedKey, "/account/recipes", [], { required: true }),
+      fetchAccountJson<AccountAchievement[]>(trimmedKey, "/account/achievements", [], { required: true }),
+    ]);
+
+    const characterHoldings = characters.map(countCharacterStacks);
+    const holdings = mergeHoldings(
+      countStacks(materials),
+      countStacks(bank.filter(Boolean)),
+      countStacks(inventory.filter(Boolean)),
+      ...characterHoldings,
+    );
+
+    const snapshot = {
+      tokenInfo,
+      materials,
+      bank,
+      inventory,
+      characters,
+      wallet,
+      coins: wallet.find((entry) => entry.id === 1)?.value ?? 0,
+      recipes,
+      achievements,
+      holdings,
+    };
+    void saveSqlCache(cacheKey, serializeAccountSnapshot(snapshot));
+    void saveSqlCache(`account:snapshot-index:${stableHash(trimmedKey)}`, [tokenInfo.id]);
+    return snapshot;
+  } catch (error) {
+    if (!options.forceRefresh) {
+      const cachedSnapshot = await loadSqlCache(
+        cacheKey,
+        SQL_CACHE_TTL.accountSnapshot,
+        isAccountSnapshotPayload,
+      );
+      if (cachedSnapshot) {
+        return hydrateAccountSnapshot(cachedSnapshot, tokenInfo);
+      }
+    }
+
+    throw error;
+  }
+}
+
+async function loadAccountSnapshotFallback(apiKey: string): Promise<AccountSnapshot | null> {
+  const tokenHash = stableHash(apiKey.trim());
+  const knownAccountIds = await loadSqlCache(
+    `account:snapshot-index:${tokenHash}`,
+    SQL_CACHE_TTL.accountSnapshot,
+    (value): value is string[] => isArrayOf(value, (item): item is string => typeof item === "string"),
+  );
+
+  if (!knownAccountIds?.length) {
+    return null;
+  }
+
+  for (const accountId of knownAccountIds) {
     const cachedSnapshot = await loadSqlCache(
-      cacheKey,
+      `account:snapshot:${accountId}`,
       SQL_CACHE_TTL.accountSnapshot,
       isAccountSnapshotPayload,
     );
     if (cachedSnapshot) {
-      return hydrateAccountSnapshot(cachedSnapshot, tokenInfo);
+      return hydrateAccountSnapshot(cachedSnapshot, cachedSnapshot.tokenInfo);
     }
   }
 
-  const [materials, bank, inventory, characters, wallet, recipes, achievements] = await Promise.all([
-    fetchAccountJson<AccountMaterial[]>(trimmedKey, "/account/materials", [], { required: true }),
-    fetchAccountJson<AccountItemStack[]>(trimmedKey, "/account/bank", [], { required: true }),
-    fetchAccountJson<AccountItemStack[]>(trimmedKey, "/account/inventory", [], { required: true }),
-    fetchAccountJson<AccountCharacter[]>(trimmedKey, "/characters?ids=all", [], { required: true }),
-    fetchAccountJson<AccountWalletEntry[]>(trimmedKey, "/account/wallet", [], { required: true }),
-    fetchAccountJson<number[]>(trimmedKey, "/account/recipes", [], { required: true }),
-    fetchAccountJson<AccountAchievement[]>(trimmedKey, "/account/achievements", [], { required: true }),
-  ]);
-
-  const characterHoldings = characters.map(countCharacterStacks);
-  const holdings = mergeHoldings(
-    countStacks(materials),
-    countStacks(bank.filter(Boolean)),
-    countStacks(inventory.filter(Boolean)),
-    ...characterHoldings,
-  );
-
-  const snapshot = {
-    tokenInfo,
-    materials,
-    bank,
-    inventory,
-    characters,
-    wallet,
-    coins: wallet.find((entry) => entry.id === 1)?.value ?? 0,
-    recipes,
-    achievements,
-    holdings,
-  };
-  void saveSqlCache(cacheKey, serializeAccountSnapshot(snapshot));
-  return snapshot;
+  return null;
 }
 
 async function loadAllRecipes(onProgress?: ProgressCallback): Promise<Gw2Recipe[]> {
@@ -6242,10 +6287,11 @@ function scoreCraftOpportunity(
 export async function analyzeAccount(
   apiKey: string,
   onProgress?: ProgressCallback,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<AccountAnalysis> {
   onProgress?.("Loading account snapshot");
   const [account, officialRecipes, wikiMysticRecipes, allItems] = await Promise.all([
-    loadAccountSnapshot(apiKey),
+    loadAccountSnapshot(apiKey, { forceRefresh: options.forceRefresh }),
     loadAllRecipes(onProgress),
     loadWikiMysticForgeRecipes(onProgress).catch(() => []),
     loadAllItemsCatalog(onProgress).catch(() => []),

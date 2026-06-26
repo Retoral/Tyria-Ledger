@@ -254,6 +254,16 @@ interface MarketHistoryPoint {
   sampleCount?: number;
 }
 
+interface DemandMovementInfo {
+  multiplier: number;
+  movementScore: number;
+  freshnessScore: number;
+  sampleCount: number;
+  lastMovementAt: number | null;
+}
+
+type DemandMovementMap = Map<number, DemandMovementInfo>;
+
 type MarketHistoryRollup = "raw" | "day" | "week" | "month" | "bimonth";
 
 interface MarketHistoryImportResult {
@@ -314,8 +324,19 @@ const FavoriteItemsContext = createContext<FavoriteItemsContextValue>({
   isFavoriteItem: () => false,
 });
 
+const AccountRefreshContext = createContext<(() => Promise<void>) | null>(null);
+const DemandMovementContext = createContext<DemandMovementMap>(new Map());
+
 function useFavoriteItems() {
   return useContext(FavoriteItemsContext);
+}
+
+function useAccountRefresh() {
+  return useContext(AccountRefreshContext);
+}
+
+function useDemandMovement() {
+  return useContext(DemandMovementContext);
 }
 
 function readStoredFavoriteItemIds(): Set<number> {
@@ -674,6 +695,7 @@ interface SalvageEstimateRow {
   directSellNet: number;
   salvageValue: number;
   salvageFee: number;
+  salvageKitCost: number;
   buySalvageProfit: number;
   salvageInsteadOfSell: number;
   outputs: SalvageOutputEstimate[];
@@ -681,6 +703,27 @@ interface SalvageEstimateRow {
   familyLabel: string;
   tierLabel: string;
   note: string;
+}
+
+type SnipingOpportunityType = "Salvage" | "Re-sell";
+
+interface SnipingOpportunityRow {
+  item: MarketItem;
+  type: SnipingOpportunityType;
+  demandRatio: number;
+  buyCost: number;
+  sellValue: number;
+  profitPerItem: number;
+  maxRecommendedCount: number;
+  estimatedTotalProfit: number;
+  sourceNote: string;
+}
+
+interface SnipingDepthEstimate {
+  status: "loading" | "ready" | "error";
+  count: number;
+  estimatedTotalProfit: number;
+  checkedAt: number;
 }
 
 interface TieredPurchaseEstimate {
@@ -699,7 +742,14 @@ interface UnidentifiedGearDefinition {
   label: string;
   aliases: string[];
   outputs: SalvageOutputEstimate[];
+  rarityChances: UnidentifiedGearRarityChance[];
   note: string;
+}
+
+interface UnidentifiedGearRarityChance {
+  rarity: string;
+  chancePct: number;
+  outputs: SalvageOutputEstimate[];
 }
 
 interface FishingRouteInfo {
@@ -745,6 +795,9 @@ const MARKET_AUTO_SCAN_MIN_DELAY_MS = 1000;
 const MARKET_SCAN_COOLDOWN_MS = 10 * 60 * 1000;
 const MARKET_STARTUP_SCAN_COOLDOWN_MS = 30 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+const DEMAND_MOVEMENT_LOOKBACK_MS = 14 * DAY_MS;
+const DEMAND_MOVEMENT_MIN_MULTIPLIER = 0.25;
 const MAX_MARKET_HISTORY_POINTS_PER_ITEM = 800;
 const MARKET_HISTORY_RAW_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MARKET_HISTORY_DAILY_WINDOW_MS = 31 * 24 * 60 * 60 * 1000;
@@ -783,6 +836,8 @@ const HISTORY_RANGES: HistoryRange[] = [
 ];
 
 const SALVAGE_ROW_LIMIT = 300;
+const RUNECRAFTER_SALVAGE_KIT_NAME = "Runecrafter's Salvage-o-Matic";
+const RUNECRAFTER_SALVAGE_COST = 30;
 const SALVAGE_OUTPUT_ITEM_IDS = {
   "Glob of Ectoplasm": 19721,
   "Pile of Crystalline Dust": 24277,
@@ -816,6 +871,12 @@ const SALVAGE_OUTPUT_ITEM_IDS = {
   "Jute Scrap": 19718,
   "Pile of Lucent Crystal": 89271,
   "Lucent Mote": 89140,
+  "Charm of Brilliance": 89103,
+  "Charm of Potence": 89258,
+  "Charm of Skill": 89216,
+  "Symbol of Control": 89098,
+  "Symbol of Enhancement": 89141,
+  "Symbol of Pain": 89182,
 } as const;
 const SALVAGE_OUTPUT_PRICE_NAMES = Object.keys(SALVAGE_OUTPUT_ITEM_IDS) as Array<keyof typeof SALVAGE_OUTPUT_ITEM_IDS>;
 const SALVAGE_OUTPUT_PRICE_IDS = Object.values(SALVAGE_OUTPUT_ITEM_IDS);
@@ -873,6 +934,28 @@ const SALVAGE_FAMILY_LABELS = {
   cloth: "Cloth",
 } as const;
 type SalvageMaterialFamily = keyof typeof SALVAGE_FAMILY_LABELS;
+const UPGRADE_COMPONENT_SALVAGE_RATES = {
+  Rune: {
+    Minor: { motes: 1.0077, special: 0.0196 },
+    Major: { motes: 1.7053, special: 0.0265 },
+    Superior: { motes: 3.1804, special: 0.0944 },
+  },
+  Sigil: {
+    Minor: { motes: 0.982, special: 0.018 },
+    Major: { motes: 1.8749, special: 0.0273 },
+    Superior: { motes: 3.1506, special: 0.1031 },
+  },
+} as const;
+const RUNE_ELEMENT_OUTPUTS = {
+  Brilliance: "Charm of Brilliance",
+  Potence: "Charm of Potence",
+  Skill: "Charm of Skill",
+} as const;
+const SIGIL_ELEMENT_OUTPUTS = {
+  Control: "Symbol of Control",
+  Enhancement: "Symbol of Enhancement",
+  Pain: "Symbol of Pain",
+} as const;
 function getSalvageOutputItemId(name: string): number | undefined {
   return SALVAGE_OUTPUT_ITEM_IDS[name as keyof typeof SALVAGE_OUTPUT_ITEM_IDS];
 }
@@ -906,15 +989,72 @@ const EXOTIC_GEAR_OUTPUTS: SalvageOutputEstimate[] = [
   makeSalvageOutput("Glob of Ectoplasm", 1.15),
   makeSalvageOutput("Pile of Crystalline Dust", 0.28),
 ];
+
+const COMMON_UNIDENTIFIED_RARITY_CHANCES: UnidentifiedGearRarityChance[] = [
+  { rarity: "Fine", chancePct: 89, outputs: FINE_GEAR_OUTPUTS },
+  { rarity: "Masterwork", chancePct: 9.9, outputs: MASTERWORK_GEAR_OUTPUTS },
+  { rarity: "Rare", chancePct: 1, outputs: RARE_GEAR_OUTPUTS },
+  { rarity: "Exotic", chancePct: 0.1, outputs: EXOTIC_GEAR_OUTPUTS },
+];
+const MASTERWORK_UNIDENTIFIED_RARITY_CHANCES: UnidentifiedGearRarityChance[] = [
+  { rarity: "Masterwork", chancePct: 96.4, outputs: MASTERWORK_GEAR_OUTPUTS },
+  { rarity: "Rare", chancePct: 3.4, outputs: RARE_GEAR_OUTPUTS },
+  { rarity: "Exotic", chancePct: 0.2, outputs: EXOTIC_GEAR_OUTPUTS },
+];
+const RARE_UNIDENTIFIED_RARITY_CHANCES: UnidentifiedGearRarityChance[] = [
+  { rarity: "Rare", chancePct: 98.7, outputs: RARE_GEAR_OUTPUTS },
+  { rarity: "Exotic", chancePct: 1.3, outputs: EXOTIC_GEAR_OUTPUTS },
+];
+
+function buildUnidentifiedGearSalvageOutputs(
+  rarityChances: UnidentifiedGearRarityChance[],
+): SalvageOutputEstimate[] {
+  const outputMap = new Map<string, SalvageOutputEstimate & { sources: string[] }>();
+
+  for (const rarityChance of rarityChances) {
+    const weight = rarityChance.chancePct / 100;
+
+    for (const output of rarityChance.outputs) {
+      const key = output.itemId ? `id:${output.itemId}` : `name:${normalizeItemName(output.name)}`;
+      const existing = outputMap.get(key);
+      const source = `${rarityChance.rarity} ${formatPercent(rarityChance.chancePct)}`;
+
+      if (existing) {
+        existing.averageCount += output.averageCount * weight;
+        existing.sources.push(source);
+      } else {
+        outputMap.set(key, {
+          ...output,
+          averageCount: output.averageCount * weight,
+          sources: [source],
+        });
+      }
+    }
+  }
+
+  return Array.from(outputMap.values())
+    .map(({ sources, ...output }) => ({
+      ...output,
+      note: `Level 80 open-and-salvage estimate. Rarity sources: ${sources.join(", ")}.`,
+    }))
+    .sort((left, right) => right.averageCount - left.averageCount || left.name.localeCompare(right.name));
+}
+
+function formatPercent(value: number): string {
+  return `${value.toFixed(2).replace(/\.?0+$/u, "")}%`;
+}
+
+const COMMON_UNIDENTIFIED_OUTPUTS = buildUnidentifiedGearSalvageOutputs(
+  COMMON_UNIDENTIFIED_RARITY_CHANCES,
+);
+const MASTERWORK_UNIDENTIFIED_OUTPUTS = buildUnidentifiedGearSalvageOutputs(
+  MASTERWORK_UNIDENTIFIED_RARITY_CHANCES,
+);
+const RARE_UNIDENTIFIED_OUTPUTS = buildUnidentifiedGearSalvageOutputs(
+  RARE_UNIDENTIFIED_RARITY_CHANCES,
+);
+
 const UNIDENTIFIED_GEAR_DEFINITIONS: UnidentifiedGearDefinition[] = [
-  {
-    tier: "Fine",
-    itemId: 84731,
-    label: "Piece of Unidentified Gear",
-    aliases: ["Piece of Unidentified Gear", "Unidentified Gear", "Fine Unidentified Gear"],
-    outputs: FINE_GEAR_OUTPUTS,
-    note: "Rough open-and-salvage basket for fine equipment. Actual material family and luck output vary by opened item.",
-  },
   {
     tier: "Common",
     itemId: 85016,
@@ -925,16 +1065,27 @@ const UNIDENTIFIED_GEAR_DEFINITIONS: UnidentifiedGearDefinition[] = [
       "Piece of Uncommon Unidentified Gear",
       "Uncommon Unidentified Gear",
     ],
-    outputs: MASTERWORK_GEAR_OUTPUTS,
-    note: "Rough open-and-salvage basket for common unidentified gear. Exact value depends on the opened item family and salvage kit.",
+    outputs: COMMON_UNIDENTIFIED_OUTPUTS,
+    rarityChances: COMMON_UNIDENTIFIED_RARITY_CHANCES,
+    note: "Level 80 common unidentified gear modeled with Fine, Masterwork, Rare, and Exotic identification chances.",
+  },
+  {
+    tier: "Masterwork",
+    itemId: 84731,
+    label: "Piece of Unidentified Gear",
+    aliases: ["Piece of Unidentified Gear", "Unidentified Gear", "Masterwork Unidentified Gear"],
+    outputs: MASTERWORK_UNIDENTIFIED_OUTPUTS,
+    rarityChances: MASTERWORK_UNIDENTIFIED_RARITY_CHANCES,
+    note: "Level 80 unidentified gear modeled with Masterwork, Rare, and Exotic identification chances.",
   },
   {
     tier: "Rare",
     itemId: 83008,
     label: "Piece of Rare Unidentified Gear",
     aliases: ["Piece of Rare Unidentified Gear", "Rare Unidentified Gear", "Unidentified Rare Gear"],
-    outputs: RARE_GEAR_OUTPUTS,
-    note: "Estimated from the rare gear salvage anchor. Exact outcomes vary by opened item and salvage kit.",
+    outputs: RARE_UNIDENTIFIED_OUTPUTS,
+    rarityChances: RARE_UNIDENTIFIED_RARITY_CHANCES,
+    note: "Level 80 rare unidentified gear modeled with Rare and Exotic identification chances.",
   },
 ];
 
@@ -1272,6 +1423,7 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
       { id: "profitable-crafts", label: "Profitable Crafts", icon: <TrendingUp /> },
       { id: "mystic-forge", label: "Mystic Forge", icon: <Toilet /> },
       { id: "legendary-readiness", label: "Legendary Readiness", icon: <ShieldCheck /> },
+      { id: "sniping", label: "Sniping", icon: <Search /> },
     ],
   },
   {
@@ -2941,6 +3093,7 @@ function App() {
   const [mysticForgeLoadState, setMysticForgeLoadState] = useState<LoadState>("idle");
   const [mysticForgeUpdatedAt, setMysticForgeUpdatedAt] = useState<number | null>(null);
   const [marketHistoryRevision, setMarketHistoryRevision] = useState(0);
+  const [demandMovementByItem, setDemandMovementByItem] = useState<DemandMovementMap>(new Map());
   const [wikiGuide, setWikiGuide] = useState<WikiGuide | null>(null);
   const [containerAnalysis, setContainerAnalysis] = useState<ContainerAnalysis | null>(null);
   const [containerState, setContainerState] = useState<LoadState>("idle");
@@ -3016,6 +3169,26 @@ function App() {
       JSON.stringify(Array.from(favoriteItemIds).sort((left, right) => left - right)),
     );
   }, [favoriteItemIds]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    readAllMarketHistory()
+      .then((history) => {
+        if (!cancelled) {
+          setDemandMovementByItem(buildDemandMovementMap(history));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDemandMovementByItem(new Map());
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [marketHistoryRevision]);
 
   useEffect(() => {
     void (async () => {
@@ -4062,7 +4235,10 @@ function App() {
     await refreshApiStatuses("");
   }
 
-  async function runAnalysisForKey(key = apiKey.trim()) {
+  async function runAnalysisForKey(
+    key = apiKey.trim(),
+    options: { forceRefresh?: boolean } = {},
+  ) {
     if (!key) {
       setError("Paste a GW2 API key before account analysis.");
       return;
@@ -4073,10 +4249,14 @@ function App() {
     setProgressCount(null);
 
     try {
-      const result = await analyzeAccount(key, (message, done, total) => {
-        setProgress(message);
-        setProgressCount(done && total ? { done, total } : null);
-      });
+      const result = await analyzeAccount(
+        key,
+        (message, done, total) => {
+          setProgress(message);
+          setProgressCount(done && total ? { done, total } : null);
+        },
+        { forceRefresh: options.forceRefresh },
+      );
       setAnalysis(result);
       setAccountSnapshot(result.account);
       setAnalysisState("ready");
@@ -4097,6 +4277,15 @@ function App() {
     }
   }
 
+  const refreshOwnedAccountData = useCallback(async () => {
+    const key = apiKey.trim();
+    if (!key) {
+      return;
+    }
+
+    await refreshAccountSnapshot(key, { forceRefresh: true });
+  }, [apiKey]);
+
   const content = (() => {
     if (activePage === "account") {
       return (
@@ -4111,7 +4300,7 @@ function App() {
           apiStatusState={apiStatusState}
           catalog={catalog}
           dataImports={dataImports}
-          onAnalyze={() => runAnalysisForKey()}
+          onAnalyze={() => runAnalysisForKey(apiKey.trim(), { forceRefresh: true })}
           onApiKeyChange={setApiKey}
           onForgetApiKey={forgetApiKey}
           onOpenActivity={openActivityGuide}
@@ -4129,7 +4318,7 @@ function App() {
           accountSnapshot={accountSnapshot}
           accountItems={accountItems}
           analysisState={analysisState}
-          onAnalyze={() => runAnalysisForKey()}
+          onAnalyze={refreshOwnedAccountData}
           onOpenItem={(item) => {
             selectDetailItem(buildMarketItemForDetail(item));
             navigateToPage("market", { preserveSelectedItem: true });
@@ -4193,7 +4382,7 @@ function App() {
         <AchievementsPage
           accountSnapshot={accountSnapshot}
           analysisState={analysisState}
-          onAnalyze={() => runAnalysisForKey()}
+          onAnalyze={() => runAnalysisForKey(apiKey.trim(), { forceRefresh: true })}
           onImportStateChange={(state, updatedAt = null) => {
             setAchievementImportState(state);
             if (updatedAt) {
@@ -4233,7 +4422,7 @@ function App() {
           apiKeyRemembered={apiKeyRemembered}
           analysisState={analysisState}
           marketHistoryRevision={marketHistoryRevision}
-          onAnalyze={() => runAnalysisForKey()}
+          onAnalyze={() => runAnalysisForKey(apiKey.trim(), { forceRefresh: true })}
           onRefreshSnapshot={async () => {
             await refreshAccountSnapshot(apiKey.trim(), { forceRefresh: true });
           }}
@@ -4385,9 +4574,33 @@ function App() {
           analysis={analysis}
           analysisState={analysisState}
           marketHistoryRevision={marketHistoryRevision}
-          onAnalyze={() => runAnalysisForKey()}
+          onAnalyze={() => runAnalysisForKey(apiKey.trim(), { forceRefresh: true })}
           onCloseDetail={() => selectDetailItem(null)}
           onSelectItem={(item) => selectDetailItem(buildMarketItemForDetail(item))}
+        />
+      );
+    }
+
+    if (activePage === "sniping") {
+      return (
+        <SnipingPage
+          catalog={catalog}
+          loadState={loadState}
+          selectedItem={selectedItem}
+          listings={listings}
+          itemTransactions={itemTransactions}
+          recipes={recipes}
+          usedInRecipes={usedInRecipes}
+          recipeUsageState={recipeUsageState}
+          wikiGuide={wikiGuide}
+          detailState={detailState}
+          containerAnalysis={containerAnalysis}
+          containerState={containerState}
+          accountSnapshot={accountSnapshot}
+          marketHistoryRevision={marketHistoryRevision}
+          onCloseDetail={() => selectDetailItem(null)}
+          onSelectItem={(item) => selectDetailItem(buildMarketItemForDetail(item))}
+          onLoadMarket={loadCatalog}
         />
       );
     }
@@ -4540,7 +4753,9 @@ function App() {
   })();
 
   return (
-    <FavoriteItemsContext.Provider value={favoriteItemsContextValue}>
+    <DemandMovementContext.Provider value={demandMovementByItem}>
+      <FavoriteItemsContext.Provider value={favoriteItemsContextValue}>
+        <AccountRefreshContext.Provider value={apiKey.trim() ? refreshOwnedAccountData : null}>
       <div className="app-shell">
         <Sidebar
           activePage={activePage}
@@ -4593,7 +4808,9 @@ function App() {
           <div className="content-main">{content}</div>
         </main>
       </div>
-    </FavoriteItemsContext.Provider>
+        </AccountRefreshContext.Provider>
+      </FavoriteItemsContext.Provider>
+    </DemandMovementContext.Provider>
   );
 }
 
@@ -5348,7 +5565,7 @@ function AccountItemsPage({
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search owned item, type, rarity, source"
+            placeholder="Search owned item, type, rarity"
           />
         </label>
 
@@ -5382,14 +5599,13 @@ function OwnedItemTable({
 }) {
   const { sortedRows, renderHeader } = useSortableRows<
     OwnedItemRow,
-    "item" | "count" | "source" | "value"
+    "item" | "count" | "value"
   >(
     rows,
     { key: "item", direction: "asc" },
     {
       item: (left, right) => compareStringValue(left.item?.name ?? `Item ${left.id}`, right.item?.name ?? `Item ${right.id}`),
       count: (left, right) => compareNumberValue(left.count, right.count),
-      source: (left, right) => compareStringValue(describeOwnedItemSources(left), describeOwnedItemSources(right)),
       value: (left, right) => compareNumberValue(left.value, right.value),
     },
   );
@@ -5407,7 +5623,6 @@ function OwnedItemTable({
               <tr>
                 {renderHeader("item", "Item")}
                 {renderHeader("count", "Count")}
-                {renderHeader("source", "Source")}
                 {renderHeader("value", "Known Value")}
               </tr>
             </thead>
@@ -5436,7 +5651,6 @@ function OwnedItemTable({
                     </span>
                   </td>
                   <td>{row.count.toLocaleString()}</td>
-                  <td>{describeOwnedItemSources(row)}</td>
                   <td>{row.value ? <Money value={row.value} /> : "-"}</td>
                 </tr>
               ))}
@@ -7409,6 +7623,7 @@ function MarketPage({
   showLoadMarketAction?: boolean;
   emptyContent?: ReactNode;
 }) {
+  const demandMovementByItem = useDemandMovement();
   const [visibleItemCount, setVisibleItemCount] = useState(MARKET_LIST_INITIAL_ITEMS);
   const [demandFilter, setDemandFilter] = useState<DemandFilter>("listed");
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
@@ -7434,8 +7649,8 @@ function MarketPage({
     [demandFilter, filteredItems],
   );
   const advancedFilteredItems = useMemo(
-    () => demandFilteredItems.filter((item) => marketAdvancedFiltersMatch(item, advancedFilters)),
-    [advancedFilters, demandFilteredItems],
+    () => demandFilteredItems.filter((item) => marketAdvancedFiltersMatch(item, advancedFilters, demandMovementByItem)),
+    [advancedFilters, demandFilteredItems, demandMovementByItem],
   );
   const {
     sortedRows: sortedFilteredItems,
@@ -7448,8 +7663,8 @@ function MarketPage({
       name: (left, right) => compareStringValue(left.name, right.name),
       demand: (left, right) =>
         compareNumberValue(
-          getDemandRatio(left.price.buys.quantity, left.price.sells.quantity),
-          getDemandRatio(right.price.buys.quantity, right.price.sells.quantity),
+          getMarketItemDemandRatio(left, demandMovementByItem),
+          getMarketItemDemandRatio(right, demandMovementByItem),
         ),
       sell: (left, right) => compareNumberValue(left.price.sells.unit_price, right.price.sells.unit_price),
       buy: (left, right) => compareNumberValue(left.price.buys.unit_price, right.price.buys.unit_price),
@@ -7590,6 +7805,8 @@ function MarketPage({
                 <tbody>
                   {visibleItems.map((item) => {
                     const netSpread = getMarketNetSpread(item);
+                    const demandMovement = demandMovementByItem.get(item.id);
+                    const demandRatio = getMarketItemDemandRatio(item, demandMovementByItem);
                     return (
                     <tr
                       key={item.id}
@@ -7607,9 +7824,9 @@ function MarketPage({
                           </span>
                         </span>
                       </td>
-                      <td title="Demand uses current buy-order quantity divided by current sell-listing quantity.">
-                        <span className={`demand-ratio ${getDemandRatio(item.price.buys.quantity, item.price.sells.quantity) >= 1 ? "strong" : ""}`}>
-                          {formatDemandRatio(getDemandRatio(item.price.buys.quantity, item.price.sells.quantity))}
+                      <td title={getDemandTooltip(demandMovement)}>
+                        <span className={`demand-ratio ${demandRatio >= 1 ? "strong" : ""}`}>
+                          {formatDemandRatio(demandRatio)}
                         </span>
                         <small>
                           {formatCompactQuantity(item.price.buys.quantity)} wanted / {formatCompactQuantity(item.price.sells.quantity)} listed
@@ -9846,6 +10063,7 @@ function CraftProfitTable({
   hideQuantityAndPerItem?: boolean;
   onSelectCraft: (opportunity: CraftOpportunity) => void;
 }) {
+  const demandMovementByItem = useDemandMovement();
   const [sort, setSort] = useState<CraftProfitSort | null>(null);
   const rows = useMemo(() => {
     const nextRows: CraftProfitTableRow[] = opportunities.map((opportunity, index) => {
@@ -9854,7 +10072,7 @@ function CraftProfitTable({
       const grossPrice = price?.sells.unit_price ?? 0;
       const buyQuantity = price?.buys.quantity ?? 0;
       const sellQuantity = price?.sells.quantity ?? 0;
-      const demandRatio = getDemandRatio(buyQuantity, sellQuantity);
+      const demandRatio = getDemandRatio(buyQuantity, sellQuantity, demandMovementByItem.get(opportunity.output.id));
 
       return {
         opportunity,
@@ -9878,7 +10096,7 @@ function CraftProfitTable({
       const result = compareCraftProfitRows(left, right, sort.key);
       return result === 0 ? left.index - right.index : result * direction;
     });
-  }, [opportunities, sort]);
+  }, [demandMovementByItem, opportunities, sort]);
 
   const toggleSort = (key: CraftProfitSortKey) => {
     setSort((current) => {
@@ -9955,7 +10173,7 @@ function CraftProfitTable({
                   </span>
                 </td>
                 {!hideQuantityAndPerItem ? <td>{quantity.toLocaleString()}</td> : null}
-                <td title="Demand uses current buy-order quantity divided by current sell-listing quantity.">
+                <td title={getDemandTooltip(demandMovementByItem.get(opportunity.output.id))}>
                   <span className={`demand-ratio ${demandRatio >= 1 ? "strong" : ""}`}>
                     {formatDemandRatio(demandRatio)}
                   </span>
@@ -10056,6 +10274,80 @@ function formatDemandRatio(value: number): string {
   return `${value.toFixed(2)}x`;
 }
 
+function buildDemandMovementMap(points: MarketHistoryPoint[], now = Date.now()): DemandMovementMap {
+  const cutoff = now - DEMAND_MOVEMENT_LOOKBACK_MS;
+  const grouped = new Map<number, MarketHistoryPoint[]>();
+
+  for (const point of points) {
+    const recordedAt = new Date(point.recordedAt).getTime();
+    if (!Number.isFinite(recordedAt) || recordedAt < cutoff) {
+      continue;
+    }
+
+    const rows = grouped.get(point.itemId) ?? [];
+    rows.push(point);
+    grouped.set(point.itemId, rows);
+  }
+
+  const movementByItem: DemandMovementMap = new Map();
+  for (const [itemId, rows] of grouped) {
+    const movement = getDemandMovementInfo(rows, now);
+    if (movement) {
+      movementByItem.set(itemId, movement);
+    }
+  }
+
+  return movementByItem;
+}
+
+function getDemandMovementInfo(points: MarketHistoryPoint[], now = Date.now()): DemandMovementInfo | null {
+  if (points.length < 3) {
+    return null;
+  }
+
+  const rows = [...points]
+    .map((point) => ({ point, time: new Date(point.recordedAt).getTime() }))
+    .filter((row) => Number.isFinite(row.time))
+    .sort((left, right) => left.time - right.time);
+
+  if (rows.length < 3) {
+    return null;
+  }
+
+  const supplyValues = rows.map((row) => Math.max(0, row.point.sellQuantity));
+  const averageSupply = supplyValues.reduce((sum, value) => sum + value, 0) / supplyValues.length;
+  const meaningfulDelta = Math.max(1, averageSupply * 0.001);
+  let totalMovement = 0;
+  let lastMovementAt: number | null = null;
+
+  for (let index = 1; index < rows.length; index += 1) {
+    const delta = Math.abs(rows[index].point.sellQuantity - rows[index - 1].point.sellQuantity);
+    totalMovement += delta;
+    if (delta >= meaningfulDelta) {
+      lastMovementAt = rows[index].time;
+    }
+  }
+
+  const movementRatio = totalMovement / Math.max(1, averageSupply);
+  const movementScore = clampNumber(Math.log1p(movementRatio * 8) / Math.log1p(8), 0, 1);
+  const freshnessScore = lastMovementAt
+    ? clampNumber(1 - (now - lastMovementAt) / DEMAND_MOVEMENT_LOOKBACK_MS, 0, 1)
+    : 0;
+  const spanHours = Math.max(0, rows[rows.length - 1].time - rows[0].time) / HOUR_MS;
+  const confidence = clampNumber((rows.length - 1) / 4, 0, 1) * clampNumber(spanHours / 12, 0, 1);
+  const activityScore = movementScore * 0.72 + freshnessScore * 0.28;
+  const dampenedMultiplier =
+    DEMAND_MOVEMENT_MIN_MULTIPLIER + (1 - DEMAND_MOVEMENT_MIN_MULTIPLIER) * activityScore;
+
+  return {
+    multiplier: 1 - confidence * (1 - dampenedMultiplier),
+    movementScore,
+    freshnessScore,
+    sampleCount: rows.length,
+    lastMovementAt,
+  };
+}
+
 function getDemandCategory(buyQuantity: number, sellQuantity: number): DemandCategory {
   if (buyQuantity <= 0) {
     return "none";
@@ -10068,12 +10360,42 @@ function getDemandCategory(buyQuantity: number, sellQuantity: number): DemandCat
   return "listed";
 }
 
-function getDemandRatio(buyQuantity: number, sellQuantity: number): number {
+function getDemandRatio(
+  buyQuantity: number,
+  sellQuantity: number,
+  movementInfo?: DemandMovementInfo | null,
+): number {
   if (sellQuantity > 0) {
-    return buyQuantity / sellQuantity;
+    return (buyQuantity / sellQuantity) * (movementInfo?.multiplier ?? 1);
   }
 
   return buyQuantity > 0 ? Number.POSITIVE_INFINITY : 0;
+}
+
+function getMarketItemDemandRatio(item: MarketItem | null | undefined, demandMovementByItem?: DemandMovementMap): number {
+  if (!item) {
+    return 0;
+  }
+
+  return getDemandRatio(
+    item.price.buys.quantity,
+    item.price.sells.quantity,
+    demandMovementByItem?.get(item.id),
+  );
+}
+
+function getDemandTooltip(movementInfo?: DemandMovementInfo | null): string {
+  const base = "Effective demand uses current buy-order quantity divided by current sell-listing quantity.";
+  if (!movementInfo || movementInfo.multiplier >= 0.995) {
+    return `${base} Local history has not lowered this item.`;
+  }
+
+  const movementPercent = Math.round(movementInfo.multiplier * 100);
+  const lastMovement = movementInfo.lastMovementAt
+    ? ` Last sell-side movement: ${formatAge(movementInfo.lastMovementAt)}.`
+    : " No sell-side movement detected in the recent local history window.";
+
+  return `${base} Local history lowers this to ${movementPercent}% because sell listings have barely moved across ${movementInfo.sampleCount} samples.${lastMovement}`;
 }
 
 function getMarketFilterNumber(value: string): number | null {
@@ -10112,7 +10434,7 @@ function marketFilterRangeMatches(key: MarketFilterRangeKey, value: number, rang
   return true;
 }
 
-function getMarketFilterValue(item: MarketItem, key: MarketFilterRangeKey): number {
+function getMarketFilterValue(item: MarketItem, key: MarketFilterRangeKey, demandMovementByItem?: DemandMovementMap): number {
   if (key === "demand") {
     return item.price.buys.quantity;
   }
@@ -10130,15 +10452,15 @@ function getMarketFilterValue(item: MarketItem, key: MarketFilterRangeKey): numb
   }
 
   if (key === "demandRatio") {
-    return getDemandRatio(item.price.buys.quantity, item.price.sells.quantity);
+    return getMarketItemDemandRatio(item, demandMovementByItem);
   }
 
   return item.price.sells.quantity;
 }
 
-function marketAdvancedFiltersMatch(item: MarketItem, filters: MarketAdvancedFilters): boolean {
+function marketAdvancedFiltersMatch(item: MarketItem, filters: MarketAdvancedFilters, demandMovementByItem?: DemandMovementMap): boolean {
   return (Object.keys(filters) as MarketFilterRangeKey[]).every((key) =>
-    marketFilterRangeMatches(key, getMarketFilterValue(item, key), filters[key]),
+    marketFilterRangeMatches(key, getMarketFilterValue(item, key, demandMovementByItem), filters[key]),
   );
 }
 
@@ -10610,6 +10932,420 @@ function getLegendaryDisplayMarketCost(entry: { outputValue: number; marketCost:
   return entry.outputValue > 0 ? entry.marketCost : -1;
 }
 
+const SNIPING_MIN_PROFIT_PER_ITEM = 300;
+const SNIPING_MIN_TOTAL_PROFIT = 500;
+const SNIPING_DEPTH_ROW_LIMIT = 60;
+const SNIPING_DEPTH_CONCURRENCY = 3;
+
+function getSnipingOpportunityKey(row: SnipingOpportunityRow): string {
+  return `${row.type}:${row.item.id}:${row.buyCost}:${row.sellValue}:${row.profitPerItem}`;
+}
+
+function estimateSnipingDepth(row: SnipingOpportunityRow, listings: CommerceListings): SnipingDepthEstimate {
+  const sortedSells = [...listings.sells].sort((left, right) => left.unit_price - right.unit_price);
+  const targetReturn = row.type === "Re-sell"
+    ? getTradingPostNetValue(row.item.price.buys.unit_price)
+    : row.sellValue;
+  let remainingResaleDemand = row.type === "Re-sell" ? row.item.price.buys.quantity : Number.POSITIVE_INFINITY;
+  let count = 0;
+  let estimatedTotalProfit = 0;
+
+  for (const listing of sortedSells) {
+    if (remainingResaleDemand <= 0) {
+      break;
+    }
+
+    const unitProfit = targetReturn - listing.unit_price;
+    if (unitProfit < SNIPING_MIN_PROFIT_PER_ITEM) {
+      break;
+    }
+
+    const usableQuantity = Math.min(listing.quantity, remainingResaleDemand);
+    count += usableQuantity;
+    estimatedTotalProfit += usableQuantity * unitProfit;
+    remainingResaleDemand -= usableQuantity;
+  }
+
+  return {
+    status: "ready",
+    count: estimatedTotalProfit >= SNIPING_MIN_TOTAL_PROFIT ? count : 0,
+    estimatedTotalProfit: estimatedTotalProfit >= SNIPING_MIN_TOTAL_PROFIT ? estimatedTotalProfit : 0,
+    checkedAt: Date.now(),
+  };
+}
+
+function SnipingPage({
+  catalog,
+  loadState,
+  selectedItem,
+  listings,
+  itemTransactions,
+  recipes,
+  usedInRecipes,
+  recipeUsageState,
+  wikiGuide,
+  detailState,
+  containerAnalysis,
+  containerState,
+  accountSnapshot,
+  marketHistoryRevision,
+  onCloseDetail,
+  onSelectItem,
+  onLoadMarket,
+}: {
+  catalog: MarketItem[];
+  loadState: LoadState;
+  selectedItem: MarketItem | null;
+  listings: CommerceListings | null;
+  itemTransactions: ItemTransactions | null;
+  recipes: RecipeGuide[];
+  usedInRecipes: RecipeGuide[];
+  recipeUsageState: LoadState;
+  wikiGuide: WikiGuide | null;
+  detailState: LoadState;
+  containerAnalysis: ContainerAnalysis | null;
+  containerState: LoadState;
+  accountSnapshot: AccountSnapshot | null;
+  marketHistoryRevision: number;
+  onCloseDetail: () => void;
+  onSelectItem: (item: MarketItem) => void;
+  onLoadMarket: () => Promise<MarketItem[]>;
+}) {
+  const demandMovementByItem = useDemandMovement();
+  const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"all" | SnipingOpportunityType>("all");
+  const [depthByOpportunity, setDepthByOpportunity] = useState<Record<string, SnipingDepthEstimate>>({});
+  const depthByOpportunityRef = useRef(depthByOpportunity);
+  const opportunities = useMemo(
+    () => buildSnipingOpportunityRows(catalog, demandMovementByItem),
+    [catalog, demandMovementByItem],
+  );
+  const filteredOpportunities = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return opportunities.filter((row) => {
+      const matchesType = typeFilter === "all" || row.type === typeFilter;
+      if (!matchesType) {
+        return false;
+      }
+
+      if (!normalizedQuery) {
+        return true;
+      }
+
+      return (
+        row.item.name.toLowerCase().includes(normalizedQuery) ||
+        row.item.rarity.toLowerCase().includes(normalizedQuery) ||
+        row.item.type.toLowerCase().includes(normalizedQuery) ||
+        row.type.toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [opportunities, query, typeFilter]);
+  const typeCounts = useMemo(
+    () => ({
+      all: opportunities.length,
+      Salvage: opportunities.filter((row) => row.type === "Salvage").length,
+      "Re-sell": opportunities.filter((row) => row.type === "Re-sell").length,
+    }),
+    [opportunities],
+  );
+  const selectedOpportunityItem =
+    selectedItem && opportunities.some((row) => row.item.id === selectedItem.id) ? selectedItem : null;
+  const topProfit = opportunities[0]?.profitPerItem ?? 0;
+  const topTotalProfit = opportunities[0]?.estimatedTotalProfit ?? 0;
+  const { sortedRows, renderHeader } = useSortableRows<
+    SnipingOpportunityRow,
+    "item" | "type" | "demand" | "buy" | "sell" | "profit" | "count" | "total"
+  >(
+    filteredOpportunities,
+    { key: "profit", direction: "desc" },
+    {
+      item: (left, right) => compareStringValue(left.item.name, right.item.name),
+      type: (left, right) => compareStringValue(left.type, right.type),
+      demand: (left, right) => compareNumberValue(left.demandRatio, right.demandRatio),
+      buy: (left, right) => compareNumberValue(left.buyCost, right.buyCost),
+      sell: (left, right) => compareNumberValue(left.sellValue, right.sellValue),
+      profit: (left, right) => compareNumberValue(left.profitPerItem, right.profitPerItem),
+      count: (left, right) => compareNumberValue(left.maxRecommendedCount, right.maxRecommendedCount),
+      total: (left, right) => compareNumberValue(left.estimatedTotalProfit, right.estimatedTotalProfit),
+    },
+  );
+  const depthTargetKey = useMemo(
+    () =>
+      sortedRows
+        .slice(0, SNIPING_DEPTH_ROW_LIMIT)
+        .map((row) => getSnipingOpportunityKey(row))
+        .join("|"),
+    [sortedRows],
+  );
+
+  useEffect(() => {
+    depthByOpportunityRef.current = depthByOpportunity;
+  }, [depthByOpportunity]);
+
+  useEffect(() => {
+    const targets = sortedRows
+      .slice(0, SNIPING_DEPTH_ROW_LIMIT)
+      .filter((row) => !depthByOpportunityRef.current[getSnipingOpportunityKey(row)]);
+
+    if (!targets.length) {
+      return;
+    }
+
+    let cancelled = false;
+    setDepthByOpportunity((current) => {
+      const next = { ...current };
+      for (const row of targets) {
+        const key = getSnipingOpportunityKey(row);
+        next[key] = {
+          status: "loading",
+          count: row.maxRecommendedCount,
+          estimatedTotalProfit: row.estimatedTotalProfit,
+          checkedAt: Date.now(),
+        };
+      }
+      return next;
+    });
+
+    const loadDepth = async () => {
+      for (let index = 0; index < targets.length; index += SNIPING_DEPTH_CONCURRENCY) {
+        const batch = targets.slice(index, index + SNIPING_DEPTH_CONCURRENCY);
+        const results = await Promise.all(
+          batch.map(async (row) => {
+            const key = getSnipingOpportunityKey(row);
+            try {
+              const itemListings = await loadListings(row.item.id);
+              return [key, estimateSnipingDepth(row, itemListings)] as const;
+            } catch {
+              return [
+                key,
+                {
+                  status: "error",
+                  count: row.maxRecommendedCount,
+                  estimatedTotalProfit: row.estimatedTotalProfit,
+                  checkedAt: Date.now(),
+                },
+              ] as const;
+            }
+          }),
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        setDepthByOpportunity((current) => {
+          const next = { ...current };
+          for (const [key, estimate] of results) {
+            next[key] = estimate;
+          }
+          return next;
+        });
+      }
+    };
+
+    void loadDepth();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [depthTargetKey]);
+
+  const visibleSortedRows = useMemo(
+    () =>
+      sortedRows.filter((row) => {
+        const depth = depthByOpportunity[getSnipingOpportunityKey(row)];
+        const estimatedCount = depth?.status === "ready" ? depth.count : row.maxRecommendedCount;
+        const estimatedTotalProfit = depth?.status === "ready" ? depth.estimatedTotalProfit : row.estimatedTotalProfit;
+        return estimatedCount > 0 && estimatedTotalProfit >= SNIPING_MIN_TOTAL_PROFIT;
+      }),
+    [depthByOpportunity, sortedRows],
+  );
+
+  return (
+    <div className={`market-workspace sniping-workspace ${selectedOpportunityItem ? "" : "detail-closed"}`}>
+      <aside className="market-panel craft-table-panel">
+        <section className="page-header compact-page-header">
+          <div>
+            <span className="eyebrow">Market Sniping</span>
+            <h2>Sniping</h2>
+            <p>
+              Fast-moving opportunities where the current Trading Post price can be turned into
+              profit through salvage outputs or a quick re-sell after fees.
+            </p>
+          </div>
+          <button className="icon-button primary" onClick={() => void onLoadMarket()} disabled={loadState === "loading"}>
+            {loadState === "loading" ? <Loader2 className="spin" /> : <RefreshCcw />}
+            <span>{loadState === "loading" ? "Loading" : catalog.length ? "Refresh Market" : "Load Market"}</span>
+          </button>
+        </section>
+
+        <section className="stat-grid compact-stat-grid">
+          <Metric icon={<Search />} label="Snipes" value={opportunities.length.toLocaleString()} />
+          <Metric icon={<Boxes />} label="Salvage" value={typeCounts.Salvage.toLocaleString()} />
+          <Metric icon={<TrendingUp />} label="Re-sell" value={typeCounts["Re-sell"].toLocaleString()} />
+          <Metric icon={<Coins />} label="Top Profit / Item" value={<Money value={topProfit} />} tone={topProfit ? "positive" : "muted"} />
+          <Metric icon={<Coins />} label="Top Total" value={<Money value={topTotalProfit} />} tone={topTotalProfit ? "positive" : "muted"} />
+        </section>
+
+        <section className="surface craft-profit-surface">
+          <div className="sniping-toolbar">
+            <label className="search-box">
+              <Search />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search snipes by item, rarity, type"
+              />
+            </label>
+            <div className="market-demand-filter sniping-type-filter" aria-label="Filter snipes by type">
+              {(["all", "Salvage", "Re-sell"] as const).map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  className={typeFilter === type ? "active" : ""}
+                  onClick={() => setTypeFilter(type)}
+                >
+                  <span>{type === "all" ? "All" : type}</span>
+                  <strong>{typeCounts[type].toLocaleString()}</strong>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {catalog.length === 0 && loadState !== "loading" ? (
+            <div className="empty-detail inline-empty">
+              <Database />
+              <h2>Market values not loaded</h2>
+              <p>Load the Trading Post to scan salvage and re-sell sniping opportunities.</p>
+              <button className="icon-button primary" onClick={() => void onLoadMarket()}>
+                <RefreshCcw />
+                <span>Load Market Values</span>
+              </button>
+            </div>
+          ) : loadState === "loading" && catalog.length === 0 ? (
+            <SkeletonRows />
+          ) : visibleSortedRows.length ? (
+            <div className="craft-table-wrap">
+              <table className="craft-profit-table sniping-table">
+                <thead>
+                  <tr>
+                    {renderHeader("item", "Item")}
+                    {renderHeader("type", "Type")}
+                    {renderHeader("demand", "Demand")}
+                    {renderHeader("buy", "Buy Cost")}
+                    {renderHeader("sell", "Return")}
+                    {renderHeader("profit", "Profit / Item")}
+                    {renderHeader("count", "Est. Count")}
+                    {renderHeader("total", "Est. Total Profit")}
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleSortedRows.map((row) => {
+                      const depth = depthByOpportunity[getSnipingOpportunityKey(row)];
+                      const displayCount = depth?.count ?? row.maxRecommendedCount;
+                      const displayTotalProfit = depth?.estimatedTotalProfit ?? row.estimatedTotalProfit;
+                      const depthNote =
+                        depth?.status === "ready"
+                          ? "Actual sell-listing tiers checked down to 3 silver profit each."
+                          : depth?.status === "loading"
+                            ? "Checking actual sell-listing tiers."
+                            : depth?.status === "error"
+                              ? "Could not check actual sell-listing tiers; showing conservative estimate."
+                              : "Conservative estimate until sell-listing tiers are checked.";
+
+                      return (
+                        <tr
+                          key={`${row.type}-${row.item.id}`}
+                          className={selectedOpportunityItem?.id === row.item.id ? "selected-row" : ""}
+                          onClick={() => onSelectItem(row.item)}
+                          title={`${row.sourceNote} ${depthNote}`}
+                        >
+                          <td>
+                            <span className="table-item-cell">
+                              <ItemIcon item={row.item} />
+                              <span className="item-copy">
+                                <strong>{row.item.name}</strong>
+                                <span>{row.item.rarity} {row.item.type}</span>
+                              </span>
+                            </span>
+                          </td>
+                          <td>
+                            <span className={`snipe-type snipe-${row.type === "Salvage" ? "salvage" : "resell"}`}>
+                              {row.type}
+                            </span>
+                            <small>{row.type === "Salvage" ? "Buy + salvage" : "Buy + re-sell"}</small>
+                          </td>
+                          <td title={getDemandTooltip(demandMovementByItem.get(row.item.id))}>
+                            <span className={`demand-ratio ${row.demandRatio >= 1 ? "strong" : ""}`}>
+                              {formatDemandRatio(row.demandRatio)}
+                            </span>
+                            <small>
+                              {formatCompactQuantity(row.item.price.buys.quantity)} wanted /{" "}
+                              {formatCompactQuantity(row.item.price.sells.quantity)} listed
+                            </small>
+                          </td>
+                          <td><Money value={row.buyCost} /></td>
+                          <td><Money value={row.sellValue} /></td>
+                          <td className="profit"><Money value={row.profitPerItem} /></td>
+                          <td>
+                            {displayCount.toLocaleString()}
+                            <small>
+                              {depth?.status === "loading"
+                                ? "checking"
+                                : depth?.status === "ready"
+                                  ? ">= 3s each"
+                                  : "estimate"}
+                            </small>
+                          </td>
+                          <td className="profit"><Money value={displayTotalProfit} /></td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+              <p className="market-list-note">
+                Est. count uses actual sell-listing tiers for the first ranked rows and stops when profit drops below{" "}
+                <Money value={SNIPING_MIN_PROFIT_PER_ITEM} /> per item, then hides rows below{" "}
+                <Money value={SNIPING_MIN_TOTAL_PROFIT} /> total profit. Rows still checking use a conservative one-item estimate.
+              </p>
+            </div>
+          ) : (
+            <div className="empty-detail inline-empty">
+              <Search />
+              <h2>No snipes found</h2>
+              <p>No loaded Trading Post rows currently match a positive salvage or re-sell opportunity.</p>
+            </div>
+          )}
+        </section>
+      </aside>
+
+      <MarketSplitHandle />
+
+      {selectedOpportunityItem ? (
+        <section className="detail-panel">
+          <ItemDetail
+            item={selectedOpportunityItem}
+            catalog={catalog}
+            listings={listings}
+            itemTransactions={itemTransactions}
+            recipes={recipes}
+            usedInRecipes={usedInRecipes}
+            recipeUsageState={recipeUsageState}
+            wikiGuide={wikiGuide}
+            detailState={detailState}
+            containerAnalysis={containerAnalysis}
+            containerState={containerState}
+            accountSnapshot={accountSnapshot}
+            marketHistoryRevision={marketHistoryRevision}
+            onClose={onCloseDetail}
+            onOpenDetail={(detailItem) => onSelectItem(buildMarketItemForDetail(detailItem))}
+          />
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 function SalvagingPage({
   catalog,
   loadState,
@@ -10647,6 +11383,7 @@ function SalvagingPage({
   onSelectItem: (item: MarketItem) => void;
   onLoadMarket: () => Promise<MarketItem[]>;
 }) {
+  const demandMovementByItem = useDemandMovement();
   const [salvageOutputRevision, setSalvageOutputRevision] = useState(0);
 
   useEffect(() => {
@@ -10697,8 +11434,8 @@ function SalvagingPage({
       output: (left, right) => compareStringValue(left.quote.item?.name ?? left.name, right.quote.item?.name ?? right.name),
       demand: (left, right) =>
         compareNumberValue(
-          getDemandRatio(left.quote.item?.price.buys.quantity ?? 0, left.quote.item?.price.sells.quantity ?? 0),
-          getDemandRatio(right.quote.item?.price.buys.quantity ?? 0, right.quote.item?.price.sells.quantity ?? 0),
+          getMarketItemDemandRatio(left.quote.item, demandMovementByItem),
+          getMarketItemDemandRatio(right.quote.item, demandMovementByItem),
         ),
       buy: (left, right) => compareNumberValue(left.quote.buyCost, right.quote.buyCost),
       sell: (left, right) => compareNumberValue(left.quote.instantSellNet, right.quote.instantSellNet),
@@ -10734,8 +11471,9 @@ function SalvagingPage({
             <h2>Salvaging</h2>
             <p>
               Salvageable Trading Post items ranked by buy cost, estimated salvage output value, and
-              projected profit. Exact non-rare material families need future drop-rate data, so those
-              rows stay visible but marked as unmodeled.
+              projected profit. Estimates assume {RUNECRAFTER_SALVAGE_KIT_NAME}; exact non-rare
+              material families need future drop-rate data, so those rows stay visible but marked as
+              unmodeled.
             </p>
           </div>
           <button className="icon-button primary" onClick={() => void onLoadMarket()} disabled={loadState === "loading"}>
@@ -10781,7 +11519,11 @@ function SalvagingPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedOutputRows.map((row) => (
+                  {sortedOutputRows.map((row) => {
+                    const demandMovement = row.quote.item ? demandMovementByItem.get(row.quote.item.id) : null;
+                    const demandRatio = getMarketItemDemandRatio(row.quote.item, demandMovementByItem);
+
+                    return (
                     <tr
                       key={row.name}
                       className={selectedSalvageItem?.id === row.quote.item?.id ? "selected-row" : ""}
@@ -10800,9 +11542,9 @@ function SalvagingPage({
                           </span>
                         </span>
                       </td>
-                      <td title="Demand uses current buy-order quantity divided by current sell-listing quantity.">
-                        <span className={`demand-ratio ${getDemandRatio(row.quote.item?.price.buys.quantity ?? 0, row.quote.item?.price.sells.quantity ?? 0) >= 1 ? "strong" : ""}`}>
-                          {formatDemandRatio(getDemandRatio(row.quote.item?.price.buys.quantity ?? 0, row.quote.item?.price.sells.quantity ?? 0))}
+                      <td title={getDemandTooltip(demandMovement)}>
+                        <span className={`demand-ratio ${demandRatio >= 1 ? "strong" : ""}`}>
+                          {formatDemandRatio(demandRatio)}
                         </span>
                         <small>
                           {formatCompactQuantity(row.quote.item?.price.buys.quantity ?? 0)} wanted /{" "}
@@ -10813,7 +11555,8 @@ function SalvagingPage({
                       <td>{row.quote.instantSellNet ? <Money value={row.quote.instantSellNet} /> : "Unavailable"}</td>
                       <td>{row.quote.item?.price.sells.quantity.toLocaleString() ?? "-"}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -10993,7 +11736,7 @@ function UnidentifiedGearPage({
         const quote = getMarketQuoteForId(catalog, definition.itemId, definition.aliases);
         const resolvedItem = resolvedGearItems.get(definition.itemId) ?? getStoredItem(definition.itemId);
         const detailItem = quote.item ?? (resolvedItem ? buildMarketItemForDetail(resolvedItem) : null);
-        const revenue = estimateSalvageOutputValue(definition.outputs, catalog);
+        const revenue = estimateRunecrafterNetSalvageValue(definition.outputs, catalog);
         const fee = estimateSalvageOutputFee(definition.outputs, catalog);
         const directSale = quote.instantSellNet || quote.listedSellNet;
 
@@ -11036,7 +11779,10 @@ function UnidentifiedGearPage({
           <div>
             <span className="eyebrow">Open or Sell</span>
             <h2>Unidentified Gear</h2>
-            <p>Select a gear tier to inspect possible contents, market value, and salvage estimates.</p>
+            <p>
+              Select a gear tier to inspect possible contents, market value, and Runecrafter
+              open-and-salvage estimates.
+            </p>
           </div>
           <button className="icon-button primary" onClick={() => void onLoadMarket()} disabled={loadState === "loading"}>
             {loadState === "loading" ? <Loader2 className="spin" /> : <RefreshCcw />}
@@ -11918,10 +12664,12 @@ function SalvageProfilePanel({
     };
   }, [outputItemIds]);
 
-  const salvageValue = useMemo(
+  const salvageOutputValue = useMemo(
     () => estimateSalvageOutputValue(profile.outputs, catalog),
     [catalog, outputRevision, profile.outputs],
   );
+  const salvageKitCost = estimateRunecrafterSalvageCost(profile.outputs);
+  const salvageValue = Math.max(0, salvageOutputValue - salvageKitCost);
   const directSellNet = item.price.buys.unit_price ? getTradingPostNetValue(item.price.buys.unit_price) : item.netSellPrice;
   const delta = salvageValue - directSellNet;
   const getOutputMarketValue = (output: SalvageOutputEstimate): number => {
@@ -11955,7 +12703,9 @@ function SalvageProfilePanel({
         <Metric icon={<Boxes />} label="Family" value={profile.familyLabel} />
         <Metric icon={<Coins />} label="Est. Value" value={salvageValue ? <Money value={salvageValue} /> : "Unpriced"} tone={salvageValue ? "positive" : "muted"} />
       </div>
-      <p className="muted-copy">{profile.note}</p>
+      <p className="muted-copy">
+        {profile.note} Assumes {RUNECRAFTER_SALVAGE_KIT_NAME} (<Money value={RUNECRAFTER_SALVAGE_COST} /> per use).
+      </p>
       {profile.outputs.length ? (
         <>
           <div className="craft-table-wrap">
@@ -12098,7 +12848,9 @@ function SalvageSimulator({
     [catalog, profile.outputs, simulatedSalvageCount],
   );
   const salvageValue = outputRows.reduce((sum, row) => sum + row.totalValue, 0);
-  const result = salvageValue - purchaseEstimate.totalCost;
+  const salvageKitCost = canRunSimulation ? RUNECRAFTER_SALVAGE_COST * simulatedSalvageCount : 0;
+  const salvageNetValue = Math.max(0, salvageValue - salvageKitCost);
+  const result = salvageNetValue - purchaseEstimate.totalCost;
   const unavailableReasons = [
     hasMarketPurchase ? null : "No sell listings are currently loaded for this item, so the app cannot estimate what it would cost to buy copies for salvaging.",
     hasSalvageOutputData ? null : "The app does not have known or confident modeled salvage results for this item yet, so it cannot estimate expected outputs.",
@@ -12125,7 +12877,7 @@ function SalvageSimulator({
           <strong>{item.name}</strong>
           <span>
             Buys listed copies from cheapest to highest until the requested amount is filled,
-            then applies the modeled salvage averages below.
+            then applies the modeled salvage averages below with {RUNECRAFTER_SALVAGE_KIT_NAME}.
           </span>
         </div>
         <label className="opening-input">
@@ -12172,8 +12924,12 @@ function SalvageSimulator({
         <article className="loot-stat">
           <h4>Estimated result</h4>
           <div>
-            <span>Output value</span>
-            <strong>{salvageValue ? <Money value={salvageValue} /> : "Unpriced"}</strong>
+            <span>Net output value</span>
+            <strong>{salvageNetValue ? <Money value={salvageNetValue} /> : "Unpriced"}</strong>
+          </div>
+          <div>
+            <span>Runecrafter cost</span>
+            <strong><Money value={salvageKitCost} /></strong>
           </div>
           <div>
             <span>{result >= 0 ? "Profit" : "Loss"}</span>
@@ -13618,8 +14374,10 @@ function buildSalvageEstimateRows(catalog: MarketItem[]): SalvageEstimateRow[] {
     .map((item) => {
       const quote = getMarketQuoteForItem(item);
       const estimate = getSalvageEstimateForItem(item);
-      const salvageValue = estimateSalvageOutputValue(estimate.outputs, catalog);
+      const salvageOutputValue = estimateSalvageOutputValue(estimate.outputs, catalog);
       const salvageFee = estimateSalvageOutputFee(estimate.outputs, catalog);
+      const salvageKitCost = estimateRunecrafterSalvageCost(estimate.outputs);
+      const salvageValue = Math.max(0, salvageOutputValue - salvageKitCost);
       const directSellNet = quote.instantSellNet || quote.listedSellNet;
 
       return {
@@ -13628,6 +14386,7 @@ function buildSalvageEstimateRows(catalog: MarketItem[]): SalvageEstimateRow[] {
         directSellNet,
         salvageValue,
         salvageFee,
+        salvageKitCost,
         buySalvageProfit: salvageValue - quote.buyCost,
         salvageInsteadOfSell: salvageValue - directSellNet,
         outputs: estimate.outputs,
@@ -13653,6 +14412,54 @@ function buildSalvageEstimateRows(catalog: MarketItem[]): SalvageEstimateRow[] {
     .slice(0, SALVAGE_ROW_LIMIT);
 }
 
+function buildSnipingOpportunityRows(catalog: MarketItem[], demandMovementByItem?: DemandMovementMap): SnipingOpportunityRow[] {
+  const salvageRows = buildSalvageEstimateRows(catalog)
+    .filter((row) => row.outputs.length > 0 && row.buySalvageProfit > 0 && row.purchaseCost > 0)
+    .map((row): SnipingOpportunityRow => {
+      const count = 1;
+      return {
+        item: row.item,
+        type: "Salvage",
+        demandRatio: getMarketItemDemandRatio(row.item, demandMovementByItem),
+        buyCost: row.purchaseCost,
+        sellValue: row.salvageValue,
+        profitPerItem: row.buySalvageProfit,
+        maxRecommendedCount: count,
+        estimatedTotalProfit: row.buySalvageProfit * count,
+        sourceNote: "Conservative one-item estimate. Open the detail page to inspect order depth before buying stacks.",
+      };
+    });
+
+  const resaleRows = catalog
+    .filter((item) => item.price.sells.unit_price > 0 && item.price.buys.unit_price > 0)
+    .map((item): SnipingOpportunityRow => {
+      const buyCost = item.price.sells.unit_price;
+      const sellValue = getTradingPostNetValue(item.price.buys.unit_price);
+      const profitPerItem = sellValue - buyCost;
+      const count = 1;
+
+      return {
+        item,
+        type: "Re-sell",
+        demandRatio: getMarketItemDemandRatio(item, demandMovementByItem),
+        buyCost,
+        sellValue,
+        profitPerItem,
+        maxRecommendedCount: count,
+        estimatedTotalProfit: profitPerItem * count,
+        sourceNote: "Conservative one-item estimate. Open the detail page to inspect order depth before buying stacks.",
+      };
+    })
+    .filter((row) => row.profitPerItem > 0 && row.maxRecommendedCount > 0);
+
+  return [...salvageRows, ...resaleRows].sort(
+    (left, right) =>
+      right.profitPerItem - left.profitPerItem ||
+      right.estimatedTotalProfit - left.estimatedTotalProfit ||
+      left.item.name.localeCompare(right.item.name),
+  );
+}
+
 function isSalvageMarketCandidate(item: MarketItem): boolean {
   if (item.flags?.includes("NoSalvage") || item.price.sells.unit_price <= 0) {
     return false;
@@ -13669,31 +14476,31 @@ function getSalvageEstimateForItem(item: MarketItem | Gw2Item): SalvageProfile {
 
   if (/rare unidentified gear/.test(name)) {
     return {
-      outputs: RARE_GEAR_OUTPUTS,
+      outputs: RARE_UNIDENTIFIED_OUTPUTS,
       confidence: "Estimated from level/rarity",
       familyLabel: "Opened gear mix",
       tierLabel: "Level 80 rare mix",
-      note: "Rare unidentified gear modeled with the rare gear ectoplasm estimate.",
+      note: "Rare unidentified gear modeled as level 80 opened equipment: Rare 98.7%, Exotic 1.3%.",
     };
   }
 
   if (/common unidentified gear|uncommon unidentified gear/.test(name)) {
     return {
-      outputs: MASTERWORK_GEAR_OUTPUTS,
+      outputs: COMMON_UNIDENTIFIED_OUTPUTS,
       confidence: "Estimated from level/rarity",
       familyLabel: "Opened gear mix",
       tierLabel: "Level 80 mixed gear",
-      note: "Uncommon unidentified gear modeled as a mixed level-80 open-and-salvage basket.",
+      note: "Common unidentified gear modeled as level 80 opened equipment: Fine 89%, Masterwork 9.9%, Rare 1%, Exotic 0.1%.",
     };
   }
 
   if (/unidentified gear/.test(name)) {
     return {
-      outputs: FINE_GEAR_OUTPUTS,
+      outputs: MASTERWORK_UNIDENTIFIED_OUTPUTS,
       confidence: "Estimated from level/rarity",
       familyLabel: "Opened gear mix",
       tierLabel: "Level 80 mixed gear",
-      note: "Fine unidentified gear modeled as a mixed level-80 open-and-salvage basket.",
+      note: "Unidentified gear modeled as level 80 opened equipment: Masterwork 96.4%, Rare 3.4%, Exotic 0.2%.",
     };
   }
 
@@ -13702,12 +14509,16 @@ function getSalvageEstimateForItem(item: MarketItem | Gw2Item): SalvageProfile {
   }
 
   if (item.type === "UpgradeComponent") {
+    const upgradeType = String(item.details?.type ?? "");
     return {
       outputs: getUpgradeComponentSalvageOutputs(item),
       confidence: "Estimated from level/rarity",
-      familyLabel: "Upgrade component",
+      familyLabel: upgradeType === "Rune" || upgradeType === "Sigil" ? upgradeType : "Upgrade component",
       tierLabel: item.level ? `Level ${item.level}` : "Any level",
-      note: "Upgrade component estimate. Exact charm, symbol, and lucent output depends on the specific rune, sigil, relic, or upgrade.",
+      note:
+        upgradeType === "Rune" || upgradeType === "Sigil"
+          ? `${upgradeType} estimate based on GW2 Wiki salvage research and the item's element.`
+          : "Generic upgrade component estimate. Exact outputs are not fully modeled for this upgrade type yet.",
     };
   }
 
@@ -13828,14 +14639,78 @@ function getSalvageMaterialFamilies(item: MarketItem | Gw2Item): SalvageMaterial
 }
 
 function getUpgradeComponentSalvageOutputs(item: MarketItem | Gw2Item): SalvageOutputEstimate[] {
+  const upgradeType = String(item.details?.type ?? "");
+  const upgradeTier = getRuneSigilTier(item);
+  const element = getUpgradeComponentElement(item);
+
+  if (upgradeType === "Rune") {
+    const rates = UPGRADE_COMPONENT_SALVAGE_RATES.Rune[upgradeTier];
+    const charmName = getRuneCharmOutput(element);
+    const outputs = [
+      makeSalvageOutput("Lucent Mote", rates.motes, `${upgradeTier} rune salvage research average`),
+    ];
+
+    if (charmName) {
+      outputs.push(makeSalvageOutput(charmName, rates.special, `${element} rune charm average`));
+    }
+
+    return outputs;
+  }
+
+  if (upgradeType === "Sigil") {
+    const rates = UPGRADE_COMPONENT_SALVAGE_RATES.Sigil[upgradeTier];
+    const symbolName = getSigilSymbolOutput(element);
+    const outputs = [
+      makeSalvageOutput("Lucent Mote", rates.motes, `${upgradeTier} sigil salvage research average`),
+    ];
+
+    if (symbolName) {
+      outputs.push(makeSalvageOutput(symbolName, rates.special, `${element} sigil symbol average`));
+    }
+
+    return outputs;
+  }
+
   const outputs: SalvageOutputEstimate[] = [
-    makeSalvageOutput(
-      item.rarity === "Exotic" || item.rarity === "Rare" ? "Pile of Lucent Crystal" : "Lucent Mote",
-      item.rarity === "Exotic" ? 1.35 : item.rarity === "Rare" ? 0.75 : 1,
-    ),
+    makeSalvageOutput("Lucent Mote", getFallbackUpgradeComponentMoteAverage(item), "Generic upgrade component estimate"),
   ];
 
   return outputs;
+}
+
+function getRuneSigilTier(item: MarketItem | Gw2Item): keyof typeof UPGRADE_COMPONENT_SALVAGE_RATES.Rune {
+  if (/^Superior\b/i.test(item.name) || item.rarity === "Exotic") {
+    return "Superior";
+  }
+  if (/^Major\b/i.test(item.name) || item.rarity === "Masterwork") {
+    return "Major";
+  }
+  return "Minor";
+}
+
+function getUpgradeComponentElement(item: MarketItem | Gw2Item): string {
+  const description = String(item.description ?? "");
+  const match = description.match(/Element:\s*(?:<\/c>)?\s*([^<\n]+)/i);
+  return match?.[1]?.trim() ?? "";
+}
+
+function getRuneCharmOutput(element: string): string | null {
+  return RUNE_ELEMENT_OUTPUTS[element as keyof typeof RUNE_ELEMENT_OUTPUTS] ?? null;
+}
+
+function getSigilSymbolOutput(element: string): string | null {
+  return SIGIL_ELEMENT_OUTPUTS[element as keyof typeof SIGIL_ELEMENT_OUTPUTS] ?? null;
+}
+
+function getFallbackUpgradeComponentMoteAverage(item: MarketItem | Gw2Item): number {
+  switch (getRuneSigilTier(item)) {
+    case "Superior":
+      return 3.15;
+    case "Major":
+      return 1.8;
+    default:
+      return 1;
+  }
 }
 
 function estimateSalvageOutputValue(outputs: SalvageOutputEstimate[], catalog: MarketItem[]): number {
@@ -13846,6 +14721,19 @@ function estimateSalvageOutputValue(outputs: SalvageOutputEstimate[], catalog: M
       return sum + unitValue * output.averageCount;
     }, 0),
   );
+}
+
+function estimateRunecrafterSalvageCost(outputs: SalvageOutputEstimate[], count = 1): number {
+  return outputs.length > 0 ? RUNECRAFTER_SALVAGE_COST * Math.max(1, Math.floor(count)) : 0;
+}
+
+function estimateRunecrafterNetSalvageValue(
+  outputs: SalvageOutputEstimate[],
+  catalog: MarketItem[],
+  count = 1,
+): number {
+  const outputValue = estimateSalvageOutputValue(outputs, catalog) * Math.max(1, Math.floor(count));
+  return Math.max(0, outputValue - estimateRunecrafterSalvageCost(outputs, count));
 }
 
 function estimateSalvageOutputFee(outputs: SalvageOutputEstimate[], catalog: MarketItem[]): number {
@@ -14169,6 +15057,7 @@ function ItemDetail({
   extraInfo?: ReactNode;
 }) {
   const { isFavoriteItem, toggleFavoriteItem } = useFavoriteItems();
+  const refreshAccountData = useAccountRefresh();
   const topBuy = listings?.buys?.[0];
   const topSell = listings?.sells?.[0];
   const isTradable = hasTradingPostPrice(item);
@@ -14179,8 +15068,24 @@ function ItemDetail({
   const showSalvageSimulator = isSalvageableNonContainer;
   const [wikiAcquisition, setWikiAcquisition] = useState<WikiItemAcquisition | null>(null);
   const [wikiAcquisitionState, setWikiAcquisitionState] = useState<LoadState>("idle");
+  const [isRefreshingOwnedItems, setIsRefreshingOwnedItems] = useState(false);
+  const [selectedRecipeIndex, setSelectedRecipeIndex] = useState(0);
   const isFavorite = isFavoriteItem(item);
   const netSpread = getMarketNetSpread(item);
+  const canRefreshOwnedItems = Boolean(accountSnapshot && refreshAccountData);
+
+  async function refreshOwnedItems() {
+    if (!refreshAccountData || isRefreshingOwnedItems) {
+      return;
+    }
+
+    setIsRefreshingOwnedItems(true);
+    try {
+      await refreshAccountData();
+    } finally {
+      setIsRefreshingOwnedItems(false);
+    }
+  }
 
   useEffect(() => {
     let ignore = false;
@@ -14209,6 +15114,16 @@ function ItemDetail({
     };
   }, [item.name]);
 
+  useEffect(() => {
+    setSelectedRecipeIndex(0);
+  }, [item.id]);
+
+  useEffect(() => {
+    if (selectedRecipeIndex >= recipes.length) {
+      setSelectedRecipeIndex(0);
+    }
+  }, [recipes.length, selectedRecipeIndex]);
+
   return (
     <div className="item-detail">
       <section className="item-title-row">
@@ -14220,6 +15135,18 @@ function ItemDetail({
             {item.type} - Level {item.level || "Any"}
           </p>
         </div>
+        {canRefreshOwnedItems ? (
+          <button
+            className="detail-account-refresh-button"
+            type="button"
+            onClick={() => void refreshOwnedItems()}
+            disabled={isRefreshingOwnedItems}
+            aria-label="Refresh owned item counts"
+            title="Refresh owned item counts from your GW2 API key"
+          >
+            {isRefreshingOwnedItems ? <Loader2 className="spin" /> : <RefreshCcw />}
+          </button>
+        ) : null}
         <button
           className={`detail-favorite-button ${isFavorite ? "active" : ""}`}
           type="button"
@@ -14285,7 +15212,9 @@ function ItemDetail({
       {recipes.length ? (
         <RoutePlanner
           item={item}
+          catalog={catalog}
           recipes={recipes}
+          selectedRecipeIndex={selectedRecipeIndex}
           accountSnapshot={accountSnapshot}
         />
       ) : null}
@@ -14302,6 +15231,8 @@ function ItemDetail({
         <IngredientMindMap
           item={item}
           recipes={recipes}
+          selectedRecipeIndex={selectedRecipeIndex}
+          onSelectRecipeIndex={setSelectedRecipeIndex}
           accountSnapshot={accountSnapshot}
           wikiGuide={wikiGuide}
           onOpenDetail={onOpenDetail}
@@ -16391,10 +17322,17 @@ function buildUnidentifiedGearContainerAnalysis(
     }),
     exactChancesAvailable: false,
     parserNotes: [
-      `${definition.tier} unidentified gear uses local salvage-output estimates because the wiki does not expose exact structured drop chances.`,
+      `${definition.tier} unidentified gear is modeled as level 80 opened equipment with wiki-listed rarity chances: ${formatUnidentifiedRarityChances(definition.rarityChances)}.`,
+      "The salvage table is probability-weighted, so rare and exotic upgrades are already included in the average output values.",
       definition.note,
     ],
   };
+}
+
+function formatUnidentifiedRarityChances(rarityChances: UnidentifiedGearRarityChance[]): string {
+  return rarityChances
+    .map((entry) => `${entry.rarity} ${formatPercent(entry.chancePct)}`)
+    .join(", ");
 }
 
 function isEstimatedSalvageDrop(drop: ContainerDrop): boolean {
@@ -17375,8 +18313,9 @@ function RecipeSummaryRow({
   const outputName = outputItem?.name ?? "Recipe output";
   const sourceLabel = getRecipeSourceLabel(guide.recipe);
   const sourceUrl = getRecipeSourceUrl(guide.recipe, outputName);
-  const cost = accountSnapshot ? guide.personalCost : guide.marketCost;
-  const profit = accountSnapshot ? guide.personalProfit : guide.netProfit;
+  const personalMetrics = getRecipePersonalMetrics(guide, accountSnapshot);
+  const cost = accountSnapshot ? personalMetrics.personalCost : guide.marketCost;
+  const profit = accountSnapshot ? personalMetrics.personalProfit : guide.netProfit;
   const canOpenDetail = Boolean(outputItem && onOpenDetail);
   const openOutputDetail = () => {
     if (outputItem && onOpenDetail) {
@@ -17446,37 +18385,61 @@ function RecipeSummaryRow({
 
 function RoutePlanner({
   item,
+  catalog,
   recipes,
+  selectedRecipeIndex,
   accountSnapshot,
 }: {
   item: MarketItem;
+  catalog: MarketItem[];
   recipes: RecipeGuide[];
+  selectedRecipeIndex: number;
   accountSnapshot: AccountSnapshot | null;
 }) {
-  const bestRecipe = [...recipes].sort((left, right) => {
-    const leftCost = accountSnapshot ? left.personalCost : left.marketCost;
-    const rightCost = accountSnapshot ? right.personalCost : right.marketCost;
-    return leftCost - rightCost;
-  })[0];
+  const bestRecipe = recipes[selectedRecipeIndex] ?? recipes[0];
+  const bestRecipeMetrics = bestRecipe ? getRecipePersonalMetrics(bestRecipe, accountSnapshot) : null;
   const ownedCount = accountSnapshot?.holdings.get(item.id) ?? 0;
   const buyCost = item.price.sells.unit_price;
   const hasBuyPrice = hasTradingPostPrice(item);
   const personalCraftCost = bestRecipe
     ? accountSnapshot
-      ? bestRecipe.personalCost
+      ? bestRecipeMetrics?.personalCost ?? bestRecipe.personalCost
       : bestRecipe.marketCost
     : Number.POSITIVE_INFINITY;
   const fullRecipeCost = bestRecipe ? bestRecipe.marketCost : Number.POSITIVE_INFINITY;
   const hasRecipeSellValue = Boolean(bestRecipe && bestRecipe.outputValue > 0);
   const bestRecipeFee = bestRecipe ? getRecipeTradingPostFee(bestRecipe) : 0;
-  const recommendedRoute =
-    accountSnapshot && ownedCount > 0
-      ? "owned"
-      : bestRecipe && (!hasBuyPrice || personalCraftCost < buyCost)
-        ? "craft"
-        : hasBuyPrice
-          ? "buy"
-          : "direct";
+  const ingredientSaleValue = bestRecipe ? estimateRecipeIngredientSaleValue(bestRecipe, catalog) : 0;
+  const ingredientSaleDelta = bestRecipe ? bestRecipe.outputValue - ingredientSaleValue : 0;
+  const recommendedRoute = (() => {
+    const economicOptions: Array<{ key: "craft" | "full-recipe" | "sell-ingredients"; score: number }> = [];
+
+    if (bestRecipe && hasRecipeSellValue) {
+      economicOptions.push({ key: "craft", score: bestRecipeMetrics?.personalProfit ?? bestRecipe.personalProfit });
+
+      if (accountSnapshot) {
+        economicOptions.push({ key: "full-recipe", score: bestRecipe.netProfit });
+      }
+    }
+
+    if (bestRecipe && ingredientSaleValue > 0) {
+      economicOptions.push({ key: "sell-ingredients", score: ingredientSaleValue });
+    }
+
+    if (economicOptions.length) {
+      return economicOptions.sort((left, right) => right.score - left.score)[0].key;
+    }
+
+    if (accountSnapshot && ownedCount > 0) {
+      return "owned";
+    }
+
+    if (bestRecipe && (!hasBuyPrice || personalCraftCost < buyCost)) {
+      return "craft";
+    }
+
+    return hasBuyPrice ? "buy" : "direct";
+  })();
 
   return (
     <section className="route-planner surface">
@@ -17505,7 +18468,7 @@ function RoutePlanner({
           active={recommendedRoute === "craft"}
           detail={
             bestRecipe ? (
-              <RouteProfitLine profit={bestRecipe.personalProfit} hasSellValue={hasRecipeSellValue} fee={bestRecipeFee} />
+              <RouteProfitLine profit={bestRecipeMetrics?.personalProfit ?? bestRecipe.personalProfit} hasSellValue={hasRecipeSellValue} fee={bestRecipeFee} />
             ) : null
           }
         />
@@ -17513,13 +18476,74 @@ function RoutePlanner({
           <RouteOption
             label="Full recipe"
             value={<Money value={fullRecipeCost} />}
-            active={false}
+            active={recommendedRoute === "full-recipe"}
             detail={<RouteProfitLine profit={bestRecipe.netProfit} hasSellValue={hasRecipeSellValue} fee={bestRecipeFee} />}
+          />
+        ) : null}
+        {bestRecipe && ingredientSaleValue > 0 ? (
+          <RouteOption
+            label="Sell ingredients"
+            value={<Money value={ingredientSaleValue} />}
+            active={recommendedRoute === "sell-ingredients"}
+            detail={<IngredientSaleComparisonLine delta={ingredientSaleDelta} />}
           />
         ) : null}
       </div>
     </section>
   );
+}
+
+function estimateRecipeIngredientSaleValue(guide: RecipeGuide, catalog: MarketItem[]): number {
+  return Math.round(
+    guide.ingredients.reduce((sum, ingredient) => {
+      const quote = getMarketQuoteForId(
+        catalog,
+        ingredient.item_id,
+        ingredient.item?.name ? [ingredient.item.name] : [],
+      );
+      const unitValue = quote.instantSellNet || quote.listedSellNet;
+      return sum + unitValue * ingredient.count;
+    }, 0),
+  );
+}
+
+function IngredientSaleComparisonLine({ delta }: { delta: number }) {
+  if (delta === 0) {
+    return <span className="route-profit muted">Equal to crafting</span>;
+  }
+
+  const craftIsBetter = delta > 0;
+  return (
+    <span className={`route-profit ${craftIsBetter ? "profit" : "loss"}`}>
+      {craftIsBetter ? "Craft beats by " : "Sell beats by "}
+      <Money value={Math.abs(delta)} />
+    </span>
+  );
+}
+
+function getRecipePersonalMetrics(
+  guide: RecipeGuide,
+  accountSnapshot: AccountSnapshot | null,
+): Pick<RecipeGuide, "personalCost" | "personalProfit" | "ownedCoverage"> {
+  if (!accountSnapshot) {
+    return {
+      personalCost: guide.personalCost,
+      personalProfit: guide.personalProfit,
+      ownedCoverage: guide.ownedCoverage,
+    };
+  }
+
+  const ownedValue = guide.ingredients.reduce((sum, ingredient) => {
+    const ownedCount = accountSnapshot.holdings.get(ingredient.item_id) ?? ingredient.ownedCount;
+    return sum + Math.min(ownedCount, ingredient.count) * ingredient.unitPrice;
+  }, 0);
+  const personalCost = Math.max(0, guide.marketCost - ownedValue);
+
+  return {
+    personalCost,
+    personalProfit: guide.outputValue - personalCost,
+    ownedCoverage: guide.marketCost > 0 ? ownedValue / guide.marketCost : 0,
+  };
 }
 
 function RouteOption({
@@ -17656,12 +18680,16 @@ function chooseCraftMapAcquisition({
 function IngredientMindMap({
   item,
   recipes,
+  selectedRecipeIndex,
+  onSelectRecipeIndex,
   accountSnapshot,
   wikiGuide,
   onOpenDetail,
 }: {
   item: MarketItem;
   recipes: RecipeGuide[];
+  selectedRecipeIndex: number;
+  onSelectRecipeIndex: (index: number) => void;
   accountSnapshot: AccountSnapshot | null;
   wikiGuide: WikiGuide | null;
   onOpenDetail?: (item: Gw2Item) => void;
@@ -17685,7 +18713,16 @@ function IngredientMindMap({
   } | null>(null);
   const suppressNextMapClickRef = useRef(false);
   const [mapState, setMapState] = useState<LoadState>("idle");
-  const recipe = recipes[0];
+  const recipe = recipes[selectedRecipeIndex] ?? recipes[0];
+  const recipeOptions = useMemo(
+    () =>
+      recipes.map((recipeGuide, index) => ({
+        index,
+        recipeGuide,
+        title: getCraftMapRecipeOptionTitle(recipeGuide, index),
+      })),
+    [recipes],
+  );
   const tree = useMemo(
     () =>
       recipe
@@ -17713,7 +18750,23 @@ function IngredientMindMap({
     setIsMapPanning(false);
     mapDragRef.current = null;
     suppressNextMapClickRef.current = false;
-  }, [item.id, recipe?.recipe.id]);
+  }, [item.id]);
+
+  useEffect(() => {
+    if (selectedRecipeIndex >= recipes.length) {
+      onSelectRecipeIndex(0);
+    }
+  }, [onSelectRecipeIndex, recipes.length, selectedRecipeIndex]);
+
+  useEffect(() => {
+    setSelectedNode(null);
+    setCollapsedNodeKeys(new Set());
+    setExpandedNodeKeys(new Set());
+    setMapPan({ x: 0, y: 0 });
+    setIsMapPanning(false);
+    mapDragRef.current = null;
+    suppressNextMapClickRef.current = false;
+  }, [recipe?.recipe.id]);
 
   useLayoutEffect(() => {
     if (!layout || !mapViewportRef.current) {
@@ -17760,6 +18813,7 @@ function IngredientMindMap({
     }
 
     let ignore = false;
+    setNestedRecipes(new Map());
     setMapState("loading");
 
     loadNestedCraftRecipes(recipe, accountSnapshot)
@@ -17941,9 +18995,27 @@ function IngredientMindMap({
 
   return (
     <section className="surface mind-map-section">
-      <div className="section-title">
-        <Boxes />
-        <h3>Craft Map</h3>
+      <div className="craft-map-heading">
+        <div className="section-title">
+          <Boxes />
+          <h3>Craft Map</h3>
+        </div>
+        {recipeOptions.length > 1 ? (
+          <div className="craft-map-recipe-switcher" aria-label="Craft map recipe selector">
+            {recipeOptions.map((option) => (
+              <button
+                key={`${option.recipeGuide.recipe.id}-${option.index}`}
+                type="button"
+                className={option.index === selectedRecipeIndex ? "active" : ""}
+                onClick={() => onSelectRecipeIndex(option.index)}
+                title={option.title}
+                aria-label={`Show recipe ${option.index + 1}: ${option.title}`}
+              >
+                {option.index + 1}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
       {layout ? (
         <>
@@ -18080,6 +19152,16 @@ function IngredientMindMap({
   );
 }
 
+function getCraftMapRecipeOptionTitle(guide: RecipeGuide, index: number): string {
+  const source = getRecipeSourceLabel(guide.recipe);
+  const rating = guide.recipe.min_rating ? `, rating ${guide.recipe.min_rating}` : "";
+  const outputCount = guide.recipe.output_item_count > 1
+    ? `, crafts ${guide.recipe.output_item_count.toLocaleString()}`
+    : "";
+  const sourceName = guide.recipe.sourceName ? ` (${guide.recipe.sourceName})` : "";
+  return `Recipe ${index + 1}: ${source}${sourceName}${rating}${outputCount}`;
+}
+
 const CRAFT_MAP_MAX_DEPTH = 5;
 const CRAFT_MAP_RECIPE_LOAD_CONCURRENCY = 6;
 const CRAFT_MAP_NODE_WIDTH = 154;
@@ -18157,8 +19239,9 @@ function buildCraftMapTreeNode(
   path: Set<number>,
   depth: number,
   key: string,
+  ownedCountOverride?: number,
 ): CraftMapTreeNode {
-  const ownedCount = accountSnapshot?.holdings.get(item.id) ?? 0;
+  const ownedCount = accountSnapshot?.holdings.get(item.id) ?? ownedCountOverride ?? 0;
   const recipeRuns = recipe ? Math.ceil(requiredCount / Math.max(1, recipe.recipe.output_item_count)) : 0;
   const children =
     recipe && depth < CRAFT_MAP_MAX_DEPTH
@@ -18187,6 +19270,7 @@ function buildCraftMapTreeNode(
               nextPath,
               depth + 1,
               `${key}-${ingredient.item_id}`,
+              ingredient.ownedCount,
             );
           })
           .filter((node): node is CraftMapTreeNode => Boolean(node))

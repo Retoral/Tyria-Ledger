@@ -1171,7 +1171,23 @@ svg {
 }
 
 .account-item-table {
-  min-width: 860px;
+  min-width: 720px;
+  table-layout: fixed;
+}
+
+.account-item-table th:nth-child(1),
+.account-item-table td:nth-child(1) {
+  width: 58%;
+}
+
+.account-item-table th:nth-child(2),
+.account-item-table td:nth-child(2) {
+  width: 18%;
+}
+
+.account-item-table th:nth-child(3),
+.account-item-table td:nth-child(3) {
+  width: 24%;
 }
 
 .earning-list,
@@ -2068,7 +2084,8 @@ svg {
 }
 
 .detail-close-button,
-.detail-favorite-button {
+.detail-favorite-button,
+.detail-account-refresh-button {
   position: absolute;
   top: 12px;
   display: grid;
@@ -2090,9 +2107,17 @@ svg {
   right: 52px;
 }
 
+.detail-account-refresh-button {
+  right: 100px;
+}
+
 .item-title-row .detail-close-button,
 .item-title-row .detail-favorite-button {
   position: static;
+}
+
+.item-title-row .detail-account-refresh-button {
+  position: absolute;
 }
 
 .detail-favorite-button.active {
@@ -2113,8 +2138,15 @@ svg {
   background: #ffe58a;
 }
 
+.detail-account-refresh-button:hover {
+  border-color: #00a7a0;
+  color: #edf5ef;
+  background: #007c7a;
+}
+
 .detail-close-button svg,
-.detail-favorite-button svg {
+.detail-favorite-button svg,
+.detail-account-refresh-button svg {
   width: 18px;
   height: 18px;
 }
@@ -4524,10 +4556,10 @@ p {
 .transaction-heading,
 .transaction-row {
   display: grid;
-  grid-template-columns: minmax(58px, 0.85fr) minmax(42px, 0.45fr) minmax(76px, 0.9fr) minmax(86px, 1fr) minmax(88px, 0.9fr);
-  justify-content: stretch;
+  grid-template-columns: minmax(52px, max-content) minmax(34px, max-content) minmax(82px, max-content) minmax(108px, max-content) minmax(86px, max-content);
+  justify-content: start;
   align-items: center;
-  column-gap: 12px;
+  column-gap: 14px;
   width: 100%;
 }
 
@@ -4544,6 +4576,11 @@ p {
   text-align: right;
 }
 
+.transaction-heading span:nth-child(2),
+.transaction-row > span:nth-child(2) {
+  text-align: left;
+}
+
 .transaction-row > span {
   color: #edf5ef;
   font-weight: 900;
@@ -4555,6 +4592,46 @@ p {
 
 .transaction-row .money {
   justify-content: flex-end;
+}
+
+.sniping-workspace .craft-table-panel {
+  min-width: 0;
+}
+
+.sniping-toolbar {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.sniping-type-filter {
+  margin-top: 0;
+}
+
+.sniping-table {
+  min-width: 1120px;
+}
+
+.snipe-type {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: #f8fffb;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.snipe-salvage {
+  color: #001f1f;
+  background: #7ee9e2;
+}
+
+.snipe-resell {
+  color: #281500;
+  background: #f2b84b;
 }
 
 .transaction-grid {
@@ -4765,6 +4842,45 @@ p {
 
 .mind-map-section {
   overflow: hidden;
+}
+
+.craft-map-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.craft-map-heading .section-title {
+  margin-bottom: 0;
+}
+
+.craft-map-recipe-switcher {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.craft-map-recipe-switcher button {
+  display: grid;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 9px;
+  place-items: center;
+  border: 1px solid #303b3f;
+  border-radius: 8px;
+  color: #edf5ef;
+  background: #141a1e;
+  font-weight: 900;
+}
+
+.craft-map-recipe-switcher button:hover,
+.craft-map-recipe-switcher button.active {
+  border-color: #00a7a0;
+  color: #ffffff;
+  background: #007c7a;
 }
 
 .mind-map {
@@ -5789,6 +5905,7 @@ body,
 .icon-button,
 .detail-close-button,
 .detail-favorite-button,
+.detail-account-refresh-button,
 .mini-action,
 .filter-toggle,
 .update-status-button,
@@ -5808,6 +5925,12 @@ body,
   border-color: #d8a319;
   color: #141a1e;
   background: #ffd763;
+}
+
+.detail-account-refresh-button:hover {
+  border-color: #00a7a0;
+  color: #edf5ef;
+  background: #007c7a;
 }
 
 .update-status-button.available {
