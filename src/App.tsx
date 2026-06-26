@@ -101,6 +101,7 @@ import type {
   Gw2Map,
   Gw2Recipe,
   ItemTransactions,
+  LegendaryReadiness,
   MarketItem,
   PermanentGatheringNode,
   RecipeGuide,
@@ -10286,34 +10287,49 @@ function LegendaryReadinessPage({
 }) {
   const legendaries = analysis?.legendaries ?? [];
   const [query, setQuery] = useState("");
+  const [rankedOpen, setRankedOpen] = useState(true);
   const normalizedQuery = query.trim().toLowerCase();
-  const filteredLegendaries = useMemo(
-    () =>
-      normalizedQuery
-        ? legendaries.filter((entry) => {
-          const recipeState = entry.recipeUnlocked ? "unlocked" : "recipe locked";
-          const priority =
-            entry.recipeUnlocked && entry.ownedCoverage >= 0.75
-              ? "quickest"
-              : entry.ownedCoverage >= 0.4
-                ? "medium"
-                : "long-term";
+  const { filteredActionableLegendaries, filteredExternalLegendaries } = useMemo(() => {
+    const matchesQuery = (entry: (typeof legendaries)[number]) => {
+      if (!normalizedQuery) {
+        return true;
+      }
 
-          return (
-            entry.item.name.toLowerCase().includes(normalizedQuery) ||
-            entry.item.type.toLowerCase().includes(normalizedQuery) ||
-            recipeState.includes(normalizedQuery) ||
-            priority.includes(normalizedQuery)
-          );
-        })
-        : legendaries,
+      const recipeState = entry.recipeUnlocked ? "unlocked" : "recipe locked";
+      const priority =
+        entry.recipeUnlocked && entry.ownedCoverage >= 0.75
+          ? "quickest"
+          : entry.ownedCoverage >= 0.4
+            ? "medium"
+            : "long-term";
+
+      return (
+        entry.item.name.toLowerCase().includes(normalizedQuery) ||
+        entry.item.type.toLowerCase().includes(normalizedQuery) ||
+        recipeState.includes(normalizedQuery) ||
+        priority.includes(normalizedQuery)
+      );
+    };
+
+    const filtered = legendaries.filter(matchesQuery);
+    const actionableEntries = filtered.filter((entry) => !isExternalLegendaryReadinessEntry(entry));
+    const actionableNames = new Set(actionableEntries.map((entry) => normalizeItemName(entry.item.name)));
+
+    return {
+      filteredActionableLegendaries: actionableEntries,
+      filteredExternalLegendaries: filtered
+        .filter(isExternalLegendaryReadinessEntry)
+        .filter((entry) => !actionableNames.has(normalizeItemName(entry.item.name)))
+        .sort((left, right) => compareStringValue(left.item.name, right.item.name)),
+    };
+  },
     [legendaries, normalizedQuery],
   );
   const { sortedRows: sortedLegendaries, renderHeader } = useSortableRows<
     (typeof legendaries)[number],
     "legendary" | "owned" | "personalCost" | "marketCost" | "recipe" | "priority"
   >(
-    filteredLegendaries,
+    filteredActionableLegendaries,
     { key: "owned", direction: "desc" },
     {
       legendary: (left, right) => compareStringValue(left.item.name, right.item.name),
@@ -10352,7 +10368,7 @@ function LegendaryReadinessPage({
   return (
     <div className={`market-workspace crafting-workspace ${selectedItem ? "" : "detail-closed"}`}>
       <aside className="market-panel craft-table-panel">
-        <section className="page-header">
+        <section className="page-header legendary-page-header">
           <div>
             <span className="eyebrow">Personal Account Scan</span>
             <h2>Legendary Readiness</h2>
@@ -10380,65 +10396,136 @@ function LegendaryReadinessPage({
                 />
               </label>
               {sortedLegendaries.length ? (
-                <div className="craft-table-wrap">
-                  <table className="craft-profit-table">
-                    <thead>
-                      <tr>
-                        {renderHeader("legendary", "Legendary")}
-                        {renderHeader("owned", "Owned")}
-                        {renderHeader("personalCost", "Remaining Personal Cost")}
-                        {renderHeader("marketCost", "Market Cost")}
-                        {renderHeader("recipe", "Recipe")}
-                        {renderHeader("priority", "Priority")}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedLegendaries.map((entry) => (
-                        <tr
-                          key={`${entry.recipe.id}-${entry.item.id}`}
-                          className={selectedItem?.id === entry.item.id ? "selected-row" : ""}
-                          onClick={() => onSelectItem(entry.item)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              onSelectItem(entry.item);
-                            }
-                          }}
-                          role="button"
-                          tabIndex={0}
-                        >
-                          <td>
-                            <span className="table-item-cell">
-                              <ItemIcon item={entry.item} />
-                              <span className="item-copy">
-                                <strong>{entry.item.name}</strong>
-                                <span>{entry.item.type}</span>
-                              </span>
-                            </span>
-                          </td>
-                          <td>{Math.round(entry.ownedCoverage * 100)}%</td>
-                          <td><Money value={entry.personalCost} /></td>
-                          <td>{entry.outputValue > 0 ? <Money value={entry.marketCost} /> : <span className="muted-copy">-</span>}</td>
-                          <td>{entry.recipeUnlocked ? "Unlocked" : "Recipe locked"}</td>
-                          <td>
-                            {entry.recipeUnlocked && entry.ownedCoverage >= 0.75
-                              ? "Quickest"
-                              : entry.ownedCoverage >= 0.4
-                                ? "Medium"
-                                : "Long-term"}
-                          </td>
+                <details
+                  className="recipe-collapsible legendary-readiness-list"
+                  open={rankedOpen}
+                  onToggle={(event) => setRankedOpen(event.currentTarget.open)}
+                >
+                  <summary>
+                    <span>Ranked routes</span>
+                    <strong>{sortedLegendaries.length.toLocaleString()}</strong>
+                  </summary>
+                  <div className="craft-table-wrap">
+                    <table className="craft-profit-table legendary-readiness-table">
+                      <LegendaryReadinessColGroup />
+                      <thead>
+                        <tr>
+                          {renderHeader("legendary", "Legendary")}
+                          {renderHeader("owned", "Owned")}
+                          {renderHeader("personalCost", "Remaining Personal Cost")}
+                          {renderHeader("marketCost", "Market Cost")}
+                          {renderHeader("recipe", "Recipe")}
+                          {renderHeader("priority", "Priority")}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
+                      </thead>
+                      <tbody>
+                        {sortedLegendaries.map((entry) => (
+                          <tr
+                            key={`${entry.recipe.id}-${entry.item.id}`}
+                            className={selectedItem?.id === entry.item.id ? "selected-row" : ""}
+                            onClick={() => onSelectItem(entry.item)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                onSelectItem(entry.item);
+                              }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                          >
+                            <td>
+                              <span className="table-item-cell">
+                                <ItemIcon item={entry.item} />
+                                <span className="item-copy">
+                                  <strong>{entry.item.name}</strong>
+                                  <span>{entry.item.type}</span>
+                                </span>
+                              </span>
+                            </td>
+                            <td>{Math.round(entry.ownedCoverage * 100)}%</td>
+                            <td><Money value={entry.personalCost} /></td>
+                            <td>{entry.outputValue > 0 ? <Money value={entry.marketCost} /> : <span className="muted-copy">-</span>}</td>
+                            <td>{entry.recipeUnlocked ? "Unlocked" : "Recipe locked"}</td>
+                            <td>
+                              {entry.recipeUnlocked && entry.ownedCoverage >= 0.75
+                                ? "Quickest"
+                                : entry.ownedCoverage >= 0.4
+                                  ? "Medium"
+                                  : "Long-term"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              ) : null}
+              {filteredExternalLegendaries.length ? (
+                <details className="recipe-collapsible legendary-external-list">
+                  <summary>
+                    <span>Other acquisition</span>
+                    <strong>{filteredExternalLegendaries.length.toLocaleString()}</strong>
+                  </summary>
+                  <p className="muted-copy">
+                    Items without a modeled craft or Trading Post route. Open the item to check wiki
+                    acquisition notes, vendors, gem/store sources, achievements, raids, or strikes.
+                  </p>
+                  <div className="craft-table-wrap">
+                    <table className="craft-profit-table legendary-readiness-table">
+                      <LegendaryReadinessColGroup />
+                      <thead>
+                        <tr>
+                          <th>Legendary</th>
+                          <th>Owned</th>
+                          <th>Remaining Personal Cost</th>
+                          <th>Market Cost</th>
+                          <th>Route</th>
+                          <th>Priority</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredExternalLegendaries.map((entry) => (
+                          <tr
+                            key={`${entry.recipe.id}-${entry.item.id}`}
+                            className={selectedItem?.id === entry.item.id ? "selected-row" : ""}
+                            onClick={() => onSelectItem(entry.item)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                onSelectItem(entry.item);
+                              }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                          >
+                            <td>
+                              <span className="table-item-cell">
+                                <ItemIcon item={entry.item} />
+                                <span className="item-copy">
+                                  <strong>{entry.item.name}</strong>
+                                  <span>{entry.item.type}</span>
+                                </span>
+                              </span>
+                            </td>
+                            <td>{Math.round(entry.ownedCoverage * 100)}%</td>
+                            <td><Money value={entry.personalCost} /></td>
+                            <td><span className="muted-copy">-</span></td>
+                            <td>Check source</td>
+                            <td>Other</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              ) : null}
+              {!sortedLegendaries.length && !filteredExternalLegendaries.length ? (
                 <div className="empty-detail inline-empty">
                   <Search />
                   <h2>No legendary items found</h2>
                   <p>No readiness rows match “{query.trim()}”.</p>
                 </div>
-              )}
+              ) : null}
             </>
           ) : analysisState !== "loading" ? (
             <div className="empty-detail inline-empty">
@@ -10487,6 +10574,36 @@ function getLegendaryPriorityRank(entry: { recipeUnlocked: boolean; ownedCoverag
   }
 
   return 1;
+}
+
+function LegendaryReadinessColGroup() {
+  return (
+    <colgroup>
+      <col className="legendary-col-name" />
+      <col className="legendary-col-owned" />
+      <col className="legendary-col-personal" />
+      <col className="legendary-col-market" />
+      <col className="legendary-col-recipe" />
+      <col className="legendary-col-priority" />
+    </colgroup>
+  );
+}
+
+function isExternalLegendaryReadinessEntry(entry: LegendaryReadiness): boolean {
+  const isDirectExternalRoute =
+    entry.recipe.type === "Legendary Ingredient" ||
+    entry.recipe.sourceName === "Legendary ingredient";
+  const hasRecipeIngredients =
+    entry.recipe.ingredients.length > 0 &&
+    !(
+      entry.recipe.ingredients.length === 1 &&
+      entry.recipe.ingredients[0]?.item_id === entry.item.id &&
+      entry.recipe.output_item_id === entry.item.id
+    );
+  const canBuyOutput = entry.outputValue > 0;
+  const hasPricedRoute = entry.marketCost > 0 || entry.personalCost > 0;
+
+  return isDirectExternalRoute || (!hasRecipeIngredients && !canBuyOutput && !hasPricedRoute);
 }
 
 function getLegendaryDisplayMarketCost(entry: { outputValue: number; marketCost: number }): number {
@@ -14132,10 +14249,7 @@ function ItemDetail({
       ) : null}
 
       {wikiAcquisition?.vendorOffers.length ? (
-        <VendorAcquisitionPanel
-          item={item}
-          acquisition={wikiAcquisition}
-        />
+        <VendorAcquisitionPanel acquisition={wikiAcquisition} />
       ) : wikiAcquisitionState === "loading" ? (
         <section className="surface vendor-source-section">
           <div className="section-title">
@@ -14351,22 +14465,12 @@ function TeachesRecipePanel({
   );
 }
 
-function VendorAcquisitionPanel({
-  item,
-  acquisition,
-}: {
-  item: MarketItem;
-  acquisition: WikiItemAcquisition;
-}) {
-  const bestOffer = getBestVendorOffer(acquisition);
-  const marketBuy = item.price.sells.unit_price || item.price.buys.unit_price || 0;
-  if (!bestOffer) {
+function VendorAcquisitionPanel({ acquisition }: { acquisition: WikiItemAcquisition }) {
+  if (!acquisition.vendorOffers.length) {
     return null;
   }
 
-  const vendorCost = getVendorTotalCost(bestOffer, 1);
-  const marketIsHigher = marketBuy > 0 && vendorCost < marketBuy;
-  const offers = acquisition.vendorOffers.slice(0, 4);
+  const offers = acquisition.vendorOffers.slice(0, 6);
 
   return (
     <section className="surface vendor-source-section">
@@ -14374,40 +14478,10 @@ function VendorAcquisitionPanel({
         <Coins />
         <h3>Vendor Sources</h3>
       </div>
-      <div className="vendor-source-summary">
-        <div>
-          <span>Best vendor</span>
-          <VendorWikiLink offer={bestOffer} />
-          <small>
-            {bestOffer.zone || bestOffer.area || "Vendor location listed on the Wiki"}
-          </small>
-        </div>
-        <div>
-          <span>Vendor cost</span>
-          <strong><Money value={vendorCost} /></strong>
-          <small>{bestOffer.quantity > 1 ? bestOffer.costText : "Coin purchase"}</small>
-        </div>
-        {marketBuy > 0 ? (
-          <div>
-            <span>Market comparison</span>
-            <strong className={marketIsHigher ? "profit" : ""}>
-              {marketIsHigher ? (
-                <>
-                  Save <Money value={marketBuy - vendorCost} />
-                </>
-              ) : (
-                "Market is cheaper"
-              )}
-            </strong>
-            <small>Compared with current buy-from-listing price</small>
-          </div>
-        ) : null}
-      </div>
       <div className="vendor-offer-list">
         {offers.map((offer) => (
           <div key={`${offer.vendor}-${offer.area ?? ""}-${offer.zone ?? ""}-${offer.cost}`}>
             <VendorWikiLink offer={offer} />
-            <span>{offer.zone || offer.area || "Location listed on Wiki"}</span>
             <span>
               <Money value={getVendorTotalCost(offer, 1)} />
               {offer.quantity > 1 ? ` per ${offer.quantity.toLocaleString()}` : ""}
@@ -17077,12 +17151,10 @@ function RecipeUsageSections({
         <h3>Recipe Usage</h3>
       </div>
 
-      <RecipeCollapsibleSection
-        title="How to Make This Item"
-        guides={standardOutputs}
+      <RecipeMakeTabsSection
+        standardGuides={standardOutputs}
+        mysticGuides={mysticOutputs}
         state={recipeUsageState}
-        emptyText="No standard crafting recipe currently outputs this item."
-        keyPrefix="output"
         accountSnapshot={accountSnapshot}
         catalog={catalog}
         onOpenDetail={onOpenDetail}
@@ -17094,17 +17166,6 @@ function RecipeUsageSections({
         state={recipeUsageState}
         emptyText="No standard crafting recipes currently list this item as an ingredient."
         keyPrefix="used"
-        accountSnapshot={accountSnapshot}
-        catalog={catalog}
-        onOpenDetail={onOpenDetail}
-      />
-
-      <RecipeCollapsibleSection
-        title="Mystic Forge Recipes"
-        guides={mysticOutputs}
-        state={recipeUsageState}
-        emptyText="No Mystic Forge recipe from the GW2 Wiki or official recipe data currently creates this item."
-        keyPrefix="mystic-output"
         accountSnapshot={accountSnapshot}
         catalog={catalog}
         onOpenDetail={onOpenDetail}
@@ -17124,6 +17185,92 @@ function RecipeUsageSections({
   );
 }
 
+type RecipeMakeTabId = "crafting" | "mystic";
+
+function RecipeMakeTabsSection({
+  standardGuides,
+  mysticGuides,
+  state,
+  accountSnapshot,
+  catalog,
+  onOpenDetail,
+}: {
+  standardGuides: RecipeGuide[];
+  mysticGuides: RecipeGuide[];
+  state: LoadState;
+  accountSnapshot: AccountSnapshot | null;
+  catalog: MarketItem[];
+  onOpenDetail?: (item: Gw2Item) => void;
+}) {
+  const [activeTab, setActiveTab] = useState<RecipeMakeTabId>(
+    standardGuides.length > 0 ? "crafting" : "mystic",
+  );
+  const tabs = useMemo(
+    () => [
+      {
+        id: "crafting" as const,
+        label: "Crafting",
+        guides: standardGuides,
+        emptyText: "No standard crafting recipe currently outputs this item.",
+        keyPrefix: "output",
+      },
+      {
+        id: "mystic" as const,
+        label: "Mystic Forge",
+        guides: mysticGuides,
+        emptyText: "No Mystic Forge recipe from the GW2 Wiki or official recipe data currently creates this item.",
+        keyPrefix: "mystic-output",
+      },
+    ],
+    [mysticGuides, standardGuides],
+  );
+  const totalCount = standardGuides.length + mysticGuides.length;
+  const activeDefinition =
+    tabs.find((tab) => tab.id === activeTab && tab.guides.length > 0) ??
+    tabs.find((tab) => tab.guides.length > 0) ??
+    tabs.find((tab) => tab.id === activeTab) ??
+    tabs[0];
+
+  useEffect(() => {
+    if (activeTab === "crafting" && standardGuides.length === 0 && mysticGuides.length > 0) {
+      setActiveTab("mystic");
+    } else if (activeTab === "mystic" && mysticGuides.length === 0 && standardGuides.length > 0) {
+      setActiveTab("crafting");
+    }
+  }, [activeTab, mysticGuides.length, standardGuides.length]);
+
+  return (
+    <RecipeCollapsibleSection
+      title="How to Make This Item"
+      guides={activeDefinition.guides}
+      state={state}
+      emptyText={activeDefinition.emptyText}
+      keyPrefix={activeDefinition.keyPrefix}
+      accountSnapshot={accountSnapshot}
+      catalog={catalog}
+      onOpenDetail={onOpenDetail}
+      countOverride={totalCount}
+      bodyBefore={
+        <div className="recipe-make-tabs" role="tablist" aria-label="Recipe creation type">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={activeDefinition.id === tab.id}
+              className={activeDefinition.id === tab.id ? "active" : ""}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              <span>{tab.label}</span>
+              <strong>{tab.guides.length.toLocaleString()}</strong>
+            </button>
+          ))}
+        </div>
+      }
+    />
+  );
+}
+
 function RecipeCollapsibleSection({
   title,
   guides,
@@ -17133,6 +17280,8 @@ function RecipeCollapsibleSection({
   accountSnapshot,
   catalog,
   onOpenDetail,
+  countOverride,
+  bodyBefore,
 }: {
   title: string;
   guides: RecipeGuide[];
@@ -17142,6 +17291,8 @@ function RecipeCollapsibleSection({
   accountSnapshot: AccountSnapshot | null;
   catalog: MarketItem[];
   onOpenDetail?: (item: Gw2Item) => void;
+  countOverride?: number;
+  bodyBefore?: ReactNode;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [visibleRecipeCount, setVisibleRecipeCount] = useState(RECIPE_USAGE_INITIAL_ROWS);
@@ -17162,13 +17313,14 @@ function RecipeCollapsibleSection({
     >
       <summary>
         <span>{title}</span>
-        <strong>{state === "loading" ? "Loading" : guides.length.toLocaleString()}</strong>
+        <strong>{state === "loading" ? "Loading" : (countOverride ?? guides.length).toLocaleString()}</strong>
       </summary>
       {isOpen ? (
         state === "loading" ? (
           <SkeletonRows />
         ) : guides.length > 0 ? (
           <>
+            {bodyBefore}
             <div className="recipe-list">
               {visibleGuides.map((guide) => (
                 <RecipeSummaryRow
@@ -17196,7 +17348,10 @@ function RecipeCollapsibleSection({
             ) : null}
           </>
         ) : (
-          <p className="muted-copy">{emptyText}</p>
+          <>
+            {bodyBefore}
+            <p className="muted-copy">{emptyText}</p>
+          </>
         )
       ) : null}
     </details>

@@ -3704,12 +3704,18 @@ export async function loadWikiGuide(
 ): Promise<WikiGuide | null> {
   const normalizedLevel = options.level && options.level > 0 ? options.level : null;
   const cacheKey = getNamedCacheKey(
-    "wiki:guide:v2",
+    "wiki:guide:v3",
     `${itemName}:${normalizedLevel ?? "any"}:${options.itemId ?? "any"}`,
   );
   const cached = await loadSqlCache(cacheKey, SQL_CACHE_TTL.wikiDerived, isWikiGuide);
   if (cached) {
     return cached;
+  }
+
+  const directGuide = await loadWikiGuidePage(itemName).catch(() => null);
+  if (directGuide) {
+    void saveSqlCache(cacheKey, directGuide);
+    return directGuide;
   }
 
   const levelTitle = normalizedLevel ? `${itemName} (level ${normalizedLevel})` : "";
@@ -3736,7 +3742,7 @@ export async function loadWikiGuide(
         return titleLevel === null || titleLevel === normalizedLevel;
       })
     : null;
-  const guide = levelExact ?? preferredLevel ?? exact ?? withoutWrongLevel ?? pages[0] ?? null;
+  const guide = exact ?? levelExact ?? preferredLevel ?? withoutWrongLevel ?? pages[0] ?? null;
   if (guide) {
     void saveSqlCache(cacheKey, guide);
   }
