@@ -236,8 +236,21 @@ svg {
   align-items: stretch;
 }
 
-.account-settings-panel .api-key-dock {
+.account-settings-panel .api-key-dock,
+.account-settings-panel .startup-dock,
+.account-settings-panel .mobile-sync-dock {
   min-height: 100%;
+}
+
+.account-secondary-settings {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(420px, 1.4fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.account-secondary-settings > :only-child {
+  grid-column: 1 / -1;
 }
 
 .api-status-panel {
@@ -369,7 +382,9 @@ svg {
   transform: translateY(0);
 }
 
-.api-key-dock {
+.api-key-dock,
+.startup-dock,
+.mobile-sync-dock {
   display: grid;
   gap: 10px;
   padding: 12px;
@@ -384,6 +399,113 @@ svg {
   gap: 8px;
   color: #f7faf7;
   font-weight: 800;
+}
+
+.startup-row {
+  display: grid;
+  gap: 8px;
+}
+
+.setting-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #edf5ef;
+  font-weight: 800;
+}
+
+.setting-toggle input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #008f8a;
+}
+
+.setting-toggle input:disabled {
+  cursor: wait;
+}
+
+.startup-row p {
+  margin: 0;
+  color: #9aa7a2;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mobile-sync-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+}
+
+.mobile-sync-copy {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mobile-sync-copy p {
+  margin: 0;
+  color: #9aa7a2;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mobile-sync-copy dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.mobile-sync-copy dl div {
+  display: grid;
+  gap: 3px;
+}
+
+.mobile-sync-copy dt {
+  color: #9aa7a2;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mobile-sync-copy dd {
+  margin: 0;
+  color: #edf5ef;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.sync-qr-frame {
+  display: grid;
+  place-items: center;
+  width: 144px;
+  height: 144px;
+  border: 1px solid #334043;
+  border-radius: 8px;
+  background: #f7faf7;
+  overflow: hidden;
+}
+
+.sync-qr-frame img {
+  display: block;
+  width: 132px;
+  height: 132px;
+}
+
+@media (max-width: 1080px) {
+  .account-secondary-settings {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 860px) {
+  .mobile-sync-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .content-shell {
@@ -2478,12 +2600,86 @@ p {
   background: transparent;
 }
 
-.legendary-search {
+.legendary-search-panel {
   position: sticky;
   top: 0;
   z-index: 8;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
   margin-bottom: 12px;
+  padding-bottom: 2px;
   box-shadow: 0 10px 18px rgba(0, 0, 0, 0.18);
+}
+
+.legendary-search {
+  margin-bottom: 0;
+}
+
+.legendary-filter-window {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #cfd5cc;
+  border-radius: 8px;
+  background: #f7f8f5;
+}
+
+.legendary-filter-window-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.inline-link-button {
+  border: 0;
+  color: #007c7a;
+  background: transparent;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.legendary-filter-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.legendary-filter-options button {
+  display: grid;
+  gap: 3px;
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid #cfd5cc;
+  border-radius: 8px;
+  color: #30362e;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.legendary-filter-options button.active {
+  border-color: #007c7a;
+  color: #003d3b;
+  background: #dff8f5;
+}
+
+.legendary-filter-options span {
+  font-weight: 900;
+}
+
+.legendary-filter-options small,
+.legendary-cost-state {
+  color: #69736b;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.legendary-cost-state {
+  grid-column: 1 / -1;
+  font-weight: 800;
 }
 
 .legendary-page-header {
@@ -5722,6 +5918,7 @@ body,
 	.market-demand-filter button,
 	.recipe-make-tabs button,
 	.filter-toggle,
+	.legendary-filter-options button,
 	.market-filter-field input,
 	.opening-input input,
 	.build-filter-panel select,
@@ -5756,6 +5953,26 @@ body,
   border-color: #22d9cf;
   color: #f3fffb;
   background: #06423f;
+}
+
+.legendary-filter-window {
+  border-color: #303b3f;
+  background: rgba(15, 20, 23, 0.96);
+}
+
+.legendary-filter-options button.active {
+  border-color: #22d9cf;
+  color: #f3fffb;
+  background: #06423f;
+}
+
+.legendary-filter-options small,
+.legendary-cost-state {
+  color: #9aa7a2;
+}
+
+.inline-link-button {
+  color: #7ee9e2;
 }
 
 .filter-toggle strong {

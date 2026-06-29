@@ -1,6 +1,9 @@
-const { app, BrowserWindow, dialog, ipcMain, nativeTheme, safeStorage, screen, shell } = require("electron");
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeTheme, safeStorage, screen, shell } = require("electron");
+const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const fsSync = require("node:fs");
+const http = require("node:http");
+const os = require("node:os");
 const path = require("node:path");
 
 let DatabaseSync = null;
@@ -12,9 +15,16 @@ try {
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 let mainWindow;
+let tray;
 let database;
+let mobileSyncServer;
+let mobileSyncState;
+let isQuitting = false;
 
 const HOUR_MS = 60 * 60 * 1000;
+const MOBILE_SYNC_PORT = 41731;
+const MOBILE_SYNC_MAX_BODY_BYTES = 12 * 1024 * 1024;
+const START_HIDDEN_ARG = "--hidden";
 const MARKET_HISTORY_RAW_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MARKET_HISTORY_DAILY_WINDOW_MS = 31 * 24 * 60 * 60 * 1000;
 const MARKET_HISTORY_WEEKLY_WINDOW_MS = 8 * 31 * 24 * 60 * 60 * 1000;
@@ -155,6 +165,329 @@ function getWindowIconPath() {
   }
 
   return path.join(app.getAppPath(), "dist", "app-icon.png");
+}
+
+function shouldStartHidden() {
+  return process.argv.includes(START_HIDDEN_ARG);
+}
+
+function getStartupSettings() {
+  const settings = app.getLoginItemSettings({
+    args: [START_HIDDEN_ARG],
+  });
+
+  return {
+    openAtLogin: Boolean(settings.openAtLogin),
+    openAsHidden: true,
+  };
+}
+
+function setStartupSettings(_event, options = {}) {
+  const openAtLogin = Boolean(options.openAtLogin);
+  app.setLoginItemSettings({
+    openAtLogin,
+    openAsHidden: true,
+    args: [START_HIDDEN_ARG],
+  });
+  updateTrayMenu();
+  return getStartupSettings();
+}
+
+function getLocalNetworkHost() {
+  const interfaces = os.networkInterfaces();
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries ?? []) {
+      if (entry?.family === "IPv4" && !entry.internal) {
+        return entry.address;
+      }
+    }
+  }
+
+  return "127.0.0.1";
+}
+
+function buildMobileSyncInfo() {
+  if (!mobileSyncState) {
+    return {
+      enabled: false,
+      host: "",
+      port: 0,
+      baseUrl: "",
+      statusUrl: "",
+      marketHistoryUrl: "",
+      token: "",
+      pairingPayload: "",
+      startedAt: "",
+    };
+  }
+
+  const host = getLocalNetworkHost();
+  const baseUrl = `http://${host}:${mobileSyncState.port}`;
+  const tokenQuery = `token=${encodeURIComponent(mobileSyncState.token)}`;
+  const pairingPayload = JSON.stringify({
+    type: "tyria-ledger-sync",
+    version: 1,
+    baseUrl,
+    token: mobileSyncState.token,
+  });
+
+  return {
+    enabled: true,
+    host,
+    port: mobileSyncState.port,
+    baseUrl,
+    statusUrl: `${baseUrl}/status?${tokenQuery}`,
+    marketHistoryUrl: `${baseUrl}/market-history?${tokenQuery}`,
+    token: mobileSyncState.token,
+    pairingPayload,
+    startedAt: mobileSyncState.startedAt,
+  };
+}
+
+function sendMobileSyncJson(response, statusCode, body) {
+  response.statusCode = statusCode;
+  response.setHeader("Access-Control-Allow-Origin", "*");
+  response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Tyria-Ledger-Token");
+  response.setHeader("Content-Type", "application/json; charset=utf-8");
+  response.end(JSON.stringify(body));
+}
+
+function readMobileSyncJson(request) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+
+    request.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > MOBILE_SYNC_MAX_BODY_BYTES) {
+        reject(new Error("Sync payload is too large."));
+        request.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+
+    request.on("end", () => {
+      try {
+        const text = Buffer.concat(chunks).toString("utf8");
+        resolve(text ? JSON.parse(text) : {});
+      } catch (error) {
+        reject(error);
+      }
+    });
+    request.on("error", reject);
+  });
+}
+
+function getMobileSyncTokenFromRequest(request, url) {
+  const headerToken = request.headers["x-tyria-ledger-token"];
+  if (typeof headerToken === "string" && headerToken.trim()) {
+    return headerToken.trim();
+  }
+
+  return url.searchParams.get("token") ?? "";
+}
+
+function getMobileSyncPoints(payload) {
+  const rawPoints = Array.isArray(payload?.points)
+    ? payload.points
+    : Array.isArray(payload?.snapshots)
+      ? payload.snapshots
+      : [];
+
+  return rawPoints
+    .map((point) => ({
+      itemId: point.itemId ?? point.item_id,
+      recordedAt: point.recordedAt ?? point.recorded_at ?? payload.recordedAt,
+      buyPrice: point.buyPrice ?? point.buy_price ?? point.buys?.unit_price,
+      sellPrice: point.sellPrice ?? point.sell_price ?? point.sells?.unit_price,
+      buyQuantity: point.buyQuantity ?? point.buy_quantity ?? point.buys?.quantity,
+      sellQuantity: point.sellQuantity ?? point.sell_quantity ?? point.sells?.quantity,
+      sampleCount: point.sampleCount ?? point.sample_count ?? 1,
+    }))
+    .filter((point) => Number.isFinite(Number(point.itemId)));
+}
+
+async function handleMobileSyncRequest(request, response) {
+  response.setHeader("Access-Control-Allow-Origin", "*");
+  response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Tyria-Ledger-Token");
+
+  if (request.method === "OPTIONS") {
+    response.statusCode = 204;
+    response.end();
+    return;
+  }
+
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const token = getMobileSyncTokenFromRequest(request, url);
+  if (!mobileSyncState || token !== mobileSyncState.token) {
+    sendMobileSyncJson(response, 401, {
+      ok: false,
+      error: "Pair this device from Tyria Ledger again.",
+    });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/status") {
+    sendMobileSyncJson(response, 200, {
+      ok: true,
+      app: "Tyria Ledger",
+      accepts: ["market-history"],
+      startedAt: mobileSyncState.startedAt,
+    });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/market-history") {
+    try {
+      const payload = await readMobileSyncJson(request);
+      const points = getMobileSyncPoints(payload);
+      const result = recordMarketHistoryBatch(null, points);
+      sendMobileSyncJson(response, 200, {
+        ok: true,
+        received: points.length,
+        recorded: result.recorded,
+      });
+    } catch (error) {
+      sendMobileSyncJson(response, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : "Unable to import market history.",
+      });
+    }
+    return;
+  }
+
+  sendMobileSyncJson(response, 404, {
+    ok: false,
+    error: "Unknown Tyria Ledger sync endpoint.",
+  });
+}
+
+function listenMobileSyncServer(port) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((request, response) => {
+      void handleMobileSyncRequest(request, response);
+    });
+
+    server.once("error", reject);
+    server.listen(port, "0.0.0.0", () => {
+      server.removeListener("error", reject);
+      resolve(server);
+    });
+  });
+}
+
+async function ensureMobileSyncServer() {
+  if (mobileSyncServer?.listening && mobileSyncState) {
+    return buildMobileSyncInfo();
+  }
+
+  mobileSyncState = {
+    token: crypto.randomBytes(18).toString("base64url"),
+    port: MOBILE_SYNC_PORT,
+    startedAt: new Date().toISOString(),
+  };
+
+  try {
+    mobileSyncServer = await listenMobileSyncServer(MOBILE_SYNC_PORT);
+  } catch (error) {
+    if (error?.code !== "EADDRINUSE") {
+      throw error;
+    }
+    mobileSyncServer = await listenMobileSyncServer(0);
+  }
+
+  const address = mobileSyncServer.address();
+  mobileSyncState.port = typeof address === "object" && address ? address.port : MOBILE_SYNC_PORT;
+  return buildMobileSyncInfo();
+}
+
+async function restartMobileSyncServer() {
+  if (mobileSyncServer?.listening) {
+    await new Promise((resolve) => mobileSyncServer.close(resolve));
+  }
+  mobileSyncServer = null;
+  mobileSyncState = null;
+  return ensureMobileSyncServer();
+}
+
+function closeMobileSyncServer() {
+  if (mobileSyncServer?.listening) {
+    mobileSyncServer.close();
+  }
+  mobileSyncServer = null;
+  mobileSyncState = null;
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function hideMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  writeWindowState(mainWindow);
+  mainWindow.hide();
+}
+
+function updateTrayMenu() {
+  if (!tray) {
+    return;
+  }
+
+  const startupSettings = getStartupSettings();
+  tray.setContextMenu(Menu.buildFromTemplate([
+    {
+      label: "Show Tyria Ledger",
+      click: showMainWindow,
+    },
+    {
+      label: "Hide Tyria Ledger",
+      click: hideMainWindow,
+    },
+    { type: "separator" },
+    {
+      label: "Start with computer",
+      type: "checkbox",
+      checked: startupSettings.openAtLogin,
+      click: (menuItem) => {
+        setStartupSettings(null, { openAtLogin: menuItem.checked });
+      },
+    },
+    { type: "separator" },
+    {
+      label: "Quit",
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]));
+}
+
+function createTray() {
+  if (tray) {
+    return;
+  }
+
+  tray = new Tray(getWindowIconPath());
+  tray.setToolTip("Tyria Ledger");
+  tray.on("click", showMainWindow);
+  updateTrayMenu();
 }
 
 function apiKeyPath() {
@@ -1607,6 +1940,7 @@ function closeDatabase() {
 
 function quitAfterInstallerDownload() {
   const quitTimer = setTimeout(() => {
+    isQuitting = true;
     closeDatabase();
 
     for (const browserWindow of BrowserWindow.getAllWindows()) {
@@ -1799,11 +2133,17 @@ function createWindow() {
   });
 
   mainWindow.once("ready-to-show", () => {
-    mainWindow.show();
+    if (!shouldStartHidden()) {
+      mainWindow.show();
+    }
   });
 
-  mainWindow.on("close", () => {
+  mainWindow.on("close", (event) => {
     writeWindowState(mainWindow);
+    if (!isQuitting) {
+      event.preventDefault();
+      mainWindow.hide();
+    }
   });
 
   if (isDev) {
@@ -1818,8 +2158,12 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, argv = []) => {
     if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    if (argv.includes(START_HIDDEN_ARG)) {
       return;
     }
 
@@ -1827,13 +2171,19 @@ if (!hasSingleInstanceLock) {
       mainWindow.restore();
     }
 
+    mainWindow.show();
     mainWindow.focus();
   });
 
-  app.on("before-quit", closeDatabase);
+  app.on("before-quit", () => {
+    isQuitting = true;
+    closeMobileSyncServer();
+    closeDatabase();
+  });
 
   app.whenReady().then(() => {
     nativeTheme.themeSource = "dark";
+    createTray();
 
     try {
       openDatabase();
@@ -1863,19 +2213,21 @@ if (!hasSingleInstanceLock) {
     ipcMain.handle("app-cache:delete-prefix", deleteAppCachePrefix);
     ipcMain.handle("updates:check", checkForUpdates);
     ipcMain.handle("updates:open-download", openUpdateDownload);
+    ipcMain.handle("startup:get", getStartupSettings);
+    ipcMain.handle("startup:set", setStartupSettings);
+    ipcMain.handle("mobile-sync:get", ensureMobileSyncServer);
+    ipcMain.handle("mobile-sync:restart", restartMobileSyncServer);
 
     createWindow();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
+      } else {
+        showMainWindow();
       }
     });
   });
 
-  app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") {
-      app.quit();
-    }
-  });
+  app.on("window-all-closed", () => {});
 }

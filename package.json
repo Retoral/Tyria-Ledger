@@ -11,6 +11,9 @@
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "tsc --noEmit && vite build",
+    "android:dev": "vite --config apps/android/vite.config.ts --host 127.0.0.1 --port 5175",
+    "android:build": "tsc -p apps/android/tsconfig.json --noEmit && vite build --config apps/android/vite.config.ts",
+    "android:sync": "npm run android:build && cap sync android",
     "start": "electron .",
     "package": "npm run build && electron-builder --dir",
     "dist:mac": "npm run build && electron-builder --mac",
@@ -19,15 +22,19 @@
     "release:github:dry": "node scripts/release-github.cjs --dry-run"
   },
   "dependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/cli": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
     "lucide-react": "latest",
+    "qrcode": "^1.5.4",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^5.1.2",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "^5.1.2",
     "concurrently": "latest",
     "cross-env": "latest",
     "electron": "latest",

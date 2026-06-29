@@ -23,6 +23,10 @@ contextBridge.exposeInMainWorld("gw2Desktop", {
   deleteAppCachePrefix: (prefix) => ipcRenderer.invoke("app-cache:delete-prefix", prefix),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),
   openUpdateDownload: (updateInfo) => ipcRenderer.invoke("updates:open-download", updateInfo),
+  getStartupSettings: () => ipcRenderer.invoke("startup:get"),
+  setStartupSettings: (settings) => ipcRenderer.invoke("startup:set", settings),
+  getMobileSyncInfo: () => ipcRenderer.invoke("mobile-sync:get"),
+  restartMobileSync: () => ipcRenderer.invoke("mobile-sync:restart"),
   onNavigateHistory: (callback) => {
     const listener = (_event, direction) => callback(direction);
     ipcRenderer.on("navigation:history", listener);

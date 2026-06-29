@@ -29,6 +29,7 @@ import {
   TrendingUp,
   X,
 } from "lucide-react";
+import QRCode from "qrcode";
 import {
   createContext,
   useCallback,
@@ -122,6 +123,11 @@ type ActivePage = string;
 type SpeedLabel = "Quickest" | "Fast" | "Moderate" | "Slowest";
 type UpdateCheckState = "idle" | "checking" | "current" | "available" | "error" | "not_configured";
 type AppUpdateInfo = Awaited<ReturnType<NonNullable<Window["gw2Desktop"]>["checkForUpdates"]>>;
+type MobileSyncInfo = Awaited<ReturnType<NonNullable<Window["gw2Desktop"]>["getMobileSyncInfo"]>>;
+type StartupSettings = {
+  openAtLogin: boolean;
+  openAsHidden: boolean;
+};
 
 interface GoldSuggestion {
   title: string;
@@ -790,10 +796,13 @@ const MARKET_SPLIT_MIN_RATIO = 0.28;
 const MARKET_SPLIT_MAX_RATIO = 0.72;
 const FARM_TRACKER_AUTO_SNAPSHOT_MS = 60 * 1000;
 const FARM_TRACKER_IDLE_AFTER_MS = 5 * 60 * 1000;
-const FARM_TRACKER_IDLE_SNAPSHOT_MS = 5 * 60 * 1000;
+const FARM_TRACKER_IDLE_SNAPSHOT_MS = FARM_TRACKER_AUTO_SNAPSHOT_MS;
+const ACCOUNT_API_REFRESH_COOLDOWN_MS = 60 * 1000;
+const ACCOUNT_API_WAKE_REFRESH_THROTTLE_MS = 15 * 1000;
 const MARKET_AUTO_SCAN_MIN_DELAY_MS = 1000;
 const MARKET_SCAN_COOLDOWN_MS = 10 * 60 * 1000;
 const MARKET_STARTUP_SCAN_COOLDOWN_MS = 30 * 60 * 1000;
+const MARKET_WAKE_SCAN_THROTTLE_MS = 5 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const DEMAND_MOVEMENT_LOOKBACK_MS = 14 * DAY_MS;
@@ -834,6 +843,10 @@ const HISTORY_RANGES: HistoryRange[] = [
   { id: "1y", label: "1Y", days: 366 },
   { id: "2y", label: "2Y", days: 732 },
 ];
+const HISTORY_LONG_RANGE_POINT_COUNT = 22;
+const HISTORY_LONG_RANGE_TICK_COUNT = 11;
+const HISTORY_YEAR_POINT_COUNT = 12;
+const HISTORY_TWO_YEAR_POINT_COUNT = 24;
 
 const SALVAGE_ROW_LIMIT = 300;
 const RUNECRAFTER_SALVAGE_KIT_NAME = "Runecrafter's Salvage-o-Matic";
@@ -3109,6 +3122,7 @@ function App() {
   const [apiStatusUpdatedAt, setApiStatusUpdatedAt] = useState<number | null>(null);
   const [marketUpdatedAt, setMarketUpdatedAt] = useState<number | null>(null);
   const [accountUpdatedAt, setAccountUpdatedAt] = useState<number | null>(null);
+  const [accountRefreshNextAt, setAccountRefreshNextAt] = useState<number | null>(null);
   const [achievementImportState, setAchievementImportState] = useState<LoadState>("idle");
   const [achievementUpdatedAt, setAchievementUpdatedAt] = useState<number | null>(null);
   const [achievementCatalogCount, setAchievementCatalogCount] = useState(0);
@@ -3116,6 +3130,10 @@ function App() {
   const [mapsUpdatedAt, setMapsUpdatedAt] = useState<number | null>(null);
   const [updateCheckState, setUpdateCheckState] = useState<UpdateCheckState>("idle");
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
+  const [startupSettings, setStartupSettings] = useState<StartupSettings | null>(null);
+  const [startupSettingsState, setStartupSettingsState] = useState<LoadState>("idle");
+  const [mobileSyncInfo, setMobileSyncInfo] = useState<MobileSyncInfo | null>(null);
+  const [mobileSyncState, setMobileSyncState] = useState<LoadState>("idle");
   const [sidebarSearch, setSidebarSearch] = useState("");
   const [maps, setMaps] = useState<Gw2Map[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -3130,6 +3148,9 @@ function App() {
   const catalogRef = useRef(catalog);
   const marketUpdatedAtRef = useRef(marketUpdatedAt);
   const loadStateRef = useRef(loadState);
+  const accountSnapshotRef = useRef(accountSnapshot);
+  const analysisStateRef = useRef(analysisState);
+  const accountRefreshStartedAtRef = useRef(0);
   useWideTableDragPanning();
 
   const favoriteItemsContextValue = useMemo<FavoriteItemsContextValue>(
@@ -3219,6 +3240,19 @@ function App() {
         setAchievementImportState("error");
       });
 
+    const startupSettingsPromise = window.gw2Desktop?.getStartupSettings?.();
+    if (startupSettingsPromise) {
+      setStartupSettingsState("loading");
+      startupSettingsPromise
+        .then((settings) => {
+          setStartupSettings(settings);
+          setStartupSettingsState("ready");
+        })
+        .catch(() => {
+          setStartupSettingsState("error");
+        });
+    }
+
     const storedKeyPromise = window.gw2Desktop?.loadApiKey();
     if (storedKeyPromise) {
       storedKeyPromise.then((storedKey) => {
@@ -3240,12 +3274,20 @@ function App() {
   }, [loadState]);
 
   useEffect(() => {
+    analysisStateRef.current = analysisState;
+  }, [analysisState]);
+
+  useEffect(() => {
     catalogRef.current = catalog;
   }, [catalog]);
 
   useEffect(() => {
     marketUpdatedAtRef.current = marketUpdatedAt;
   }, [marketUpdatedAt]);
+
+  useEffect(() => {
+    accountSnapshotRef.current = accountSnapshot;
+  }, [accountSnapshot]);
 
   useEffect(() => {
     if (!accountSnapshot) {
@@ -3299,6 +3341,47 @@ function App() {
       if (autoScanTimer !== null) {
         window.clearTimeout(autoScanTimer);
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    let lastWakeRefreshAt = 0;
+
+    const requestWakeMarketRefresh = () => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+
+      const now = Date.now();
+      if (now - lastWakeRefreshAt < MARKET_WAKE_SCAN_THROTTLE_MS) {
+        return;
+      }
+
+      lastWakeRefreshAt = now;
+      if (loadStateRef.current === "loading") {
+        return;
+      }
+
+      const cooldownRemaining = getMarketScanCooldownRemaining(
+        marketUpdatedAtRef.current,
+        now,
+        MARKET_STARTUP_SCAN_COOLDOWN_MS,
+      );
+      if (cooldownRemaining > 0) {
+        return;
+      }
+
+      void loadCatalog(GLOBAL_MARKET_SCOPE_ID, { preload: true }).catch(() => undefined);
+    };
+
+    window.addEventListener("focus", requestWakeMarketRefresh);
+    window.addEventListener("online", requestWakeMarketRefresh);
+    document.addEventListener("visibilitychange", requestWakeMarketRefresh);
+
+    return () => {
+      window.removeEventListener("focus", requestWakeMarketRefresh);
+      window.removeEventListener("online", requestWakeMarketRefresh);
+      document.removeEventListener("visibilitychange", requestWakeMarketRefresh);
     };
   }, []);
 
@@ -4208,10 +4291,39 @@ function App() {
     await runAnalysisForKey(trimmedKey);
   }
 
-  async function refreshAccountSnapshot(key: string, options: { forceRefresh?: boolean } = {}) {
+  async function refreshAccountSnapshot(
+    key: string,
+    options: { forceRefresh?: boolean; bypassCooldown?: boolean; label?: string } = {},
+  ): Promise<AccountSnapshot | null> {
+    const trimmedKey = key.trim();
+    if (!trimmedKey) {
+      return null;
+    }
+
+    const now = Date.now();
+    const cooldownRemaining = options.bypassCooldown
+      ? 0
+      : Math.max(0, ACCOUNT_API_REFRESH_COOLDOWN_MS - (now - accountRefreshStartedAtRef.current));
+    if (cooldownRemaining > 0) {
+      setAccountRefreshNextAt(now + cooldownRemaining);
+      setProgress(
+        `${options.label ?? "Account API"} can refresh again in ${formatMarketScanCooldown(cooldownRemaining)}`,
+      );
+      return accountSnapshotRef.current;
+    }
+
+    if (analysisStateRef.current === "loading") {
+      setProgress("Account API refresh already running");
+      return accountSnapshotRef.current;
+    }
+
+    accountRefreshStartedAtRef.current = now;
+    setAccountRefreshNextAt(now + ACCOUNT_API_REFRESH_COOLDOWN_MS);
+
     try {
-      const snapshot = await loadAccountSnapshot(key, options);
+      const snapshot = await loadAccountSnapshot(trimmedKey, options);
       setAccountSnapshot(snapshot);
+      accountSnapshotRef.current = snapshot;
       setAccountUpdatedAt(Date.now());
       setProgress(`Personal data ready for ${snapshot.tokenInfo.name}`);
       return snapshot;
@@ -4245,6 +4357,9 @@ function App() {
     }
 
     setAnalysisState("loading");
+    const refreshStartedAt = Date.now();
+    accountRefreshStartedAtRef.current = refreshStartedAt;
+    setAccountRefreshNextAt(refreshStartedAt + ACCOUNT_API_REFRESH_COOLDOWN_MS);
     setError(null);
     setProgressCount(null);
 
@@ -4259,6 +4374,7 @@ function App() {
       );
       setAnalysis(result);
       setAccountSnapshot(result.account);
+      accountSnapshotRef.current = result.account;
       setAnalysisState("ready");
       setAccountUpdatedAt(Date.now());
       setProgress(`Account analysis ready for ${result.account.tokenInfo.name}`);
@@ -4286,6 +4402,79 @@ function App() {
     await refreshAccountSnapshot(key, { forceRefresh: true });
   }, [apiKey]);
 
+  const updateStartupOpenAtLogin = useCallback(
+    async (openAtLogin: boolean) => {
+      if (!window.gw2Desktop?.setStartupSettings) {
+        return;
+      }
+
+      const previousSettings = startupSettings;
+      setStartupSettings({
+        openAtLogin,
+        openAsHidden: true,
+      });
+      setStartupSettingsState("loading");
+
+      try {
+        const nextSettings = await window.gw2Desktop.setStartupSettings({ openAtLogin });
+        setStartupSettings(nextSettings);
+        setStartupSettingsState("ready");
+        setProgress(
+          openAtLogin
+            ? "Tyria Ledger will start hidden with this computer."
+            : "Tyria Ledger will no longer start with this computer.",
+        );
+      } catch (startupError) {
+        setStartupSettings(previousSettings);
+        setStartupSettingsState("error");
+        setError(
+          startupError instanceof Error
+            ? startupError.message
+            : "Unable to update the startup setting.",
+        );
+      }
+    },
+    [startupSettings],
+  );
+
+  const refreshMobileSyncInfo = useCallback(async () => {
+    if (!window.gw2Desktop?.getMobileSyncInfo) {
+      setMobileSyncState("error");
+      return;
+    }
+
+    setMobileSyncState("loading");
+    try {
+      const nextInfo = await window.gw2Desktop.getMobileSyncInfo();
+      setMobileSyncInfo(nextInfo);
+      setMobileSyncState("ready");
+    } catch (syncError) {
+      setMobileSyncState("error");
+      setError(syncError instanceof Error ? syncError.message : "Unable to start Android sync.");
+    }
+  }, []);
+
+  const restartMobileSync = useCallback(async () => {
+    if (!window.gw2Desktop?.restartMobileSync) {
+      await refreshMobileSyncInfo();
+      return;
+    }
+
+    setMobileSyncState("loading");
+    try {
+      const nextInfo = await window.gw2Desktop.restartMobileSync();
+      setMobileSyncInfo(nextInfo);
+      setMobileSyncState("ready");
+    } catch (syncError) {
+      setMobileSyncState("error");
+      setError(syncError instanceof Error ? syncError.message : "Unable to refresh Android sync.");
+    }
+  }, [refreshMobileSyncInfo]);
+
+  useEffect(() => {
+    void refreshMobileSyncInfo();
+  }, [refreshMobileSyncInfo]);
+
   const content = (() => {
     if (activePage === "account") {
       return (
@@ -4300,6 +4489,11 @@ function App() {
           apiStatusState={apiStatusState}
           catalog={catalog}
           dataImports={dataImports}
+          marketLoadState={loadState}
+          mobileSyncInfo={mobileSyncInfo}
+          mobileSyncState={mobileSyncState}
+          startupSettings={startupSettings}
+          startupSettingsState={startupSettingsState}
           onAnalyze={() => runAnalysisForKey(apiKey.trim(), { forceRefresh: true })}
           onApiKeyChange={setApiKey}
           onForgetApiKey={forgetApiKey}
@@ -4307,7 +4501,9 @@ function App() {
           onOpenItemSearch={openItemSearch}
           onLoadMarket={loadCatalog}
           onRefreshApiStatuses={() => refreshApiStatuses()}
+          onRefreshMobileSync={restartMobileSync}
           onSaveApiKey={saveApiKey}
+          onStartupOpenAtLoginChange={updateStartupOpenAtLogin}
         />
       );
     }
@@ -4382,6 +4578,7 @@ function App() {
         <AchievementsPage
           accountSnapshot={accountSnapshot}
           analysisState={analysisState}
+          mapsState={mapsState}
           onAnalyze={() => runAnalysisForKey(apiKey.trim(), { forceRefresh: true })}
           onImportStateChange={(state, updatedAt = null) => {
             setAchievementImportState(state);
@@ -4421,10 +4618,11 @@ function App() {
           containerState={containerState}
           apiKeyRemembered={apiKeyRemembered}
           analysisState={analysisState}
+          accountRefreshNextAt={accountRefreshNextAt}
           marketHistoryRevision={marketHistoryRevision}
           onAnalyze={() => runAnalysisForKey(apiKey.trim(), { forceRefresh: true })}
           onRefreshSnapshot={async () => {
-            await refreshAccountSnapshot(apiKey.trim(), { forceRefresh: true });
+            await refreshAccountSnapshot(apiKey.trim(), { forceRefresh: true, label: "Farming Tracker" });
           }}
           onCloseDetail={() => selectDetailItem(null)}
           onSelectItem={(item) => selectDetailItem(buildMarketItemForDetail(item))}
@@ -4850,7 +5048,7 @@ function UpdateStatusButton({
       disabled={isChecking}
       title={title}
     >
-      {isChecking ? <Loader2 /> : isAvailable ? <AlertCircle /> : updateState === "current" ? <CheckCircle2 /> : <RefreshCcw />}
+      {isChecking ? <Loader2 className="spin" /> : isAvailable ? <AlertCircle /> : updateState === "current" ? <CheckCircle2 /> : <RefreshCcw />}
       <span>{label}</span>
     </button>
   );
@@ -4933,19 +5131,66 @@ function AccountSettingsPanel({
   apiKey,
   apiKeyRemembered,
   analysisState,
+  mobileSyncInfo,
+  mobileSyncState,
+  startupSettings,
+  startupSettingsState,
   onAnalyze,
   onApiKeyChange,
   onForgetApiKey,
+  onRefreshMobileSync,
   onSaveApiKey,
+  onStartupOpenAtLoginChange,
 }: {
   apiKey: string;
   apiKeyRemembered: boolean;
   analysisState: LoadState;
+  mobileSyncInfo: MobileSyncInfo | null;
+  mobileSyncState: LoadState;
+  startupSettings: StartupSettings | null;
+  startupSettingsState: LoadState;
   onAnalyze: () => void;
   onApiKeyChange: (value: string) => void;
   onForgetApiKey: () => void;
+  onRefreshMobileSync: () => void;
   onSaveApiKey: () => void;
+  onStartupOpenAtLoginChange: (openAtLogin: boolean) => void;
 }) {
+  const [mobileSyncQr, setMobileSyncQr] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!mobileSyncInfo?.pairingPayload) {
+      setMobileSyncQr("");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    QRCode.toDataURL(mobileSyncInfo.pairingPayload, {
+      margin: 1,
+      scale: 6,
+      color: {
+        dark: "#07100f",
+        light: "#f7faf7",
+      },
+    })
+      .then((dataUrl) => {
+        if (!cancelled) {
+          setMobileSyncQr(dataUrl);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMobileSyncQr("");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mobileSyncInfo?.pairingPayload]);
+
   return (
     <section className="account-settings-panel">
       <section className="api-key-dock">
@@ -4974,6 +5219,66 @@ function AccountSettingsPanel({
           </button>
         </div>
       </section>
+
+      <div className="account-secondary-settings">
+        {startupSettings ? (
+          <section className="startup-dock">
+            <div className="dock-title">
+              <Database />
+              <span>Background App</span>
+              {startupSettings.openAtLogin ? <CheckCircle2 className="ok" /> : null}
+            </div>
+            <div className="startup-row">
+              <label className="setting-toggle">
+                <input
+                  type="checkbox"
+                  checked={startupSettings.openAtLogin}
+                  disabled={startupSettingsState === "loading"}
+                  onChange={(event) => onStartupOpenAtLoginChange(event.target.checked)}
+                />
+                <span>Start hidden when this computer starts</span>
+              </label>
+              <p>
+                Closing the window keeps Tyria Ledger running in the background. Use the tray or
+                menu-bar icon to show, hide, or quit it.
+              </p>
+            </div>
+          </section>
+        ) : null}
+
+        <section className="mobile-sync-dock">
+          <div className="dock-title">
+            <RefreshCcw />
+            <span>Android Sync</span>
+            {mobileSyncInfo?.enabled ? <CheckCircle2 className="ok" /> : null}
+          </div>
+          <div className="mobile-sync-grid">
+            <div className="mobile-sync-copy">
+              <p>
+                Pair the Android collector while both devices are on the same network. The QR contains
+                only a local sync URL and token.
+              </p>
+              <dl>
+                <div>
+                  <dt>Desktop URL</dt>
+                  <dd>{mobileSyncInfo?.baseUrl || "Starting local sync..."}</dd>
+                </div>
+                <div>
+                  <dt>Token</dt>
+                  <dd>{mobileSyncInfo?.token || "-"}</dd>
+                </div>
+              </dl>
+              <button className="icon-button" onClick={onRefreshMobileSync} disabled={mobileSyncState === "loading"}>
+                {mobileSyncState === "loading" ? <Loader2 className="spin" /> : <RefreshCcw />}
+                <span>Refresh QR</span>
+              </button>
+            </div>
+            <div className="sync-qr-frame" aria-label="Android sync QR code">
+              {mobileSyncQr ? <img src={mobileSyncQr} alt="Android sync QR code" /> : <Loader2 className="spin" />}
+            </div>
+          </div>
+        </section>
+      </div>
     </section>
   );
 }
@@ -5137,8 +5442,8 @@ function ApiStatusPanel({
         )}
       </div>
 
-      <button className="refresh-status" onClick={onRefreshApiStatuses}>
-        <RefreshCcw />
+      <button className="refresh-status" onClick={onRefreshApiStatuses} disabled={apiStatusState === "loading"}>
+        <RefreshCcw className={apiStatusState === "loading" ? "spin" : undefined} />
         Check again
       </button>
 
@@ -5249,6 +5554,11 @@ function AccountDashboard({
   apiStatusState,
   catalog,
   dataImports,
+  marketLoadState,
+  mobileSyncInfo,
+  mobileSyncState,
+  startupSettings,
+  startupSettingsState,
   onAnalyze,
   onApiKeyChange,
   onForgetApiKey,
@@ -5256,7 +5566,9 @@ function AccountDashboard({
   onOpenItemSearch,
   onLoadMarket,
   onRefreshApiStatuses,
+  onRefreshMobileSync,
   onSaveApiKey,
+  onStartupOpenAtLoginChange,
 }: {
   accountSnapshot: AccountSnapshot | null;
   accountItems: Map<number, Gw2Item>;
@@ -5268,6 +5580,11 @@ function AccountDashboard({
   apiStatusState: LoadState;
   catalog: MarketItem[];
   dataImports: DataImportRow[];
+  marketLoadState: LoadState;
+  mobileSyncInfo: MobileSyncInfo | null;
+  mobileSyncState: LoadState;
+  startupSettings: StartupSettings | null;
+  startupSettingsState: LoadState;
   onAnalyze: () => void;
   onApiKeyChange: (value: string) => void;
   onForgetApiKey: () => void;
@@ -5275,7 +5592,9 @@ function AccountDashboard({
   onOpenItemSearch: (itemName: string) => void;
   onLoadMarket: () => void;
   onRefreshApiStatuses: () => void;
+  onRefreshMobileSync: () => void;
   onSaveApiKey: () => void;
+  onStartupOpenAtLoginChange: (openAtLogin: boolean) => void;
 }) {
   const holdingRows = useMemo(() => {
     if (!accountSnapshot) {
@@ -5324,9 +5643,9 @@ function AccountDashboard({
             onRefreshApiStatuses={onRefreshApiStatuses}
           />
           <div className="page-actions">
-            <button className="icon-button" onClick={onLoadMarket}>
-              <RefreshCcw />
-              <span>{catalog.length ? "Refresh Market" : "Load Market"}</span>
+            <button className="icon-button" onClick={onLoadMarket} disabled={marketLoadState === "loading"}>
+              {marketLoadState === "loading" ? <Loader2 className="spin" /> : <RefreshCcw />}
+              <span>{marketLoadState === "loading" ? "Loading Market" : catalog.length ? "Refresh Market" : "Load Market"}</span>
             </button>
             <button className="icon-button primary" onClick={onAnalyze}>
               {analysisState === "loading" ? <Loader2 className="spin" /> : <ShieldCheck />}
@@ -5364,10 +5683,16 @@ function AccountDashboard({
         apiKey={apiKey}
         apiKeyRemembered={apiKeyRemembered}
         analysisState={analysisState}
+        mobileSyncInfo={mobileSyncInfo}
+        mobileSyncState={mobileSyncState}
+        startupSettings={startupSettings}
+        startupSettingsState={startupSettingsState}
         onAnalyze={onAnalyze}
         onApiKeyChange={onApiKeyChange}
         onForgetApiKey={onForgetApiKey}
+        onRefreshMobileSync={onRefreshMobileSync}
         onSaveApiKey={onSaveApiKey}
+        onStartupOpenAtLoginChange={onStartupOpenAtLoginChange}
       />
 
       <DataImportsPanel imports={dataImports} />
@@ -5792,10 +6117,10 @@ function formatMarketScanCooldown(ms: number): string {
   }
 
   if (seconds === 0) {
-    return `${minutes}m`;
+    return `${minutes}min`;
   }
 
-  return `${minutes}m ${seconds}s`;
+  return `${minutes}min ${seconds}s`;
 }
 
 function WizardVaultPage({
@@ -6647,6 +6972,7 @@ function formatTimerDuration(durationMs: number): string {
 function AchievementsPage({
   accountSnapshot,
   analysisState,
+  mapsState,
   onAnalyze,
   onCatalogLoaded,
   onImportStateChange,
@@ -6655,6 +6981,7 @@ function AchievementsPage({
 }: {
   accountSnapshot: AccountSnapshot | null;
   analysisState: LoadState;
+  mapsState: LoadState;
   onAnalyze: () => void;
   onCatalogLoaded: (count: number) => void;
   onImportStateChange: (state: LoadState, updatedAt?: number | null) => void;
@@ -6827,8 +7154,8 @@ function AchievementsPage({
             {catalogState === "loading" ? <Loader2 className="spin" /> : <Database />}
             <span>Refresh Catalog</span>
           </button>
-          <button className="icon-button" onClick={() => void onRefreshMaps()}>
-            <RefreshCcw />
+          <button className="icon-button" onClick={() => void onRefreshMaps()} disabled={mapsState === "loading"}>
+            <RefreshCcw className={mapsState === "loading" ? "spin" : undefined} />
             <span>Refresh Maps</span>
           </button>
           <button className="icon-button primary" onClick={onAnalyze}>
@@ -9558,7 +9885,7 @@ function ProfitableCraftsPage({
             </p>
           </div>
           <button className="icon-button primary" onClick={() => void onLoadCrafts()}>
-            <RefreshCcw />
+            <RefreshCcw className={craftLoadState === "loading" ? "spin" : undefined} />
             <span>{craftLoadState === "loading" ? "Loading" : "Refresh"}</span>
           </button>
         </section>
@@ -10042,7 +10369,7 @@ function CraftProfitHeader({
       <div className="craft-panel-actions">
         <span className="metric">{count.toLocaleString()}</span>
         <button className="icon-button" onClick={() => void onLoadCrafts()} disabled={loadState === "loading"}>
-          <RefreshCcw />
+          <RefreshCcw className={loadState === "loading" ? "spin" : undefined} />
           <span>{loadState === "loading" ? "Loading" : "Refresh"}</span>
         </button>
       </div>
@@ -10568,6 +10895,40 @@ function compareNumberValue(left: number | null | undefined, right: number | nul
   return (left ?? 0) - (right ?? 0);
 }
 
+type LegendaryReadinessFilterId =
+  | "all"
+  | "legendary-weapons"
+  | "legendary-armor"
+  | "legendary-trinkets"
+  | "aurene-eod"
+  | "core-hot-pof"
+  | "soto"
+  | "competitive"
+  | "gifts"
+  | "materials"
+  | "external";
+
+const LEGENDARY_READINESS_FILTERS: Array<{ id: LegendaryReadinessFilterId; label: string; description: string }> = [
+  { id: "all", label: "All legendary items", description: "Show every ranked and external legendary route." },
+  { id: "legendary-weapons", label: "Legendary weapons", description: "Weapons, precursors, and weapon-focused legendary routes." },
+  { id: "legendary-armor", label: "Legendary armor", description: "Raid, PvP, WvW, Obsidian, and armor collection pieces." },
+  { id: "legendary-trinkets", label: "Trinkets and backs", description: "Accessories, rings, amulets, and legendary backpacks." },
+  { id: "aurene-eod", label: "End of Dragons / Aurene", description: "Aurene weapons and Canthan legendary materials." },
+  { id: "core-hot-pof", label: "Core, HoT, PoF", description: "Generation 1, Generation 2, and early expansion legendary routes." },
+  { id: "soto", label: "Secrets of the Obscure", description: "Obsidian armor, rift, essence, and Astral Ward related items." },
+  { id: "competitive", label: "Competitive", description: "PvP, WvW, raid, strike, and mode-specific legendary rewards." },
+  { id: "gifts", label: "Gifts", description: "Gift items used as legendary recipe steps." },
+  { id: "materials", label: "Legendary materials", description: "Unique trophies, crafting materials, and account-bound components." },
+  { id: "external", label: "Other acquisition", description: "Items that need wiki, vendor, achievement, raid, strike, or store routes." },
+];
+
+interface LegendaryReadinessResolvedCost {
+  marketCost: number;
+  personalCost: number;
+  ownedCoverage: number;
+  outputValue: number;
+}
+
 function LegendaryReadinessPage({
   catalog,
   selectedItem,
@@ -10610,30 +10971,57 @@ function LegendaryReadinessPage({
   const legendaries = analysis?.legendaries ?? [];
   const [query, setQuery] = useState("");
   const [rankedOpen, setRankedOpen] = useState(true);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [activeFilters, setActiveFilters] = useState<Set<LegendaryReadinessFilterId>>(() => new Set(["all"]));
+  const [resolvedCosts, setResolvedCosts] = useState<Map<number, LegendaryReadinessResolvedCost>>(new Map());
+  const [resolvingCostCount, setResolvingCostCount] = useState(0);
   const normalizedQuery = query.trim().toLowerCase();
+  const activeFilterList = useMemo(() => Array.from(activeFilters), [activeFilters]);
+  const activeFilterCount = activeFilters.has("all") ? 0 : activeFilters.size;
+  const legendariesWithResolvedCosts = useMemo(
+    () => legendaries.map((entry) => applyLegendaryReadinessResolvedCost(entry, resolvedCosts.get(entry.item.id))),
+    [legendaries, resolvedCosts],
+  );
+
+  useEffect(() => {
+    setResolvedCosts(new Map());
+  }, [accountSnapshot, analysis]);
+
   const { filteredActionableLegendaries, filteredExternalLegendaries } = useMemo(() => {
-    const matchesQuery = (entry: (typeof legendaries)[number]) => {
-      if (!normalizedQuery) {
+    const matchesQuery = (entry: LegendaryReadiness) => {
+      const queryMatches = (() => {
+        if (!normalizedQuery) {
+          return true;
+        }
+
+        const recipeState = entry.recipeUnlocked ? "unlocked" : "recipe locked";
+        const priority =
+          entry.recipeUnlocked && entry.ownedCoverage >= 0.75
+            ? "quickest"
+            : entry.ownedCoverage >= 0.4
+              ? "medium"
+              : "long-term";
+
+        return (
+          entry.item.name.toLowerCase().includes(normalizedQuery) ||
+          entry.item.type.toLowerCase().includes(normalizedQuery) ||
+          recipeState.includes(normalizedQuery) ||
+          priority.includes(normalizedQuery)
+        );
+      })();
+
+      if (!queryMatches) {
+        return false;
+      }
+
+      if (activeFilters.has("all")) {
         return true;
       }
 
-      const recipeState = entry.recipeUnlocked ? "unlocked" : "recipe locked";
-      const priority =
-        entry.recipeUnlocked && entry.ownedCoverage >= 0.75
-          ? "quickest"
-          : entry.ownedCoverage >= 0.4
-            ? "medium"
-            : "long-term";
-
-      return (
-        entry.item.name.toLowerCase().includes(normalizedQuery) ||
-        entry.item.type.toLowerCase().includes(normalizedQuery) ||
-        recipeState.includes(normalizedQuery) ||
-        priority.includes(normalizedQuery)
-      );
+      return activeFilterList.some((filterId) => doesLegendaryReadinessMatchFilter(entry, filterId));
     };
 
-    const filtered = legendaries.filter(matchesQuery);
+    const filtered = legendariesWithResolvedCosts.filter(matchesQuery);
     const actionableEntries = filtered.filter((entry) => !isExternalLegendaryReadinessEntry(entry));
     const actionableNames = new Set(actionableEntries.map((entry) => normalizeItemName(entry.item.name)));
 
@@ -10645,7 +11033,7 @@ function LegendaryReadinessPage({
         .sort((left, right) => compareStringValue(left.item.name, right.item.name)),
     };
   },
-    [legendaries, normalizedQuery],
+    [activeFilterList, activeFilters, legendariesWithResolvedCosts, normalizedQuery],
   );
   const { sortedRows: sortedLegendaries, renderHeader } = useSortableRows<
     (typeof legendaries)[number],
@@ -10665,6 +11053,87 @@ function LegendaryReadinessPage({
       priority: (left, right) => compareNumberValue(getLegendaryPriorityRank(left), getLegendaryPriorityRank(right)),
     },
   );
+  const toggleLegendaryFilter = (filterId: LegendaryReadinessFilterId) => {
+    setActiveFilters((current) => {
+      if (filterId === "all") {
+        return new Set(["all"]);
+      }
+
+      const next = new Set(current);
+      next.delete("all");
+      if (next.has(filterId)) {
+        next.delete(filterId);
+      } else {
+        next.add(filterId);
+      }
+
+      return next.size > 0 ? next : new Set(["all"]);
+    });
+  };
+
+  useEffect(() => {
+    if (!accountSnapshot || filteredActionableLegendaries.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    const candidates = filteredActionableLegendaries
+      .slice(0, 72)
+      .filter((entry) => entry.recipe.ingredients.length > 0 && !resolvedCosts.has(entry.item.id));
+
+    if (selectedItem) {
+      const selectedEntry = filteredActionableLegendaries.find((entry) => entry.item.id === selectedItem.id);
+      if (selectedEntry && !resolvedCosts.has(selectedEntry.item.id)) {
+        candidates.unshift(selectedEntry);
+      }
+    }
+
+    const uniqueCandidates = candidates.filter(
+      (entry, index, entries) => entries.findIndex((candidate) => candidate.item.id === entry.item.id) === index,
+    );
+
+    if (uniqueCandidates.length === 0) {
+      return;
+    }
+
+    setResolvingCostCount(uniqueCandidates.length);
+    void (async () => {
+      let nextIndex = 0;
+      const workerCount = Math.min(2, uniqueCandidates.length);
+
+      await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+          while (!cancelled && nextIndex < uniqueCandidates.length) {
+            const entry = uniqueCandidates[nextIndex];
+            nextIndex += 1;
+            const resolved = await resolveLegendaryReadinessCost(entry, accountSnapshot).catch(() => null);
+            if (!resolved || cancelled) {
+              continue;
+            }
+
+            setResolvedCosts((current) => {
+              if (current.has(entry.item.id)) {
+                return current;
+              }
+
+              const updated = new Map(current);
+              updated.set(entry.item.id, resolved);
+              return updated;
+            });
+          }
+        }),
+      );
+
+      if (!cancelled) {
+        setResolvingCostCount(0);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      setResolvingCostCount(0);
+    };
+  }, [accountSnapshot, filteredActionableLegendaries, resolvedCosts, selectedItem]);
 
   if (!accountSnapshot) {
     return (
@@ -10700,7 +11169,7 @@ function LegendaryReadinessPage({
             </p>
           </div>
           <button className="icon-button primary" onClick={() => void onAnalyze()}>
-            <RefreshCcw />
+            <RefreshCcw className={analysisState === "loading" ? "spin" : undefined} />
             <span>{analysisState === "loading" ? "Analyzing" : "Refresh Scan"}</span>
           </button>
         </section>
@@ -10709,14 +11178,53 @@ function LegendaryReadinessPage({
           {analysisState === "loading" && legendaries.length === 0 ? <SkeletonRows /> : null}
           {legendaries.length ? (
             <>
-              <label className="search-box legendary-search">
-                <Search />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search legendary item, gift, recipe state"
-                />
-              </label>
+              <div className="legendary-search-panel">
+                <label className="search-box legendary-search">
+                  <Search />
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Search legendary item, gift, recipe state"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className={`filter-toggle ${filterOpen || activeFilterCount > 0 ? "active" : ""}`}
+                  onClick={() => setFilterOpen((open) => !open)}
+                >
+                  <SlidersHorizontal />
+                  <span>Filters</span>
+                  {activeFilterCount > 0 ? <strong>{activeFilterCount}</strong> : null}
+                </button>
+                {filterOpen ? (
+                  <section className="legendary-filter-window" aria-label="Legendary readiness filters">
+                    <div className="legendary-filter-window-header">
+                      <strong>Legendary filters</strong>
+                      <button type="button" className="inline-link-button" onClick={() => setActiveFilters(new Set(["all"]))}>
+                        Reset
+                      </button>
+                    </div>
+                    <div className="legendary-filter-options">
+                      {LEGENDARY_READINESS_FILTERS.map((filter) => (
+                        <button
+                          key={filter.id}
+                          type="button"
+                          className={activeFilters.has(filter.id) ? "active" : ""}
+                          onClick={() => toggleLegendaryFilter(filter.id)}
+                        >
+                          <span>{filter.label}</span>
+                          <small>{filter.description}</small>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+                {resolvingCostCount > 0 ? (
+                  <small className="legendary-cost-state">
+                    Resolving detailed recipe prices for {resolvingCostCount.toLocaleString()} visible routes...
+                  </small>
+                ) : null}
+              </div>
               {sortedLegendaries.length ? (
                 <details
                   className="recipe-collapsible legendary-readiness-list"
@@ -10930,6 +11438,143 @@ function isExternalLegendaryReadinessEntry(entry: LegendaryReadiness): boolean {
 
 function getLegendaryDisplayMarketCost(entry: { outputValue: number; marketCost: number }): number {
   return entry.outputValue > 0 ? entry.marketCost : -1;
+}
+
+function applyLegendaryReadinessResolvedCost(
+  entry: LegendaryReadiness,
+  resolved?: LegendaryReadinessResolvedCost,
+): LegendaryReadiness {
+  if (!resolved) {
+    return entry;
+  }
+
+  return {
+    ...entry,
+    marketCost: resolved.marketCost,
+    personalCost: resolved.personalCost,
+    ownedCoverage: resolved.ownedCoverage,
+    outputValue: resolved.outputValue,
+  };
+}
+
+function doesLegendaryReadinessMatchFilter(
+  entry: LegendaryReadiness,
+  filterId: LegendaryReadinessFilterId,
+): boolean {
+  if (filterId === "all") {
+    return true;
+  }
+
+  const name = entry.item.name.toLowerCase();
+  const type = entry.item.type.toLowerCase();
+  const source = `${entry.recipe.type} ${entry.recipe.sourceName ?? ""} ${entry.recipe.disciplines.join(" ")}`.toLowerCase();
+
+  switch (filterId) {
+    case "legendary-weapons":
+      return entry.item.rarity === "Legendary" && type === "weapon";
+    case "legendary-armor":
+      return type === "armor" || /armor|glorious|obsidian|envoy|triumphant|mistforged|ardent/.test(name);
+    case "legendary-trinkets":
+      return (
+        /aurora|vision|coalescence|conflux|transcendence|ascension|ad infinitum|prismatic champion|amulet|ring|accessory|backpack/.test(name) ||
+        /trinket|back/.test(type)
+      );
+    case "aurene-eod":
+      return /aurene|jade runestone|antique summoning stone|dragon empire|cantha|canthan|new kaineng|echovald|dragon's end|end of dragons/.test(name);
+    case "core-hot-pof":
+      return /sunrise|twilight|eternity|frostfang|incinerator|predator|dreamer|bifrost|meteorlogicus|howler|kudzu|rodgort|bolt|quip|juggernaut|kraitkin|flameseeker|frenzy|minstrel|shooshadoo|astralaria|chuka|nevermore|hope|exordium|shining blade|pharus|claw of the khan-ur|maguuma|desert|mystic tribute|gift of fortune|aurora|vision|coalescence|ad infinitum/.test(name);
+    case "soto":
+      return /secrets of the obscure|astral|rift|essence|obsidian|oneiros|amnytas|nayos|skywatch|soto/.test(name);
+    case "competitive":
+      return /pvp|wvw|battle|conflux|transcendence|ascension|warbringer|glorious|mistforged|triumphant|raid|strike|legendary insight|legendary divination/.test(`${name} ${source}`);
+    case "gifts":
+      return name.startsWith("gift of ") || name.includes(" gift ");
+    case "materials":
+      return /trophy|craftingmaterial|consumable/.test(type) && !name.startsWith("gift of ");
+    case "external":
+      return isExternalLegendaryReadinessEntry(entry);
+  }
+}
+
+async function resolveLegendaryReadinessCost(
+  entry: LegendaryReadiness,
+  accountSnapshot: AccountSnapshot,
+): Promise<LegendaryReadinessResolvedCost | null> {
+  if (!entry.recipe.output_item_id || entry.recipe.ingredients.length === 0) {
+    return null;
+  }
+
+  const guides = await loadRecipesForOutput(entry.item.id, accountSnapshot.holdings);
+  const guide =
+    guides.find((candidate) => candidate.recipe.id === entry.recipe.id) ??
+    selectBestRecipeGuide(guides, accountSnapshot);
+  if (!guide) {
+    return null;
+  }
+
+  const nestedRecipes = await loadNestedCraftRecipes(guide, accountSnapshot);
+  const marketCost = getDeepRecipeCost(guide, nestedRecipes, null, 1, new Set([entry.item.id]));
+  const personalCost = getDeepRecipeCost(guide, nestedRecipes, accountSnapshot, 1, new Set([entry.item.id]));
+  const outputValue = guide.outputValue || entry.outputValue;
+  const ownedCoverage = marketCost > 0
+    ? Math.max(0, Math.min(1, 1 - personalCost / marketCost))
+    : entry.ownedCoverage;
+
+  return {
+    marketCost: marketCost || guide.marketCost || entry.marketCost,
+    personalCost: personalCost || guide.personalCost || entry.personalCost,
+    ownedCoverage,
+    outputValue,
+  };
+}
+
+function getDeepRecipeCost(
+  guide: RecipeGuide,
+  nestedRecipes: Map<number, RecipeGuide[]>,
+  accountSnapshot: AccountSnapshot | null,
+  requiredOutputCount: number,
+  path: Set<number>,
+): number {
+  const recipeRuns = Math.max(
+    1,
+    Math.ceil(requiredOutputCount / Math.max(1, guide.recipe.output_item_count)),
+  );
+
+  return guide.ingredients.reduce((sum, ingredient) => {
+    const requiredCount = ingredient.count * recipeRuns;
+    const ownedCount = accountSnapshot?.holdings.get(ingredient.item_id) ?? 0;
+    const neededCount = accountSnapshot ? Math.max(0, requiredCount - ownedCount) : requiredCount;
+    if (neededCount <= 0) {
+      return sum;
+    }
+
+    const marketUnitCost = getIngredientMarketUnitCost(ingredient);
+    const marketCost = marketUnitCost > 0 ? marketUnitCost * neededCount : Number.POSITIVE_INFINITY;
+    const childGuide = !path.has(ingredient.item_id)
+      ? selectBestRecipeGuide(nestedRecipes.get(ingredient.item_id) ?? [], accountSnapshot)
+      : null;
+    const craftCost = childGuide
+      ? getDeepRecipeCost(
+          childGuide,
+          nestedRecipes,
+          accountSnapshot,
+          neededCount,
+          new Set([...path, ingredient.item_id]),
+        )
+      : Number.POSITIVE_INFINITY;
+    const bestCost = Math.min(marketCost, craftCost);
+
+    if (Number.isFinite(bestCost)) {
+      return sum + bestCost;
+    }
+
+    return sum;
+  }, 0);
+}
+
+function getIngredientMarketUnitCost(ingredient: RecipeGuide["ingredients"][number]): number {
+  const price = getStoredPrice(ingredient.item_id);
+  return price?.sells.unit_price || price?.buys.unit_price || ingredient.unitPrice || 0;
 }
 
 const SNIPING_MIN_PROFIT_PER_ITEM = 300;
@@ -13244,6 +13889,7 @@ function FarmTrackerPage({
   containerState,
   apiKeyRemembered,
   analysisState,
+  accountRefreshNextAt,
   marketHistoryRevision,
   onAnalyze,
   onRefreshSnapshot,
@@ -13265,6 +13911,7 @@ function FarmTrackerPage({
   containerState: LoadState;
   apiKeyRemembered: boolean;
   analysisState: LoadState;
+  accountRefreshNextAt: number | null;
   marketHistoryRevision: number;
   onAnalyze: () => Promise<void>;
   onRefreshSnapshot: () => Promise<void>;
@@ -13297,6 +13944,7 @@ function FarmTrackerPage({
   const snapshotIntervalMs = trackerIsIdle
     ? FARM_TRACKER_IDLE_SNAPSHOT_MS
     : FARM_TRACKER_AUTO_SNAPSHOT_MS;
+  const refreshCooldownMs = accountRefreshNextAt ? Math.max(0, accountRefreshNextAt - now) : 0;
   const trackingElapsedMs = trackerState
     ? getFarmTrackerActiveElapsedMs(trackerState, now, trackLootEnabled && !trackerIsIdle)
     : 0;
@@ -13331,6 +13979,41 @@ function FarmTrackerPage({
       window.clearInterval(interval);
     };
   }, [accountSnapshot, analysisState, apiKeyRemembered, onRefreshSnapshot, snapshotIntervalMs, trackLootEnabled]);
+
+  useEffect(() => {
+    if (!trackLootEnabled || !accountSnapshot || !apiKeyRemembered) {
+      return;
+    }
+
+    let lastWakeRefreshAt = 0;
+    const requestWakeSnapshot = () => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+
+      const wakeAt = Date.now();
+      if (wakeAt - lastWakeRefreshAt < ACCOUNT_API_WAKE_REFRESH_THROTTLE_MS) {
+        return;
+      }
+
+      lastWakeRefreshAt = wakeAt;
+      if (analysisState === "loading") {
+        return;
+      }
+
+      void onRefreshSnapshot().catch(() => undefined);
+    };
+
+    window.addEventListener("focus", requestWakeSnapshot);
+    window.addEventListener("online", requestWakeSnapshot);
+    document.addEventListener("visibilitychange", requestWakeSnapshot);
+
+    return () => {
+      window.removeEventListener("focus", requestWakeSnapshot);
+      window.removeEventListener("online", requestWakeSnapshot);
+      document.removeEventListener("visibilitychange", requestWakeSnapshot);
+    };
+  }, [accountSnapshot, analysisState, apiKeyRemembered, onRefreshSnapshot, trackLootEnabled]);
 
   useEffect(() => {
     const ids = Array.from(new Map(trackerState?.gained ?? []).keys()).filter(
@@ -13471,7 +14154,7 @@ function FarmTrackerPage({
                 title={
                   trackLootEnabled
                     ? trackerIsIdle
-                      ? "No new loot for 5 minutes. Checking every 5 minutes until new gains appear."
+                      ? "No new loot for 5 minutes. Checking once per minute until new gains appear."
                       : "Tracking loot with one API snapshot per minute"
                     : "Loot tracking is paused"
                 }
@@ -13479,9 +14162,17 @@ function FarmTrackerPage({
                 <span className="toggle-knob" aria-hidden="true" />
                 <span>Track Loot</span>
               </button>
-              <button className="icon-button" onClick={() => void onRefreshSnapshot()}>
+              <button
+                className="icon-button"
+                onClick={() => void onRefreshSnapshot()}
+                title={
+                  refreshCooldownMs > 0
+                    ? `Next account API refresh in ${formatMarketScanCooldown(refreshCooldownMs)}`
+                    : "Refresh account inventory, materials, bank, and wallet now"
+                }
+              >
                 {analysisState === "loading" ? <Loader2 className="spin" /> : <RefreshCcw />}
-                <span>Refresh API</span>
+                <span>{refreshCooldownMs > 0 ? `Refresh in ${formatMarketScanCooldown(refreshCooldownMs)}` : "Refresh API"}</span>
               </button>
               <button className="icon-button primary" onClick={resetTracker}>
                 <X />
@@ -15879,7 +16570,6 @@ function HistorySvg({
   const xMax = Math.max(fixedRangeEnd, Number.isFinite(timeMax) ? timeMax : fixedRangeEnd) + timePad;
   const yMin = Math.max(0, valueMin - valuePad);
   const yMax = valueMax + valuePad;
-  const shouldAverageSeries = shouldAverageHistoryRange(range);
   const buySeries = useMemo(
     () =>
       snapshots
@@ -15913,16 +16603,16 @@ function HistorySvg({
     [rangeCutoff, snapshots],
   );
   const plottedBuySeries = useMemo(
-    () => (shouldAverageSeries ? averageHistorySeriesToLocalDays(buySeries) : buySeries),
-    [buySeries, shouldAverageSeries],
+    () => averageHistorySeriesForRange(buySeries, range),
+    [buySeries, range],
   );
   const plottedSellSeries = useMemo(
-    () => (shouldAverageSeries ? averageHistorySeriesToLocalDays(sellSeries) : sellSeries),
-    [sellSeries, shouldAverageSeries],
+    () => averageHistorySeriesForRange(sellSeries, range),
+    [sellSeries, range],
   );
   const plottedDemandSeries = useMemo(
-    () => (shouldAverageSeries ? averageHistorySeriesToLocalDays(demandSeries, false) : demandSeries),
-    [demandSeries, shouldAverageSeries],
+    () => averageHistorySeriesForRange(demandSeries, range, false),
+    [demandSeries, range],
   );
   const demandValues = useMemo(() => plottedDemandSeries.map((point) => point.value), [plottedDemandSeries]);
   const demandMin = demandValues.length ? Math.min(...demandValues) : 0;
@@ -16288,6 +16978,44 @@ function shouldAverageHistoryRange(range: HistoryRange): boolean {
   return range.id !== "24h";
 }
 
+function getHistoryRangePointCount(range: HistoryRange): number | null {
+  if (range.id === "3m" || range.id === "6m") {
+    return HISTORY_LONG_RANGE_POINT_COUNT;
+  }
+
+  if (range.id === "1y") {
+    return HISTORY_YEAR_POINT_COUNT;
+  }
+
+  if (range.id === "2y") {
+    return HISTORY_TWO_YEAR_POINT_COUNT;
+  }
+
+  return null;
+}
+
+function averageHistorySeriesForRange<
+  T extends {
+    time: number;
+    sourceTime?: number;
+    value: number;
+    quantity: number;
+    sellQuantity?: number;
+    sampleCount: number;
+  },
+>(series: T[], range: HistoryRange, roundValue = true): T[] {
+  if (!shouldAverageHistoryRange(range) || series.length <= 1) {
+    return series;
+  }
+
+  const rangePointCount = getHistoryRangePointCount(range);
+  if (!rangePointCount) {
+    return averageHistorySeriesToLocalDays(series, roundValue);
+  }
+
+  return averageHistorySeriesToRangeBuckets(series, range, rangePointCount, roundValue);
+}
+
 function averageHistorySeriesToLocalDays<T extends { time: number; sourceTime?: number; value: number; quantity: number; sellQuantity?: number; sampleCount: number }>(
   series: T[],
   roundValue = true,
@@ -16336,11 +17064,87 @@ function averageHistorySeriesToLocalDays<T extends { time: number; sourceTime?: 
     });
 }
 
+function averageHistorySeriesToRangeBuckets<
+  T extends {
+    time: number;
+    sourceTime?: number;
+    value: number;
+    quantity: number;
+    sellQuantity?: number;
+    sampleCount: number;
+  },
+>(series: T[], range: HistoryRange, bucketCount: number, roundValue = true): T[] {
+  const bounds = getHistoryRangeBounds(range);
+  if (bounds.start == null || bounds.end == null || bounds.end <= bounds.start || bucketCount <= 1) {
+    return series;
+  }
+
+  const rangeStart = bounds.start;
+  const rangeEnd = bounds.end;
+  const buckets = new Map<number, T[]>();
+  const span = rangeEnd - rangeStart;
+  const bucketSize = span / bucketCount;
+
+  for (const point of series) {
+    if (!Number.isFinite(point.time)) {
+      continue;
+    }
+
+    const clampedTime = clampNumber(point.time, rangeStart, rangeEnd - 1);
+    const bucketIndex = clampNumber(Math.floor((clampedTime - rangeStart) / bucketSize), 0, bucketCount - 1);
+    const bucket = buckets.get(bucketIndex) ?? [];
+    bucket.push(point);
+    buckets.set(bucketIndex, bucket);
+  }
+
+  return Array.from(buckets.entries())
+    .sort((left, right) => left[0] - right[0])
+    .map(([bucketIndex, bucket]) => {
+      const totalSamples = bucket.reduce((sum, point) => sum + Math.max(1, point.sampleCount), 0);
+      const weightedValue = bucket.reduce(
+        (sum, point) => sum + point.value * Math.max(1, point.sampleCount),
+        0,
+      );
+      const weightedQuantity = bucket.reduce(
+        (sum, point) => sum + point.quantity * Math.max(1, point.sampleCount),
+        0,
+      );
+      const hasSellQuantity = bucket.some((point) => typeof point.sellQuantity === "number");
+      const weightedSellQuantity = bucket.reduce(
+        (sum, point) => sum + (point.sellQuantity ?? 0) * Math.max(1, point.sampleCount),
+        0,
+      );
+      const bucketTime = rangeStart + bucketSize * bucketIndex + bucketSize / 2;
+
+      return {
+        ...bucket[0],
+        time: bucketTime,
+        sourceTime: bucketTime,
+        value: roundValue ? Math.round(weightedValue / Math.max(1, totalSamples)) : weightedValue / Math.max(1, totalSamples),
+        quantity: Math.round(weightedQuantity / Math.max(1, totalSamples)),
+        ...(hasSellQuantity ? { sellQuantity: Math.round(weightedSellQuantity / Math.max(1, totalSamples)) } : {}),
+        sampleCount: totalSamples,
+      };
+    });
+}
+
 function buildHistoryAxisTicks(
   xMin: number,
   xMax: number,
   range: HistoryRange,
 ): Array<{ time: number; label: string }> {
+  if (range.id === "1y") {
+    return buildRangeBucketAxisTicks(range, HISTORY_YEAR_POINT_COUNT, 1, "month");
+  }
+
+  if (range.id === "2y") {
+    return buildRangeBucketAxisTicks(range, HISTORY_TWO_YEAR_POINT_COUNT, 2, "month");
+  }
+
+  if (range.id === "3m" || range.id === "6m") {
+    return buildRangeIntervalAxisTicks(range, HISTORY_LONG_RANGE_TICK_COUNT);
+  }
+
   if (range.days) {
     return buildLocalDayAxisTicks(range);
   }
@@ -16357,9 +17161,57 @@ function buildHistoryAxisTicks(
   });
 }
 
+function buildRangeIntervalAxisTicks(
+  range: HistoryRange,
+  tickCount: number,
+): Array<{ time: number; label: string }> {
+  const bounds = getHistoryRangeBounds(range);
+  if (bounds.start == null || bounds.end == null || bounds.end <= bounds.start) {
+    return [];
+  }
+
+  const rangeStart = bounds.start;
+  const rangeEnd = bounds.end;
+  const safeTickCount = Math.max(2, tickCount);
+  const span = rangeEnd - rangeStart;
+
+  return Array.from({ length: safeTickCount }, (_, index) => {
+    const time = rangeStart + (span * index) / Math.max(1, safeTickCount - 1);
+    return {
+      time,
+      label: formatHistoryAxisDate(time, range),
+    };
+  });
+}
+
+function buildRangeBucketAxisTicks(
+  range: HistoryRange,
+  bucketCount: number,
+  labelEvery: number,
+  labelMode: "date" | "month" = "date",
+): Array<{ time: number; label: string }> {
+  const bounds = getHistoryRangeBounds(range);
+  if (bounds.start == null || bounds.end == null || bounds.end <= bounds.start || bucketCount <= 0) {
+    return [];
+  }
+
+  const rangeStart = bounds.start;
+  const rangeEnd = bounds.end;
+  const bucketSize = (rangeEnd - rangeStart) / bucketCount;
+  const safeLabelEvery = Math.max(1, labelEvery);
+
+  return Array.from({ length: bucketCount }, (_, index) => {
+    const time = rangeStart + bucketSize * index + bucketSize / 2;
+    return {
+      time,
+      label: labelMode === "month" ? formatHistoryAxisMonth(time) : formatHistoryAxisDate(time, range),
+    };
+  }).filter((_, index) => index % safeLabelEvery === 0);
+}
+
 function buildLocalDayAxisTicks(range: HistoryRange): Array<{ time: number; label: string }> {
   const bounds = getHistoryRangeBounds(range);
-  if (!bounds.start || !range.days) {
+  if (bounds.start == null || !range.days) {
     return [];
   }
 
@@ -16415,6 +17267,12 @@ function formatHistoryAxisDate(time: number, range: HistoryRange): string {
   return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
+  });
+}
+
+function formatHistoryAxisMonth(time: number): string {
+  return new Date(time).toLocaleDateString("en-US", {
+    month: "short",
   });
 }
 
