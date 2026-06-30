@@ -788,12 +788,14 @@ const TRADING_POST_NET_RATE = 1 - TRADING_POST_FEE_RATE;
 const MARKET_HISTORY_STORAGE_KEY = "tyria-ledger.market-history.v1";
 const FARM_TRACKER_STORAGE_KEY = "tyria-ledger.farm-tracker.v1";
 const FARM_TRACKER_TRACK_LOOT_STORAGE_KEY = "tyria-ledger.farm-tracker.track-loot.v1";
+const FARM_TRACKER_AUTO_TRACK_STORAGE_KEY = "tyria-ledger.farm-tracker.auto-track.v1";
 const MARKET_SPLIT_RATIO_STORAGE_KEY = "tyria-ledger.market-split-ratio.v1";
 const MARKET_SPLIT_DEFAULT_RATIO = 0.5;
 const MARKET_SPLIT_MIN_RATIO = 0.28;
 const MARKET_SPLIT_MAX_RATIO = 0.72;
 const FARM_TRACKER_AUTO_SNAPSHOT_MS = 60 * 1000;
-const FARM_TRACKER_IDLE_AFTER_MS = 5 * 60 * 1000;
+const FARM_TRACKER_AUTO_TRACK_CHECK_MS = 10 * 60 * 1000;
+const FARM_TRACKER_IDLE_AFTER_MS = 20 * 60 * 1000;
 const FARM_TRACKER_IDLE_SNAPSHOT_MS = FARM_TRACKER_AUTO_SNAPSHOT_MS;
 const ACCOUNT_API_REFRESH_COOLDOWN_MS = 60 * 1000;
 const ACCOUNT_API_WAKE_REFRESH_THROTTLE_MS = 15 * 1000;
@@ -13812,6 +13814,7 @@ function FarmTrackerPage({
   const [selectedCharacter, setSelectedCharacter] = useState("");
   const [revision, setRevision] = useState(0);
   const [trackLootEnabled, setTrackLootEnabled] = useState(() => readFarmTrackerTrackLootEnabled());
+  const [autoTrackEnabled, setAutoTrackEnabled] = useState(() => readFarmTrackerAutoTrackEnabled());
   const [trackerItems, setTrackerItems] = useState<Map<number, Gw2Item>>(new Map());
   const characters = accountSnapshot?.characters ?? [];
 
@@ -13839,17 +13842,32 @@ function FarmTrackerPage({
     : 0;
 
   useEffect(() => {
-    if (!accountSnapshot || !trackLootEnabled) {
+    if (!accountSnapshot || (!trackLootEnabled && !autoTrackEnabled)) {
       return;
     }
 
-    updateFarmTrackerState(scopeKey, currentHoldings);
+    const previousState = readFarmTrackerState(scopeKey);
+    const updatedState = updateFarmTrackerState(scopeKey, currentHoldings);
+    const detectedNewLoot = didFarmTrackerGainNewLoot(previousState, updatedState);
     setRevision((current) => current + 1);
-  }, [accountSnapshot, currentHoldings, scopeKey, trackLootEnabled]);
+
+    if (autoTrackEnabled && detectedNewLoot && !trackLootEnabled) {
+      setTrackLootEnabled(true);
+      return;
+    }
+
+    if (autoTrackEnabled && trackLootEnabled && updatedState.idlePausedAt && !detectedNewLoot) {
+      setTrackLootEnabled(false);
+    }
+  }, [accountSnapshot, autoTrackEnabled, currentHoldings, scopeKey, trackLootEnabled]);
 
   useEffect(() => {
     writeFarmTrackerTrackLootEnabled(trackLootEnabled);
   }, [trackLootEnabled]);
+
+  useEffect(() => {
+    writeFarmTrackerAutoTrackEnabled(autoTrackEnabled);
+  }, [autoTrackEnabled]);
 
   useEffect(() => {
     if (!trackLootEnabled || !accountSnapshot || !apiKeyRemembered) {
@@ -13868,6 +13886,32 @@ function FarmTrackerPage({
       window.clearInterval(interval);
     };
   }, [accountSnapshot, analysisState, apiKeyRemembered, onRefreshSnapshot, snapshotIntervalMs, trackLootEnabled]);
+
+  useEffect(() => {
+    if (!autoTrackEnabled || trackLootEnabled || !accountSnapshot || !apiKeyRemembered) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      if (analysisState === "loading") {
+        return;
+      }
+
+      void onRefreshSnapshot().catch(() => undefined);
+    }, FARM_TRACKER_AUTO_TRACK_CHECK_MS);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [accountSnapshot, analysisState, apiKeyRemembered, autoTrackEnabled, onRefreshSnapshot, trackLootEnabled]);
+
+  useEffect(() => {
+    if (!autoTrackEnabled || !trackLootEnabled || !trackerState?.idlePausedAt) {
+      return;
+    }
+
+    setTrackLootEnabled(false);
+  }, [autoTrackEnabled, trackerState?.idlePausedAt, trackLootEnabled]);
 
   useEffect(() => {
     if (!trackLootEnabled || !accountSnapshot || !apiKeyRemembered) {
@@ -14037,13 +14081,27 @@ function FarmTrackerPage({
             <div className="page-actions">
               <button
                 type="button"
+                className={`track-loot-toggle auto-track-toggle ${autoTrackEnabled ? "active" : ""}`}
+                onClick={() => setAutoTrackEnabled((enabled) => !enabled)}
+                aria-pressed={autoTrackEnabled}
+                title={
+                  autoTrackEnabled
+                    ? "Checks for new loot every 10 minutes and starts Track Loot when gains appear"
+                    : "Automatic loot watching is off"
+                }
+              >
+                <span className="toggle-knob" aria-hidden="true" />
+                <span>Auto Track</span>
+              </button>
+              <button
+                type="button"
                 className={`track-loot-toggle ${trackLootEnabled ? "active" : ""}`}
                 onClick={toggleTrackLoot}
                 aria-pressed={trackLootEnabled}
                 title={
                   trackLootEnabled
                     ? trackerIsIdle
-                      ? "No new loot for 5 minutes. Checking once per minute until new gains appear."
+                      ? "No new loot for 20 minutes. Checking once per minute until new gains appear."
                       : "Tracking loot with one API snapshot per minute"
                     : "Loot tracking is paused"
                 }
@@ -14112,7 +14170,9 @@ function FarmTrackerPage({
                     ? `Every ${Math.round(FARM_TRACKER_IDLE_SNAPSHOT_MS / 60000)}min`
                     : formatAge(trackerState.lastUpdatedAt, now)
                   : "Now"
-                : "Paused"}
+                : autoTrackEnabled
+                  ? `Auto ${Math.round(FARM_TRACKER_AUTO_TRACK_CHECK_MS / 60000)}min`
+                  : "Paused"}
             />
           </section>
 
@@ -14185,7 +14245,9 @@ function FarmTrackerPage({
                 <p>
                   {trackLootEnabled
                     ? "Farm for a while and the tracker will snapshot the account API once per minute."
-                    : "Turn Track Loot on to resume automatic snapshots."}
+                    : autoTrackEnabled
+                      ? "Auto Track is watching every 10 minutes and will start Track Loot when new gains appear."
+                      : "Turn Track Loot on to resume automatic snapshots."}
                 </p>
               </div>
             )}
@@ -14353,8 +14415,46 @@ function writeFarmTrackerTrackLootEnabled(enabled: boolean) {
   }
 }
 
+function readFarmTrackerAutoTrackEnabled(): boolean {
+  try {
+    const raw = window.localStorage.getItem(FARM_TRACKER_AUTO_TRACK_STORAGE_KEY);
+    return raw === null ? false : raw === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeFarmTrackerAutoTrackEnabled(enabled: boolean) {
+  try {
+    window.localStorage.setItem(FARM_TRACKER_AUTO_TRACK_STORAGE_KEY, String(enabled));
+  } catch {
+    // Losing this preference should not break tracking.
+  }
+}
+
 function readFarmTrackerState(scopeKey: string): FarmTrackerStoredState | null {
   return readFarmTrackerStore()[scopeKey] ?? null;
+}
+
+function didFarmTrackerGainNewLoot(
+  previousState: FarmTrackerStoredState | null,
+  nextState: FarmTrackerStoredState,
+): boolean {
+  if (!previousState || previousState.dateKey !== nextState.dateKey) {
+    return false;
+  }
+
+  const previousGainTotal = getFarmTrackerCountTotal(previousState.gained);
+  const nextGainTotal = getFarmTrackerCountTotal(nextState.gained);
+  if (nextGainTotal <= previousGainTotal) {
+    return false;
+  }
+
+  return (nextState.lastGainAt ?? 0) > (previousState.lastGainAt ?? previousState.startedAt);
+}
+
+function getFarmTrackerCountTotal(entries: Array<[number, number]> | undefined): number {
+  return (entries ?? []).reduce((sum, [, count]) => sum + count, 0);
 }
 
 function updateFarmTrackerState(scopeKey: string, currentHoldings: Map<number, number>): FarmTrackerStoredState {
