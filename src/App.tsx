@@ -29,7 +29,6 @@ import {
   TrendingUp,
   X,
 } from "lucide-react";
-import QRCode from "qrcode";
 import {
   createContext,
   useCallback,
@@ -123,7 +122,6 @@ type ActivePage = string;
 type SpeedLabel = "Quickest" | "Fast" | "Moderate" | "Slowest";
 type UpdateCheckState = "idle" | "checking" | "current" | "available" | "error" | "not_configured";
 type AppUpdateInfo = Awaited<ReturnType<NonNullable<Window["gw2Desktop"]>["checkForUpdates"]>>;
-type MobileSyncInfo = Awaited<ReturnType<NonNullable<Window["gw2Desktop"]>["getMobileSyncInfo"]>>;
 type StartupSettings = {
   openAtLogin: boolean;
   openAsHidden: boolean;
@@ -3132,8 +3130,6 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [startupSettings, setStartupSettings] = useState<StartupSettings | null>(null);
   const [startupSettingsState, setStartupSettingsState] = useState<LoadState>("idle");
-  const [mobileSyncInfo, setMobileSyncInfo] = useState<MobileSyncInfo | null>(null);
-  const [mobileSyncState, setMobileSyncState] = useState<LoadState>("idle");
   const [sidebarSearch, setSidebarSearch] = useState("");
   const [maps, setMaps] = useState<Gw2Map[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -4069,6 +4065,7 @@ function App() {
           setProgress(`${message} - ${scopeLabel}`);
           setProgressCount(done && total ? { done, total } : null);
         },
+        Array.from(catalogById.values()),
       );
 
       if (!isCurrentLoad()) {
@@ -4437,44 +4434,6 @@ function App() {
     [startupSettings],
   );
 
-  const refreshMobileSyncInfo = useCallback(async () => {
-    if (!window.gw2Desktop?.getMobileSyncInfo) {
-      setMobileSyncState("error");
-      return;
-    }
-
-    setMobileSyncState("loading");
-    try {
-      const nextInfo = await window.gw2Desktop.getMobileSyncInfo();
-      setMobileSyncInfo(nextInfo);
-      setMobileSyncState("ready");
-    } catch (syncError) {
-      setMobileSyncState("error");
-      setError(syncError instanceof Error ? syncError.message : "Unable to start Android sync.");
-    }
-  }, []);
-
-  const restartMobileSync = useCallback(async () => {
-    if (!window.gw2Desktop?.restartMobileSync) {
-      await refreshMobileSyncInfo();
-      return;
-    }
-
-    setMobileSyncState("loading");
-    try {
-      const nextInfo = await window.gw2Desktop.restartMobileSync();
-      setMobileSyncInfo(nextInfo);
-      setMobileSyncState("ready");
-    } catch (syncError) {
-      setMobileSyncState("error");
-      setError(syncError instanceof Error ? syncError.message : "Unable to refresh Android sync.");
-    }
-  }, [refreshMobileSyncInfo]);
-
-  useEffect(() => {
-    void refreshMobileSyncInfo();
-  }, [refreshMobileSyncInfo]);
-
   const content = (() => {
     if (activePage === "account") {
       return (
@@ -4490,8 +4449,6 @@ function App() {
           catalog={catalog}
           dataImports={dataImports}
           marketLoadState={loadState}
-          mobileSyncInfo={mobileSyncInfo}
-          mobileSyncState={mobileSyncState}
           startupSettings={startupSettings}
           startupSettingsState={startupSettingsState}
           onAnalyze={() => runAnalysisForKey(apiKey.trim(), { forceRefresh: true })}
@@ -4501,7 +4458,6 @@ function App() {
           onOpenItemSearch={openItemSearch}
           onLoadMarket={loadCatalog}
           onRefreshApiStatuses={() => refreshApiStatuses()}
-          onRefreshMobileSync={restartMobileSync}
           onSaveApiKey={saveApiKey}
           onStartupOpenAtLoginChange={updateStartupOpenAtLogin}
         />
@@ -5131,66 +5087,25 @@ function AccountSettingsPanel({
   apiKey,
   apiKeyRemembered,
   analysisState,
-  mobileSyncInfo,
-  mobileSyncState,
   startupSettings,
   startupSettingsState,
   onAnalyze,
   onApiKeyChange,
   onForgetApiKey,
-  onRefreshMobileSync,
   onSaveApiKey,
   onStartupOpenAtLoginChange,
 }: {
   apiKey: string;
   apiKeyRemembered: boolean;
   analysisState: LoadState;
-  mobileSyncInfo: MobileSyncInfo | null;
-  mobileSyncState: LoadState;
   startupSettings: StartupSettings | null;
   startupSettingsState: LoadState;
   onAnalyze: () => void;
   onApiKeyChange: (value: string) => void;
   onForgetApiKey: () => void;
-  onRefreshMobileSync: () => void;
   onSaveApiKey: () => void;
   onStartupOpenAtLoginChange: (openAtLogin: boolean) => void;
 }) {
-  const [mobileSyncQr, setMobileSyncQr] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!mobileSyncInfo?.pairingPayload) {
-      setMobileSyncQr("");
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    QRCode.toDataURL(mobileSyncInfo.pairingPayload, {
-      margin: 1,
-      scale: 6,
-      color: {
-        dark: "#07100f",
-        light: "#f7faf7",
-      },
-    })
-      .then((dataUrl) => {
-        if (!cancelled) {
-          setMobileSyncQr(dataUrl);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setMobileSyncQr("");
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [mobileSyncInfo?.pairingPayload]);
-
   return (
     <section className="account-settings-panel">
       <section className="api-key-dock">
@@ -5246,38 +5161,6 @@ function AccountSettingsPanel({
           </section>
         ) : null}
 
-        <section className="mobile-sync-dock">
-          <div className="dock-title">
-            <RefreshCcw />
-            <span>Android Sync</span>
-            {mobileSyncInfo?.enabled ? <CheckCircle2 className="ok" /> : null}
-          </div>
-          <div className="mobile-sync-grid">
-            <div className="mobile-sync-copy">
-              <p>
-                Pair the Android collector while both devices are on the same network. The QR contains
-                only a local sync URL and token.
-              </p>
-              <dl>
-                <div>
-                  <dt>Desktop URL</dt>
-                  <dd>{mobileSyncInfo?.baseUrl || "Starting local sync..."}</dd>
-                </div>
-                <div>
-                  <dt>Token</dt>
-                  <dd>{mobileSyncInfo?.token || "-"}</dd>
-                </div>
-              </dl>
-              <button className="icon-button" onClick={onRefreshMobileSync} disabled={mobileSyncState === "loading"}>
-                {mobileSyncState === "loading" ? <Loader2 className="spin" /> : <RefreshCcw />}
-                <span>Refresh QR</span>
-              </button>
-            </div>
-            <div className="sync-qr-frame" aria-label="Android sync QR code">
-              {mobileSyncQr ? <img src={mobileSyncQr} alt="Android sync QR code" /> : <Loader2 className="spin" />}
-            </div>
-          </div>
-        </section>
       </div>
     </section>
   );
@@ -5555,8 +5438,6 @@ function AccountDashboard({
   catalog,
   dataImports,
   marketLoadState,
-  mobileSyncInfo,
-  mobileSyncState,
   startupSettings,
   startupSettingsState,
   onAnalyze,
@@ -5566,7 +5447,6 @@ function AccountDashboard({
   onOpenItemSearch,
   onLoadMarket,
   onRefreshApiStatuses,
-  onRefreshMobileSync,
   onSaveApiKey,
   onStartupOpenAtLoginChange,
 }: {
@@ -5581,8 +5461,6 @@ function AccountDashboard({
   catalog: MarketItem[];
   dataImports: DataImportRow[];
   marketLoadState: LoadState;
-  mobileSyncInfo: MobileSyncInfo | null;
-  mobileSyncState: LoadState;
   startupSettings: StartupSettings | null;
   startupSettingsState: LoadState;
   onAnalyze: () => void;
@@ -5592,7 +5470,6 @@ function AccountDashboard({
   onOpenItemSearch: (itemName: string) => void;
   onLoadMarket: () => void;
   onRefreshApiStatuses: () => void;
-  onRefreshMobileSync: () => void;
   onSaveApiKey: () => void;
   onStartupOpenAtLoginChange: (openAtLogin: boolean) => void;
 }) {
@@ -5683,14 +5560,11 @@ function AccountDashboard({
         apiKey={apiKey}
         apiKeyRemembered={apiKeyRemembered}
         analysisState={analysisState}
-        mobileSyncInfo={mobileSyncInfo}
-        mobileSyncState={mobileSyncState}
         startupSettings={startupSettings}
         startupSettingsState={startupSettingsState}
         onAnalyze={onAnalyze}
         onApiKeyChange={onApiKeyChange}
         onForgetApiKey={onForgetApiKey}
-        onRefreshMobileSync={onRefreshMobileSync}
         onSaveApiKey={onSaveApiKey}
         onStartupOpenAtLoginChange={onStartupOpenAtLoginChange}
       />
@@ -11619,6 +11493,16 @@ function estimateSnipingDepth(row: SnipingOpportunityRow, listings: CommerceList
   };
 }
 
+function isActionableSnipingOpportunity(
+  row: SnipingOpportunityRow,
+  depthByOpportunity: Record<string, SnipingDepthEstimate>,
+): boolean {
+  const depth = depthByOpportunity[getSnipingOpportunityKey(row)];
+  const estimatedCount = depth?.status === "ready" ? depth.count : row.maxRecommendedCount;
+  const estimatedTotalProfit = depth?.status === "ready" ? depth.estimatedTotalProfit : row.estimatedTotalProfit;
+  return estimatedCount > 0 && estimatedTotalProfit >= SNIPING_MIN_TOTAL_PROFIT;
+}
+
 function SnipingPage({
   catalog,
   loadState,
@@ -11665,14 +11549,9 @@ function SnipingPage({
     () => buildSnipingOpportunityRows(catalog, demandMovementByItem),
     [catalog, demandMovementByItem],
   );
-  const filteredOpportunities = useMemo(() => {
+  const searchedOpportunities = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return opportunities.filter((row) => {
-      const matchesType = typeFilter === "all" || row.type === typeFilter;
-      if (!matchesType) {
-        return false;
-      }
-
       if (!normalizedQuery) {
         return true;
       }
@@ -11684,19 +11563,23 @@ function SnipingPage({
         row.type.toLowerCase().includes(normalizedQuery)
       );
     });
-  }, [opportunities, query, typeFilter]);
-  const typeCounts = useMemo(
-    () => ({
-      all: opportunities.length,
-      Salvage: opportunities.filter((row) => row.type === "Salvage").length,
-      "Re-sell": opportunities.filter((row) => row.type === "Re-sell").length,
-    }),
-    [opportunities],
+  }, [opportunities, query]);
+  const filteredOpportunities = useMemo(
+    () => searchedOpportunities.filter((row) => typeFilter === "all" || row.type === typeFilter),
+    [searchedOpportunities, typeFilter],
   );
+  const typeCounts = useMemo(() => {
+    const actionableRows = searchedOpportunities.filter((row) =>
+      isActionableSnipingOpportunity(row, depthByOpportunity),
+    );
+    return {
+      all: actionableRows.length,
+      Salvage: actionableRows.filter((row) => row.type === "Salvage").length,
+      "Re-sell": actionableRows.filter((row) => row.type === "Re-sell").length,
+    };
+  }, [depthByOpportunity, searchedOpportunities]);
   const selectedOpportunityItem =
     selectedItem && opportunities.some((row) => row.item.id === selectedItem.id) ? selectedItem : null;
-  const topProfit = opportunities[0]?.profitPerItem ?? 0;
-  const topTotalProfit = opportunities[0]?.estimatedTotalProfit ?? 0;
   const { sortedRows, renderHeader } = useSortableRows<
     SnipingOpportunityRow,
     "item" | "type" | "demand" | "buy" | "sell" | "profit" | "count" | "total"
@@ -11796,15 +11679,21 @@ function SnipingPage({
   }, [depthTargetKey]);
 
   const visibleSortedRows = useMemo(
-    () =>
-      sortedRows.filter((row) => {
-        const depth = depthByOpportunity[getSnipingOpportunityKey(row)];
-        const estimatedCount = depth?.status === "ready" ? depth.count : row.maxRecommendedCount;
-        const estimatedTotalProfit = depth?.status === "ready" ? depth.estimatedTotalProfit : row.estimatedTotalProfit;
-        return estimatedCount > 0 && estimatedTotalProfit >= SNIPING_MIN_TOTAL_PROFIT;
-      }),
+    () => sortedRows.filter((row) => isActionableSnipingOpportunity(row, depthByOpportunity)),
     [depthByOpportunity, sortedRows],
   );
+  const topProfit = visibleSortedRows.length > 0
+    ? Math.max(...visibleSortedRows.map((row) => row.profitPerItem))
+    : 0;
+  const topTotalProfit =
+    visibleSortedRows.length > 0
+      ? Math.max(
+          ...visibleSortedRows.map((row) => {
+            const depth = depthByOpportunity[getSnipingOpportunityKey(row)];
+            return depth?.status === "ready" ? depth.estimatedTotalProfit : row.estimatedTotalProfit;
+          }),
+        )
+      : 0;
 
   return (
     <div className={`market-workspace sniping-workspace ${selectedOpportunityItem ? "" : "detail-closed"}`}>
@@ -11825,7 +11714,7 @@ function SnipingPage({
         </section>
 
         <section className="stat-grid compact-stat-grid">
-          <Metric icon={<Search />} label="Snipes" value={opportunities.length.toLocaleString()} />
+          <Metric icon={<Search />} label="Snipes" value={typeCounts.all.toLocaleString()} />
           <Metric icon={<Boxes />} label="Salvage" value={typeCounts.Salvage.toLocaleString()} />
           <Metric icon={<TrendingUp />} label="Re-sell" value={typeCounts["Re-sell"].toLocaleString()} />
           <Metric icon={<Coins />} label="Top Profit / Item" value={<Money value={topProfit} />} tone={topProfit ? "positive" : "muted"} />

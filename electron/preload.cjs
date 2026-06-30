@@ -25,8 +25,6 @@ contextBridge.exposeInMainWorld("gw2Desktop", {
   openUpdateDownload: (updateInfo) => ipcRenderer.invoke("updates:open-download", updateInfo),
   getStartupSettings: () => ipcRenderer.invoke("startup:get"),
   setStartupSettings: (settings) => ipcRenderer.invoke("startup:set", settings),
-  getMobileSyncInfo: () => ipcRenderer.invoke("mobile-sync:get"),
-  restartMobileSync: () => ipcRenderer.invoke("mobile-sync:restart"),
   onNavigateHistory: (callback) => {
     const listener = (_event, direction) => callback(direction);
     ipcRenderer.on("navigation:history", listener);

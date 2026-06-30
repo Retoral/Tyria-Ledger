@@ -237,8 +237,7 @@ svg {
 }
 
 .account-settings-panel .api-key-dock,
-.account-settings-panel .startup-dock,
-.account-settings-panel .mobile-sync-dock {
+.account-settings-panel .startup-dock {
   min-height: 100%;
 }
 
@@ -383,8 +382,7 @@ svg {
 }
 
 .api-key-dock,
-.startup-dock,
-.mobile-sync-dock {
+.startup-dock {
   display: grid;
   gap: 10px;
   padding: 12px;
@@ -432,78 +430,8 @@ svg {
   line-height: 1.45;
 }
 
-.mobile-sync-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 16px;
-}
-
-.mobile-sync-copy {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-}
-
-.mobile-sync-copy p {
-  margin: 0;
-  color: #9aa7a2;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.mobile-sync-copy dl {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-}
-
-.mobile-sync-copy dl div {
-  display: grid;
-  gap: 3px;
-}
-
-.mobile-sync-copy dt {
-  color: #9aa7a2;
-  font-size: 11px;
-  font-weight: 900;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.mobile-sync-copy dd {
-  margin: 0;
-  color: #edf5ef;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.sync-qr-frame {
-  display: grid;
-  place-items: center;
-  width: 144px;
-  height: 144px;
-  border: 1px solid #334043;
-  border-radius: 8px;
-  background: #f7faf7;
-  overflow: hidden;
-}
-
-.sync-qr-frame img {
-  display: block;
-  width: 132px;
-  height: 132px;
-}
-
 @media (max-width: 1080px) {
   .account-secondary-settings {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 860px) {
-  .mobile-sync-grid {
     grid-template-columns: 1fr;
   }
 }

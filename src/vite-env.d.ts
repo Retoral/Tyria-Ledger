@@ -112,18 +112,6 @@ interface DesktopStartupSettings {
   openAsHidden: boolean;
 }
 
-interface DesktopMobileSyncInfo {
-  enabled: boolean;
-  host: string;
-  port: number;
-  baseUrl: string;
-  statusUrl: string;
-  marketHistoryUrl: string;
-  token: string;
-  pairingPayload: string;
-  startedAt: string;
-}
-
 declare global {
   interface Window {
     gw2Desktop?: {
@@ -151,8 +139,6 @@ declare global {
       openUpdateDownload: (updateInfo: DesktopUpdateCheckResult) => Promise<DesktopOpenUpdateResult>;
       getStartupSettings: () => Promise<DesktopStartupSettings>;
       setStartupSettings: (settings: { openAtLogin: boolean }) => Promise<DesktopStartupSettings>;
-      getMobileSyncInfo: () => Promise<DesktopMobileSyncInfo>;
-      restartMobileSync: () => Promise<DesktopMobileSyncInfo>;
       onNavigateHistory: (callback: (direction: "back" | "forward") => void) => () => void;
     };
   }

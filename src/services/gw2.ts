@@ -1060,10 +1060,45 @@ export async function loadTradingPostCatalog(
 export async function loadTradingPostCatalogProgressive(
   onBatch: CatalogBatchCallback,
   onProgress?: ProgressCallback,
+  knownCatalogItems: Iterable<MarketItem> = [],
 ): Promise<MarketItem[]> {
   const catalog = new Map<number, MarketItem>();
+  const knownItemsById = new Map<number, Gw2Item>();
 
   priceCache.clear();
+  for (const item of knownCatalogItems) {
+    knownItemsById.set(item.id, item);
+    itemCache.set(item.id, item);
+  }
+
+  const hydrateMarketItemsForPrices = async (prices: CommercePrice[]): Promise<MarketItem[]> => {
+    const marketItems: MarketItem[] = [];
+    const missingItemIds: number[] = [];
+
+    for (const price of prices) {
+      const knownItem = itemCache.get(price.id) ?? knownItemsById.get(price.id);
+      if (knownItem) {
+        marketItems.push(toMarketItem(knownItem, price));
+      } else {
+        missingItemIds.push(price.id);
+      }
+    }
+
+    if (missingItemIds.length === 0) {
+      return marketItems;
+    }
+
+    onProgress?.("Loading new item details", 0, Math.ceil(missingItemIds.length / CHUNK_SIZE));
+    const items = await loadItems(missingItemIds, onProgress);
+    for (const item of items) {
+      const price = priceCache.get(item.id);
+      if (price) {
+        marketItems.push(toMarketItem(item, price));
+      }
+    }
+
+    return marketItems;
+  };
 
   const processPricePage = async (
     prices: CommercePrice[],
@@ -1073,15 +1108,8 @@ export async function loadTradingPostCatalogProgressive(
   ) => {
     cacheCommercePrices(prices);
 
-    const ids = prices.map((price) => price.id);
-    onProgress?.("Loading item details", completedPage, totalPages);
-    const items = await loadItems(ids);
-    const marketItems = items
-      .map((item) => {
-        const price = priceCache.get(item.id);
-        return price ? toMarketItem(item, price) : null;
-      })
-      .filter((item): item is MarketItem => Boolean(item));
+    onProgress?.("Preparing market entries", completedPage, totalPages);
+    const marketItems = await hydrateMarketItemsForPrices(prices);
 
     for (const item of marketItems) {
       catalog.set(item.id, item);
@@ -1090,7 +1118,7 @@ export async function loadTradingPostCatalogProgressive(
     if (marketItems.length > 0) {
       onBatch(marketItems, {
         loaded: catalog.size,
-        total: totalResults ?? (totalPages ? totalPages * COMMERCE_PAGE_SIZE : undefined),
+        total: totalResults,
       });
     }
   };
@@ -1098,8 +1126,7 @@ export async function loadTradingPostCatalogProgressive(
   onProgress?.("Loading Trading Post prices", 1);
   const firstPage = await loadCommercePricePage(0);
   const totalPages = firstPage.totalPages;
-  const totalResults =
-    firstPage.totalResults ?? (totalPages ? totalPages * COMMERCE_PAGE_SIZE : undefined);
+  const totalResults = firstPage.totalResults ?? undefined;
   await processPricePage(firstPage.prices, 1, totalPages ?? undefined, totalResults);
 
   if (totalPages) {
@@ -1118,15 +1145,8 @@ export async function loadTradingPostCatalogProgressive(
     const remainingPrices = pageResults.flat();
     cacheCommercePrices(remainingPrices);
 
-    const remainingIds = remainingPrices.map((price) => price.id);
-    onProgress?.("Loading item details", 1, Math.ceil(remainingIds.length / CHUNK_SIZE));
-    const items = await loadItems(remainingIds, onProgress);
-    const marketItems = items
-      .map((item) => {
-        const price = priceCache.get(item.id);
-        return price ? toMarketItem(item, price) : null;
-      })
-      .filter((item): item is MarketItem => Boolean(item));
+    onProgress?.("Preparing market entries", 1, 1);
+    const marketItems = await hydrateMarketItemsForPrices(remainingPrices);
 
     for (const item of marketItems) {
       catalog.set(item.id, item);
