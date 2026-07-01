@@ -221,6 +221,129 @@ export interface WikiItemAcquisition {
   teachesRecipe?: WikiRecipeUnlock;
 }
 
+export interface MetaBattleIcon {
+  label: string;
+  imageUrl?: string;
+}
+
+export type MetaBattleAttributeTier = "major" | "minor";
+
+export interface MetaBattleAttributeComponent {
+  name: string;
+  tier: MetaBattleAttributeTier;
+  icon?: string;
+  value?: number;
+}
+
+export interface MetaBattleAttributeDistribution {
+  strikeDamage?: number;
+  conditionDamage?: number;
+  defense?: number;
+  support?: number;
+}
+
+export interface MetaBattleAttributeCombination {
+  prefix: string;
+  suffix?: string;
+  attributes: MetaBattleAttributeComponent[];
+  availability: string[];
+  distribution?: MetaBattleAttributeDistribution;
+}
+
+export interface MetaBattleBuildSummary {
+  id: string;
+  title: string;
+  pageTitle: string;
+  url: string;
+  mode: string;
+  section: string;
+  profession: string;
+  eliteSpec?: string;
+  quality?: string;
+  difficulty?: string;
+  rating?: number;
+  icons: MetaBattleIcon[];
+}
+
+export interface MetaBattleBuildEquipmentSlot {
+  slot: string;
+  stat?: string;
+  itemId?: number;
+  item?: Gw2Item;
+  attributeCombination?: MetaBattleAttributeCombination;
+  attributeBonuses?: MetaBattleAttributeComponent[];
+}
+
+export interface MetaBattleFactLine {
+  label: string;
+  value?: string;
+  icon?: string;
+}
+
+export interface MetaBattleBuildSkill {
+  id: number;
+  name: string;
+  icon?: string;
+  description?: string;
+  facts?: MetaBattleFactLine[];
+  type?: string;
+  slot?: string;
+}
+
+export interface MetaBattleWikiSkill {
+  name: string;
+  profession: string;
+  section: string;
+  group?: string;
+  slot?: string;
+  activation?: string;
+  recharge?: string;
+  description: string;
+  icon?: string;
+  url: string;
+}
+
+export interface MetaBattleBuildTrait {
+  id: number;
+  name: string;
+  icon?: string;
+  description?: string;
+  facts?: MetaBattleFactLine[];
+  selected?: boolean;
+  minor?: boolean;
+}
+
+export interface MetaBattleBuildSpecialization {
+  id: number;
+  name: string;
+  profession?: string;
+  elite?: boolean;
+  icon?: string;
+  background?: string;
+  focus?: string;
+  wikiDescription?: string;
+  wikiUrl?: string;
+  traits: MetaBattleBuildTrait[];
+}
+
+export interface MetaBattleBuildDetail {
+  summary: MetaBattleBuildSummary;
+  overview: string;
+  templateCode?: string;
+  skillGroups: Array<{
+    label: string;
+    skills: MetaBattleBuildSkill[];
+  }>;
+  specializations: MetaBattleBuildSpecialization[];
+  equipment: MetaBattleBuildEquipmentSlot[];
+  wikiSkills?: MetaBattleWikiSkill[];
+  weaponVariants: string;
+  skillVariants: string;
+  usage: string;
+  defense: string;
+  updatedNote?: string;
+}
+
 export interface ContainerDrop {
   name: string;
   itemId?: number;

@@ -16,9 +16,13 @@ import {
   Hammer,
   Home,
   KeyRound,
+  LocateFixed,
   ListChecks,
   Loader2,
+  MapPin,
+  Minus,
   PackageSearch,
+  Plus,
   RefreshCcw,
   Search,
   ShieldCheck,
@@ -42,8 +46,10 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   analyzeAccount,
   checkApiStatuses,
@@ -61,6 +67,9 @@ import {
   loadItems,
   loadListings,
   loadMaps,
+  loadMetaBattleBuildDetail,
+  loadMetaBattleBuildLibrary,
+  preloadMetaBattleBuildDetails,
   loadMysticForgeRecipeGuides,
   loadOpenableBagItems,
   loadPermanentGatheringNodes,
@@ -103,6 +112,13 @@ import type {
   ItemTransactions,
   LegendaryReadiness,
   MarketItem,
+  MetaBattleBuildDetail,
+  MetaBattleBuildEquipmentSlot,
+  MetaBattleBuildSkill,
+  MetaBattleBuildSpecialization,
+  MetaBattleBuildSummary,
+  MetaBattleBuildTrait,
+  MetaBattleFactLine,
   PermanentGatheringNode,
   RecipeGuide,
   WikiGuide,
@@ -154,7 +170,52 @@ interface GuideLocation {
   note: string;
   wikiUrl?: string;
   continentCoord?: [number, number];
+  floor?: number;
   zoom?: number;
+}
+
+interface GuideSourceLink {
+  label: string;
+  owner: string;
+  url: string;
+  note: string;
+}
+
+interface GuidePhase {
+  title: string;
+  objective: string;
+  details: string[];
+}
+
+interface GuideReward {
+  name: string;
+  detail: string;
+  itemId?: number;
+  icon?: string;
+  wikiUrl?: string;
+}
+
+interface GuideResource {
+  name: string;
+  itemId?: number;
+  icon?: string;
+  rarity?: string;
+  type?: string;
+  chatLink?: string;
+  map: string;
+  route: string;
+  vendor: string;
+  value: string;
+  wikiUrl: string;
+  profitPerVm?: string;
+  profit?: string;
+  price?: string;
+  requires?: string;
+  limitation?: string;
+  notes?: string;
+  acquisition?: string[];
+  purchases?: string[];
+  metaLinks?: Array<{ label: string; page: ActivePage; detail: string }>;
 }
 
 interface GuideDefinition {
@@ -162,6 +223,15 @@ interface GuideDefinition {
   summary: string;
   steps: string[];
   locations: GuideLocation[];
+  activityValueId?: string | null;
+  timing?: string;
+  preparation?: string[];
+  phases?: GuidePhase[];
+  rewards?: GuideReward[];
+  resources?: GuideResource[];
+  sourceLinks?: GuideSourceLink[];
+  hideRelatedNotes?: boolean;
+  resourceHub?: boolean;
 }
 
 interface ActivityGuideDefinition extends GuideDefinition {
@@ -312,6 +382,62 @@ interface IngredientCraftRouteSummary {
 
 const ingredientCraftRouteCache = new Map<string, Promise<IngredientCraftRouteSummary | null>>();
 const FAVORITE_ITEM_IDS_STORAGE_KEY = "tyria-ledger:favorites:item-ids:v1";
+const PHILOSOPHERS_STONE_ITEM_ID = 20796;
+const SPIRIT_SHARD_RECIPE_OUTPUT_NAMES = new Set(
+  [
+    "Small Fang",
+    "Bone Shard",
+    "Small Scale",
+    "Small Totem",
+    "Vial of Thin Blood",
+    "Small Venom Sac",
+    "Small Claw",
+    "Fang",
+    "Bone",
+    "Scale",
+    "Totem",
+    "Vial of Blood",
+    "Venom Sac",
+    "Claw",
+    "Sharp Fang",
+    "Heavy Bone",
+    "Smooth Scale",
+    "Engraved Totem",
+    "Vial of Thick Blood",
+    "Full Venom Sac",
+    "Sharp Claw",
+    "Large Fang",
+    "Large Bone",
+    "Large Scale",
+    "Intricate Totem",
+    "Vial of Potent Blood",
+    "Potent Venom Sac",
+    "Large Claw",
+    "Vicious Fang",
+    "Ancient Bone",
+    "Armored Scale",
+    "Elaborate Totem",
+    "Vial of Powerful Blood",
+    "Powerful Venom Sac",
+    "Vicious Claw",
+    "Symbol of Enhancement",
+    "Charm of Brilliance",
+    "Symbol of Pain",
+    "Charm of Potence",
+    "Symbol of Control",
+    "Charm of Skill",
+    "Charged Lodestone",
+    "Destroyer Lodestone",
+    "Corrupted Lodestone",
+    "Onyx Lodestone",
+    "Crystal Lodestone",
+    "Molten Lodestone",
+    "Glacial Lodestone",
+    "Mystic Clover",
+    "10 Mystic Clover",
+  ].map((name) => name.toLowerCase()),
+);
+type ProfitableRecipeFilter = "all" | "unlocked" | "mystic-forge" | "spirit-shard";
 const HISTORY_LINE_VISIBILITY_STORAGE_KEY = "tyria-ledger:history-line-visibility:v1";
 const DEFAULT_HISTORY_LINE_VISIBILITY: HistoryLineVisibility = {
   buy: true,
@@ -763,16 +889,6 @@ interface FishingRouteInfo {
   fishingPower: string;
   map: string;
   valueFocus: string;
-}
-
-interface BuildSource {
-  profession: string;
-  source: string;
-  mode: string;
-  title: string;
-  role: string;
-  url: string;
-  note: string;
 }
 
 const GLOBAL_MARKET_SCOPE_ID = "global";
@@ -1421,10 +1537,9 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
       { id: "account-items", label: "Account Items", icon: <Boxes /> },
       { id: "wizard-vault", label: "Wizard's Vault", icon: <Coins /> },
       { id: "account-achievements", label: "Achievements", icon: <Trophy /> },
-      { id: "farming-builds", label: "Farming Builds", icon: <ShieldCheck /> },
+      { id: "farming-builds", label: "Builds", icon: <ShieldCheck /> },
       { id: "farming-guides", label: "Farming Guides", icon: <BookOpen /> },
       { id: "farming-tracker", label: "Farming Tracker", icon: <ListChecks /> },
-      { id: "farming-calculator", label: "Farming Calculator", icon: <Database /> },
       { id: "favorites", label: "Favourites", icon: <Star /> },
     ],
   },
@@ -1440,15 +1555,6 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
     ],
   },
   {
-    title: "Open World Farming",
-    items: [
-      { id: "open-world", label: "Open World Farming", icon: <TrendingUp /> },
-      { id: "drizzlewood-donation", label: "Drizzlewood Material Donation", icon: <Database /> },
-      { id: "meta-events", label: "Meta", icon: <ShieldCheck /> },
-      { id: "solo-farming", label: "Solo Farming", icon: <PackageSearch /> },
-    ],
-  },
-  {
     title: "Materials & Loot",
     items: [
       { id: "gathering", label: "Gathering", icon: <Database /> },
@@ -1460,20 +1566,267 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
     ],
   },
   {
-    title: "Conversions",
+    title: "Farming",
     items: [
-      { id: "conversions", label: "Conversions", icon: <Coins /> },
-    ],
-  },
-  {
-    title: "Festivals",
-    items: [
-      { id: "festivals", label: "Festivals", icon: <BookOpen /> },
+      { id: "open-world", label: "Open World", icon: <TrendingUp /> },
+      { id: "lws4-resources", label: "LWS4 Resources", icon: <Coins /> },
+      { id: "dragonfall-volatile-magic", label: "Dragonfall", icon: <PackageSearch /> },
+      { id: "palawadan-volatile-magic", label: "Palawadan", icon: <ShieldCheck /> },
+      { id: "great-hall-volatile-magic", label: "Great Hall", icon: <ShieldCheck /> },
+      { id: "thunderhead-peaks-volatile-magic", label: "Thunderhead Peaks", icon: <Database /> },
+      { id: "oil-floes-volatile-magic", label: "Oil Floes", icon: <Database /> },
+      { id: "drizzlewood-donation", label: "Drizzlewood Material Donation", icon: <Database /> },
+      { id: "meta-events", label: "Meta", icon: <ShieldCheck /> },
+      { id: "solo-farming", label: "Solo Farming", icon: <PackageSearch /> },
     ],
   },
 ];
 
 const NAV_ITEMS = SIDEBAR_GROUPS.flatMap((group) => group.items);
+
+const LWS4_RESOURCE_ROWS: GuideResource[] = [
+  {
+    name: "Kralkatite Ore",
+    itemId: 86069,
+    icon: "https://render.guildwars2.com/file/380A7E3B250B050C2C39B1106CA39AED65C8396B/1894933.png",
+    rarity: "Exotic",
+    type: "Consumable",
+    chatLink: "[&AgE1UAEA]",
+    map: "Domain of Istan",
+    route: "Earned from Istan events, Palawadan/Sunspear Uprising chests, map bonus rewards, and repeatable heart vendor bundles.",
+    vendor: "Domain of Istan heart vendors sell daily Bundle of Kralkatite offers after the heart is complete.",
+    value: "Trade with Istan vendors, craft Astral/Stellar items, or consume for a small Volatile Magic return.",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Kralkatite_Ore",
+    profitPerVm: "38 copper",
+    profit: "1 silver 53 copper",
+    price: "4 Volatile Magic",
+    requires: "LWS4 - Episode 1",
+    limitation: "Limit 5x daily per heart vendor",
+    notes: "[&BN4LAAA=] Traveling Elonian Trader",
+    acquisition: [
+      "Gather Brandstone Chunks in Domain of Istan with an Orichalcum Mining Pick.",
+      "Complete Palawadan and Sunspear Uprising event chains for Istan chests.",
+      "Buy daily bundles from Domain of Istan heart vendors after completing the heart.",
+      "Earn from Istan map bonus rewards, reward tracks, achievements, and home instance nodes.",
+    ],
+    purchases: [
+      "Domain of Istan vendor purchases and collection progress.",
+      "Astral and Stellar weapon crafting routes.",
+      "Consumed directly for Volatile Magic once account needs are covered.",
+    ],
+    metaLinks: [
+      { label: "Palawadan daily route", page: "palawadan-volatile-magic", detail: "Primary Istan meta route for Kralkatite Ore and daily chests." },
+      { label: "Great Hall daily route", page: "great-hall-volatile-magic", detail: "Short Istan add-on when the Great Hall chain is active." },
+    ],
+  },
+  {
+    name: "Difluorite Crystal",
+    itemId: 86977,
+    icon: "https://render.guildwars2.com/file/3148F3239A104D6C7CE4F65DB41BAAB16039C81E/1947318.png",
+    rarity: "Exotic",
+    type: "Consumable",
+    chatLink: "[&AgHBUwEA]",
+    map: "Sandswept Isles",
+    route: "Earned from Sandswept Isles events, nodes, reward track progress, and local vendor routes.",
+    vendor: "Sandswept Isles vendors list local exchange options; check the linked wiki source before buying in bulk.",
+    value: "Trade with Sandswept Isles vendors or consume for Volatile Magic when the account route is finished.",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Difluorite_Crystal",
+    profitPerVm: "38 copper",
+    profit: "7 silver 68 copper",
+    price: "20 Volatile Magic",
+    requires: "LWS4 - Episode 2",
+    limitation: "Limit 5x daily per heart vendor",
+    notes: "Sandswept Isles heart vendors after daily heart completion",
+    acquisition: [
+      "Gather Difluorite Crystals in Sandswept Isles with an Orichalcum Logging Axe.",
+      "Complete Gathering Storms and The Specimen Chamber meta events for daily chest rewards.",
+      "Buy daily bundles from Sandswept Isles heart vendors after completing each heart.",
+      "Earn from Sandswept Isles map bonus rewards, reward track cache, achievements, and home instance node.",
+    ],
+    purchases: [
+      "Sandswept Isles vendor purchases and local collection progress.",
+      "Consumed directly for 15-25 Volatile Magic when spare.",
+    ],
+  },
+  {
+    name: "Inscribed Shard",
+    itemId: 87645,
+    icon: "https://render.guildwars2.com/file/F5D7B94E53F8B380497CADDE2A562222B30EB793/1998867.png",
+    rarity: "Exotic",
+    type: "Consumable",
+    chatLink: "[&AgFdVgEA]",
+    map: "Domain of Kourna",
+    route: "Earned from Domain of Kourna events, containers, reward track progress, and local map completion flow.",
+    vendor: "Domain of Kourna vendors use Inscribed Shards for local collection and gear purchases.",
+    value: "Trade with Kourna vendors or consume for Volatile Magic after checking collection needs.",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Inscribed_Shard",
+    profitPerVm: "38 copper",
+    profit: "7 silver 68 copper",
+    price: "20 Volatile Magic",
+    requires: "LWS4 - Episode 3",
+    limitation: "Limit 5x daily per heart vendor",
+    notes: "Domain of Kourna hearts, meta rewards, map rewards",
+    acquisition: [
+      "Earn from Domain of Kourna events and containers.",
+      "Complete Containing the Scarab Plague event chains for Kournan chest rewards.",
+      "Buy daily bundles from Domain of Kourna heart vendors after completing the heart.",
+      "Earn from the Domain of Kourna reward track, achievements, map bonus rewards, and home instance node.",
+    ],
+    purchases: [
+      "Domain of Kourna vendor purchases and collection progress.",
+      "Consumed directly for 15-25 Volatile Magic when spare.",
+    ],
+  },
+  {
+    name: "Lump of Mistonium",
+    itemId: 88955,
+    icon: "https://render.guildwars2.com/file/0D75705348E1AE54CF0679FA65C24E0739A3B79F/2038791.png",
+    rarity: "Exotic",
+    type: "Consumable",
+    chatLink: "[&AgF7WwEA]",
+    map: "Jahai Bluffs",
+    route: "Earned from Jahai Bluffs events, local map rewards, reward tracks, and vendor-linked routes.",
+    vendor: "Jahai Bluffs vendors use Mistonium for local collection and equipment routes.",
+    value: "Trade with Jahai vendors or consume for Volatile Magic if you no longer need the currency.",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Lump_of_Mistonium",
+    profitPerVm: "38 copper",
+    profit: "7 silver 68 copper",
+    price: "20 Volatile Magic",
+    requires: "LWS4 - Episode 4",
+    limitation: "Limit 5x daily per heart vendor",
+    notes: "Jahai Bluffs heart vendors and map rewards",
+    acquisition: [
+      "Gather Mistonium nodes in Jahai Bluffs with an Orichalcum Mining Pick.",
+      "Complete Jahai Bluffs events, bounties, achievements, and map bonus rewards.",
+      "Buy daily bundles from Jahai Bluffs heart vendors after completing the heart.",
+      "Earn from Jahai Bluffs reward track cache and home instance node.",
+    ],
+    purchases: [
+      "Jahai Bluffs vendor purchases and collection progress.",
+      "Consumed directly for 15-25 Volatile Magic when spare.",
+    ],
+  },
+  {
+    name: "Branded Mass",
+    itemId: 89537,
+    icon: "https://render.guildwars2.com/file/0C2FD403DACFABF74B9E3824914FB60B3C285804/2083245.png",
+    rarity: "Exotic",
+    type: "Consumable",
+    chatLink: "[&AgHBXQEA]",
+    map: "Thunderhead Peaks",
+    route: "Earned from Thunderhead Peaks events, meta rewards, local resource nodes, and the map reward flow.",
+    vendor: "Thunderhead Peaks vendors use Branded Mass for local gear, collection, and conversion routes.",
+    value: "Trade in Thunderhead Peaks or consume for Volatile Magic after finishing account-bound needs.",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Branded_Mass",
+    profitPerVm: "38 copper",
+    profit: "7 silver 68 copper",
+    price: "20 Volatile Magic",
+    requires: "LWS4 - Episode 5",
+    limitation: "Limit 5x daily per heart vendor",
+    notes: "Thunderhead Peaks hearts, meta rewards, and nodes",
+    acquisition: [
+      "Gather Dragon Crystal Nodes in Thunderhead Peaks with an Orichalcum Mining Pick.",
+      "Complete Thunderhead Keep and The Oil Floes for map rewards.",
+      "Buy daily bundles from Thunderhead Peaks heart vendors after completing the heart.",
+      "Earn from Thunderhead Peaks reward track, achievements, map bonus rewards, and home instance node.",
+    ],
+    purchases: [
+      "Thunderhead Peaks vendor purchases, local gear, and collection progress.",
+      "Consumed directly for 15-25 Volatile Magic when spare.",
+    ],
+    metaLinks: [
+      { label: "Thunderhead Peaks route", page: "thunderhead-peaks-volatile-magic", detail: "Combines Thunderhead Keep and Oil Floes with Branded Mass decisions." },
+      { label: "Oil Floes completion notes", page: "oil-floes-volatile-magic", detail: "Focused guide for the Ice Floe meta event." },
+    ],
+  },
+  {
+    name: "Mistborn Mote",
+    itemId: 90783,
+    icon: "https://render.guildwars2.com/file/E76806D6DF4E27C70EA70A9FAC1F0D036C18659E/2140686.png",
+    rarity: "Exotic",
+    type: "Consumable",
+    chatLink: "[&AgGfYgEA]",
+    map: "Dragonfall",
+    route: "Earned heavily through Dragonfall camp events, Mistborn Coffers, champion trains, and final meta cleanup.",
+    vendor: "Dragonfall camp vendors trade Mistborn Motes for local rewards and collection progress.",
+    value: "The wiki lists Mistborn Motes as consumable for 15-25 Volatile Magic, making them a stronger direct VM fallback.",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Mistborn_Mote",
+    profitPerVm: "38 copper",
+    profit: "7 silver 68 copper",
+    price: "20 Volatile Magic",
+    requires: "LWS4 - Episode 6",
+    limitation: "No daily heart limit; tied to Dragonfall farm flow",
+    notes: "Dragonfall camp events, coffers, nodes, and meta cleanup",
+    acquisition: [
+      "Gather Mistborn Mote nodes in Dragonfall with an Orichalcum Harvesting Sickle.",
+      "Run Dragonfall camp upgrade events, Mistborn Coffers, champion trains, and final meta cleanup.",
+      "Earn from map completion, achievements, Dragonfall reward track, and home instance node.",
+      "Use commander maps for the fastest continuous flow.",
+    ],
+    purchases: [
+      "Dragonfall camp vendor purchases and collection progress.",
+      "Consumed directly for 15-25 Volatile Magic when spare.",
+    ],
+    metaLinks: [
+      { label: "Dragonfall Volatile Magic", page: "dragonfall-volatile-magic", detail: "Main continuous farm for Mistborn Motes, coffers, and Volatile Magic." },
+    ],
+  },
+  {
+    name: "Trophy Shipment",
+    itemId: 85725,
+    icon: "https://render.guildwars2.com/file/12280A76B8BF2B15ADFE092A0B9FF6EE442851EE/1894768.png",
+    rarity: "Basic",
+    type: "Container",
+    chatLink: "[&AgHdTgEA]",
+    map: "Living World Season 4 vendors",
+    route: "Bought from Volatile Magic vendors and opened for trophy materials when the material basket value is favorable.",
+    vendor: "Use Volatile Magic Collector pages for exact current vendor costs and prerequisites.",
+    value: "Compare T5/T6 trophy prices before converting large Volatile Magic stacks.",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Trophy_Shipment",
+    profitPerVm: "38 copper",
+    profit: "96 silver 04 copper",
+    price: "250 Volatile Magic + 1 gold",
+    requires: "LWS4 - any Episode",
+    limitation: "No daily limit",
+    notes: "[&BAkLAAA=] [&BEMLAAA=] Volatile Magic Collector vendors",
+    acquisition: [
+      "Buy from Volatile Magic Collector vendors with Volatile Magic and coin.",
+      "Use after checking current T5/T6 trophy material prices.",
+      "Treat as a conversion output, not a resource you gather directly.",
+    ],
+    purchases: [
+      "Open for a spread of T5/T6 trophy materials.",
+      "Compare against Leather, Metal, Wood, and Cloth Shipments before converting large stacks.",
+    ],
+  },
+];
+
+const LWS4_SOURCE_LINKS: GuideSourceLink[] = [
+  {
+    label: "Living World Season 4 currency pages",
+    owner: "Guild Wars 2 Wiki contributors",
+    url: "https://wiki.guildwars2.com/wiki/Volatile_Magic",
+    note: "Used for currency names, item pages, vendor/source links, and event-page cross-checks.",
+  },
+  {
+    label: "How-To: DF Meta Farm",
+    owner: "Community Google Docs guide author",
+    url: "https://docs.google.com/document/d/1pPfwk3Nfcq9tLYUyWVU54ONEGH3f7IuHyXD0KeuElfk/edit?tab=t.0",
+    note: "Linked as the original Dragonfall route guide; the app summarizes the route and sends users back to the source.",
+  },
+  {
+    label: "Thunderhead Peaks Meta",
+    owner: "Cheshire Gaming",
+    url: "https://www.cheshiregaming.com/2020/08/thunderhead-peaks-meta.html",
+    note: "Linked for the external Thunderhead Peaks walkthrough.",
+  },
+  {
+    label: "The Oil Floes discussion",
+    owner: "r/Guildwars2 community",
+    url: "https://www.reddit.com/r/Guildwars2/comments/1mpgh52/the_oil_floes/",
+    note: "Linked as a community troubleshooting/discussion source rather than copied into the app.",
+  },
+];
 
 const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
   "open-world": {
@@ -1500,6 +1853,441 @@ const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
         wikiUrl: "https://wiki.guildwars2.com/wiki/The_Silverwastes",
       },
     ],
+  },
+  "lws4-resources": {
+    title: "Living World Season 4 Resources",
+    summary: "Track LWS4 map currencies, their local vendor use, and when converting Volatile Magic into shipments is worth considering.",
+    activityValueId: null,
+    resourceHub: true,
+    timing: "Use this as the resource hub before choosing a specific LWS4 meta route.",
+    preparation: [
+      "Finish account goals first: Skyscale, Aurora/Vision progress, trinkets, mounts, and map collections can all need these currencies.",
+      "Keep at least one stack buffer before consuming resources for Volatile Magic.",
+      "Compare Trophy Shipment value against current T5/T6 material prices before large conversions.",
+    ],
+    steps: [
+      "Treat LWS4 resources as account currencies first: finish mounts, collections, trinkets, and local purchases before consuming them.",
+      "Use Dragonfall, Istan, and Thunderhead routes when you also want Volatile Magic, unidentified gear, and repeatable chest rewards.",
+      "Before buying shipments, compare the current trophy-material basket against the Volatile Magic and coin cost shown by the vendor source.",
+      "Keep the linked wiki/vendor pages open for exact purchase limits, prerequisites, and current costs.",
+    ],
+    locations: [
+      {
+        label: "Domain of Istan resources",
+        map: "Domain of Istan",
+        note: "Kralkatite Ore comes from Istan events, Palawadan/Sunspear rewards, and local vendors.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Domain_of_Istan",
+        continentCoord: [57825.9, 61851.8],
+        zoom: 7,
+      },
+      {
+        label: "Thunderhead Peaks resources",
+        map: "Thunderhead Peaks",
+        note: "Branded Mass, Thunderhead Keep, and The Oil Floes all feed the LWS4 resource and Volatile Magic loop.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Thunderhead_Peaks",
+        continentCoord: [58661.2, 35366.7],
+        zoom: 7,
+      },
+      {
+        label: "Dragonfall resources",
+        map: "Dragonfall",
+        note: "Mistborn Motes and Volatile Magic are a major reason Dragonfall remains a strong continuous farm.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Dragonfall",
+        continentCoord: [46687.5, 50864.8],
+        floor: 49,
+        zoom: 7,
+      },
+    ],
+    rewards: LWS4_RESOURCE_ROWS.map((resource) => ({
+      name: resource.name,
+      detail: resource.value,
+      itemId: resource.itemId,
+      icon: resource.icon,
+      wikiUrl: resource.wikiUrl,
+    })),
+    resources: LWS4_RESOURCE_ROWS,
+    sourceLinks: LWS4_SOURCE_LINKS,
+    hideRelatedNotes: true,
+  },
+  "dragonfall-volatile-magic": {
+    title: "Dragonfall Volatile Magic",
+    summary: "A continuous Dragonfall route focused on camp progress, Mistborn Coffers, champion trains, final meta rewards, and Mistborn Mote conversion.",
+    timing: "Best when an organized commander map is running; the route is continuous and usually lasts as long as the squad keeps cycling events.",
+    preparation: [
+      "Join LFG early and prioritize a commander map with all three camps active.",
+      "Bring good tag damage, mobility, salvage kits, and enough bag space for coffers and unidentified gear.",
+      "Check Dragonfall vendor needs before consuming Mistborn Motes for Volatile Magic.",
+    ],
+    steps: [
+      "Join a commander map and rotate camp events so all three camps keep upgrading.",
+      "Open Mistborn Coffers and keep the train moving through bridge events, escorts, pre-events, Kralkatorrik, and bonus bosses.",
+      "Gather Mistborn Motes and only consume them for Volatile Magic after checking Dragonfall vendor and collection needs.",
+      "Convert Volatile Magic through shipments only when trophy prices justify the currency and coin spend.",
+    ],
+    locations: [
+      {
+        label: "Dragonfall meta map",
+        map: "Dragonfall",
+        note: "Use squad markers and camp status to stay with the active event chain.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Dragonfall",
+        continentCoord: [46687.5, 50864.8],
+        floor: 49,
+        zoom: 7,
+      },
+      {
+        label: "Mistborn Mote source",
+        map: "Dragonfall",
+        note: "Dragonfall is the main source for Mistborn Motes, which can be traded or consumed for Volatile Magic.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Mistborn_Mote",
+        continentCoord: [44928.4, 50424],
+        floor: 49,
+        zoom: 7,
+      },
+    ],
+    phases: [
+      {
+        title: "Camp Rotation",
+        objective: "Keep Pact, Olmakhan, and Mist Warden camps progressing.",
+        details: [
+          "Follow the commander between camp events instead of camping one lane.",
+          "Tag escort, defense, bridge, and collection events quickly; the goal is broad participation and camp upgrade progress.",
+          "Open Mistborn Coffers after the train pauses, not while the group is moving.",
+        ],
+      },
+      {
+        title: "Meta Push",
+        objective: "Move from upgraded camps into the final Kralkatorrik chain.",
+        details: [
+          "Stay with the squad for pre-events and champion cleanup so you do not miss chest and participation credit.",
+          "During bonus bosses, prioritize tagging each boss and staying alive over chasing one target too long.",
+        ],
+      },
+      {
+        title: "Conversion Check",
+        objective: "Turn rewards into value without burning account-needed currency.",
+        details: [
+          "Mistborn Motes are useful with Dragonfall vendors and can also be consumed for Volatile Magic.",
+          "Use Trophy Shipments only when the material basket is favorable and you do not need the Volatile Magic elsewhere.",
+        ],
+      },
+    ],
+    rewards: [
+      { name: "Mistborn Mote", detail: "Main Dragonfall currency; trade with camp vendors or consume for Volatile Magic after account needs.", itemId: 90783, icon: "https://render.guildwars2.com/file/E76806D6DF4E27C70EA70A9FAC1F0D036C18659E/2140686.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Mistborn_Mote" },
+      { name: "Trophy Shipment", detail: "Primary Volatile Magic conversion target when trophy prices are favorable.", itemId: 85725, icon: "https://render.guildwars2.com/file/12280A76B8BF2B15ADFE092A0B9FF6EE442851EE/1894768.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Trophy_Shipment" },
+    ],
+    sourceLinks: [
+      LWS4_SOURCE_LINKS[1],
+      {
+        label: "Dragonfall",
+        owner: "Guild Wars 2 Wiki contributors",
+        url: "https://wiki.guildwars2.com/wiki/Dragonfall",
+        note: "Used for map identity, access context, and wiki cross-links.",
+      },
+      {
+        label: "Mistborn Mote",
+        owner: "Guild Wars 2 Wiki contributors",
+        url: "https://wiki.guildwars2.com/wiki/Mistborn_Mote",
+        note: "Used for the resource and Volatile Magic conversion note.",
+      },
+    ],
+    hideRelatedNotes: true,
+  },
+  "palawadan-volatile-magic": {
+    title: "Palawadan Daily Route",
+    summary: "A Domain of Istan route built around Palawadan, Jewel of Istan, which the wiki lists as a 30-minute meta occurring every 120 minutes.",
+    timing: "30-minute meta on a two-hour cadence. Arrive before the assault starts so you get into the organized map.",
+    preparation: [
+      "Use the event timer and enter Domain of Istan before the chain opens.",
+      "Bring a build that can tag groups quickly and survive heavy Awakened pulls.",
+      "Leave inventory space for chests, unidentified gear, trophy bags, and Kralkatite Ore.",
+    ],
+    steps: [
+      "Arrive before the meta starts so you can join the squad, clear gates, and tag reward events cleanly.",
+      "Loot the Istani Chest and track Kralkatite Ore, unidentified gear, trophy bags, and Volatile Magic-related rewards.",
+      "Pair Palawadan with Great Hall when Istan is active and you want a compact daily LWS4 session.",
+      "Spend or store Kralkatite Ore before consuming spare currency for Volatile Magic.",
+    ],
+    locations: [
+      {
+        label: "Palawadan, Jewel of Istan",
+        map: "Domain of Istan",
+        note: "The Palawadan meta takes place in Domain of Istan and is strongest when joined before the chain opens.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Palawadan,_Jewel_of_Istan_(meta_event)",
+        continentCoord: [57825.9, 61851.8],
+        zoom: 7,
+      },
+      {
+        label: "Kralkatite Ore",
+        map: "Domain of Istan",
+        note: "Istan meta chests and local vendors make Kralkatite Ore the key local currency to track.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Kralkatite_Ore",
+        continentCoord: [58093.4, 62187.9],
+        zoom: 7,
+      },
+    ],
+    phases: [
+      {
+        title: "Outer Assault",
+        objective: "Enter Palawadan with the squad and clear the city gates.",
+        details: [
+          "Arrive early, join the commander tag, and stay close enough to tag each event wave.",
+          "Prioritize veterans, elites, and event objectives over chasing scattered enemies away from the group.",
+        ],
+      },
+      {
+        title: "City Push",
+        objective: "Move through the event objectives and keep participation active.",
+        details: [
+          "Follow the commander through capture points and boss/event rooms; falling behind is the easiest way to miss credit.",
+          "Loot chests as the group moves, but do not stop long enough to lose the train.",
+        ],
+      },
+      {
+        title: "Cleanup",
+        objective: "Collect daily rewards and fold Istan currency into your LWS4 plan.",
+        details: [
+          "Track Kralkatite Ore separately from liquid gold because it may be needed for account collections.",
+          "Pair with Great Hall when Istan is active and you want a compact daily LWS4 farm.",
+        ],
+      },
+    ],
+    rewards: [
+      { name: "Kralkatite Ore", detail: "Istan currency from Palawadan rewards, local vendors, and related event routes.", itemId: 86069, icon: "https://render.guildwars2.com/file/380A7E3B250B050C2C39B1106CA39AED65C8396B/1894933.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Kralkatite_Ore" },
+      { name: "Trophy Shipment", detail: "Use Volatile Magic for shipments only after account currency needs are covered.", itemId: 85725, icon: "https://render.guildwars2.com/file/12280A76B8BF2B15ADFE092A0B9FF6EE442851EE/1894768.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Trophy_Shipment" },
+    ],
+    sourceLinks: [
+      {
+        label: "Palawadan, Jewel of Istan",
+        owner: "Guild Wars 2 Wiki contributors",
+        url: "https://wiki.guildwars2.com/wiki/Palawadan,_Jewel_of_Istan_(meta_event)",
+        note: "Used for event identity, cadence, duration, and source linking.",
+      },
+      {
+        label: "Kralkatite Ore",
+        owner: "Guild Wars 2 Wiki contributors",
+        url: "https://wiki.guildwars2.com/wiki/Kralkatite_Ore",
+        note: "Used for Istan resource and vendor/source context.",
+      },
+    ],
+    hideRelatedNotes: true,
+  },
+  "great-hall-volatile-magic": {
+    title: "Great Hall Daily Route",
+    summary: "A short Istan event route around the Mordant Crescent Great Hall, useful as a daily add-on beside Palawadan.",
+    timing: "Short event-chain add-on in Domain of Istan; do it when the Great Hall/Sunspear Uprising state is active.",
+    preparation: [
+      "Use this as a daily supplement, not a full-session farm.",
+      "Stay with the group during the gate push so event credit does not drop.",
+      "Bring cleave and control for dense Awakened packs.",
+    ],
+    steps: [
+      "Stage in Domain of Istan and watch for the Sunspear Uprising/Great Hall event chain.",
+      "Follow the group through the main gate push and tag enemies broadly for event credit.",
+      "Treat Great Hall as a daily supplement to Palawadan rather than a full-session farm by itself.",
+      "Use the linked wiki event page for exact event state and map context.",
+    ],
+    locations: [
+      {
+        label: "Mordant Crescent Great Hall",
+        map: "Domain of Istan",
+        note: "The linked wiki event is the main gate push in Plains of Jarin as part of Sunspear Uprising.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Break_through_the_main_gate_of_the_Mordant_Crescent_Great_Hall",
+        continentCoord: [57041.2, 61332.1],
+        zoom: 7,
+      },
+    ],
+    phases: [
+      {
+        title: "Find the Event State",
+        objective: "Confirm the Great Hall chain is active before committing time.",
+        details: [
+          "Check the event text in Domain of Istan and look for players gathering near the Mordant Crescent Great Hall.",
+          "If the chain is inactive, rotate to Palawadan, hearts, or another LWS4 resource route.",
+        ],
+      },
+      {
+        title: "Gate Break",
+        objective: "Push through the main gate with the group.",
+        details: [
+          "Tag enemies broadly and focus event objectives that advance the gate phase.",
+          "Do not split too far from the group; this route is short and credit depends on staying with the active event.",
+        ],
+      },
+      {
+        title: "Daily Cleanup",
+        objective: "Use the event as a compact Istan reward pickup.",
+        details: [
+          "Loot the available chests/rewards, then return to the larger Istan or LWS4 route.",
+          "Track Kralkatite Ore and Volatile Magic separately from sellable drops.",
+        ],
+      },
+    ],
+    rewards: [
+      { name: "Kralkatite Ore", detail: "Local Istan currency that may be needed before conversion.", itemId: 86069, icon: "https://render.guildwars2.com/file/380A7E3B250B050C2C39B1106CA39AED65C8396B/1894933.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Kralkatite_Ore" },
+    ],
+    sourceLinks: [
+      {
+        label: "Break through the main gate of the Mordant Crescent Great Hall",
+        owner: "Guild Wars 2 Wiki contributors",
+        url: "https://wiki.guildwars2.com/wiki/Break_through_the_main_gate_of_the_Mordant_Crescent_Great_Hall",
+        note: "Used for event identity and map/event-chain context.",
+      },
+    ],
+    hideRelatedNotes: true,
+  },
+  "thunderhead-peaks-volatile-magic": {
+    title: "Thunderhead Peaks Volatile Magic",
+    summary: "A Thunderhead Peaks route that combines Thunderhead Keep and The Oil Floes with Branded Mass and Volatile Magic conversion decisions.",
+    timing: "Thunderhead Keep is a timed meta; combine it with Oil Floes when the map state and player count support it.",
+    preparation: [
+      "Arrive before Thunderhead Keep begins and join an organized map if available.",
+      "Bring a build with good cleave, breakbar pressure, and survivability.",
+      "Treat Branded Mass as account currency first; only consume spare currency after checking vendor goals.",
+    ],
+    steps: [
+      "Use the event timer and arrive before Thunderhead Keep begins; the wiki lists it as a 20-minute meta on a two-hour cadence.",
+      "Complete Thunderhead Keep when the map is organized, then move into Oil Floes when the event state is favorable.",
+      "Track Branded Mass separately from liquid gold; it is a local currency before it is a Volatile Magic fallback.",
+      "Use Cheshire Gaming and wiki links for walkthrough details instead of relying on copied route text.",
+    ],
+    locations: [
+      {
+        label: "Thunderhead Keep",
+        map: "Thunderhead Peaks",
+        note: "Northeastern Thunderhead Peaks meta; best with an organized map and pre-event timing.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Thunderhead_Keep_(meta_event)",
+        continentCoord: [58661.2, 35366.7],
+        zoom: 7,
+      },
+      {
+        label: "The Oil Floes",
+        map: "Thunderhead Peaks",
+        note: "Level 80 meta event in Ice Floe; route value improves when the event completes smoothly.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/The_Oil_Floes",
+        continentCoord: [57331.6, 38151.7],
+        zoom: 7,
+      },
+      {
+        label: "Branded Mass",
+        map: "Thunderhead Peaks",
+        note: "Local resource used with Thunderhead Peaks vendors or consumed for Volatile Magic.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Branded_Mass",
+        continentCoord: [57850.4, 36069.4],
+        zoom: 7,
+      },
+    ],
+    phases: [
+      {
+        title: "Thunderhead Keep",
+        objective: "Complete the keep meta with an organized map.",
+        details: [
+          "Arrive before the timer so you can join the commander and catch pre-event credit.",
+          "Stay with assigned groups, protect event NPCs/objects, and help with breakbars when bosses appear.",
+          "Loot keep rewards before rotating to other Thunderhead objectives.",
+        ],
+      },
+      {
+        title: "Oil Floes",
+        objective: "Do the Ice Floe event when enough players are present.",
+        details: [
+          "Confirm the event state before traveling; Oil Floes is not worth waiting on alone if the map is quiet.",
+          "Group coordination matters more than solo damage. Stay with the event, revive quickly, and handle objectives rather than tunneling enemies.",
+        ],
+      },
+      {
+        title: "Currency Decision",
+        objective: "Turn Branded Mass and Volatile Magic into the right account value.",
+        details: [
+          "Use Branded Mass for Thunderhead vendors, collections, and gear before consuming spare stacks.",
+          "Use Cheshire Gaming and wiki links for the full walkthrough details when learning the route.",
+        ],
+      },
+    ],
+    rewards: [
+      { name: "Branded Mass", detail: "Thunderhead Peaks currency from events, rewards, and local resource loops.", itemId: 89537, icon: "https://render.guildwars2.com/file/0C2FD403DACFABF74B9E3824914FB60B3C285804/2083245.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Branded_Mass" },
+      { name: "Trophy Shipment", detail: "Possible Volatile Magic conversion after account needs and material prices are checked.", itemId: 85725, icon: "https://render.guildwars2.com/file/12280A76B8BF2B15ADFE092A0B9FF6EE442851EE/1894768.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Trophy_Shipment" },
+    ],
+    sourceLinks: [
+      {
+        label: "Thunderhead Keep",
+        owner: "Guild Wars 2 Wiki contributors",
+        url: "https://wiki.guildwars2.com/wiki/Thunderhead_Keep_(meta_event)",
+        note: "Used for event cadence, duration, and map context.",
+      },
+      {
+        label: "The Oil Floes",
+        owner: "Guild Wars 2 Wiki contributors",
+        url: "https://wiki.guildwars2.com/wiki/The_Oil_Floes",
+        note: "Used for event identity and source linking.",
+      },
+      LWS4_SOURCE_LINKS[2],
+    ],
+    hideRelatedNotes: true,
+  },
+  "oil-floes-volatile-magic": {
+    title: "Oil Floes Completion Notes",
+    summary: "A focused Thunderhead Peaks page for The Oil Floes, with wiki and community discussion linked for players who need completion help.",
+    timing: "Event-state dependent. Check Thunderhead Peaks before committing and do it with other players.",
+    preparation: [
+      "Use LFG/map chat if the event is active but the area is quiet.",
+      "Bring a durable open-world build with condition cleanse and breakbar tools.",
+      "Expect lower value if completion is slow or the map cannot coordinate.",
+    ],
+    steps: [
+      "Confirm The Oil Floes is active in Thunderhead Peaks before committing; it is event-state dependent.",
+      "Join other players when possible, because group coordination matters more than personal DPS alone.",
+      "Use the wiki page for the official event chain and the Reddit discussion for community troubleshooting context.",
+      "After completion, fold the rewards back into the Thunderhead Peaks Branded Mass and Volatile Magic conversion route.",
+    ],
+    locations: [
+      {
+        label: "The Oil Floes",
+        map: "Thunderhead Peaks",
+        note: "Ice Floe meta event in Thunderhead Peaks.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/The_Oil_Floes",
+        continentCoord: [57331.6, 38151.7],
+        zoom: 7,
+      },
+    ],
+    phases: [
+      {
+        title: "Confirm the State",
+        objective: "Make sure the event is actually active and has enough players.",
+        details: [
+          "If the area is empty, ask in map chat or rotate back to Thunderhead Keep/another LWS4 farm.",
+          "Use the wiki and community discussion links when the event appears stalled or unclear.",
+        ],
+      },
+      {
+        title: "Complete the Event",
+        objective: "Stay with the group and focus the event mechanics.",
+        details: [
+          "Handle event objectives, revive downed players, and use crowd control when the encounter asks for it.",
+          "Do not treat it like a pure DPS golem; completion reliability is the value driver.",
+        ],
+      },
+      {
+        title: "Fold Into Thunderhead Route",
+        objective: "Use the completion as part of the broader Branded Mass and Volatile Magic loop.",
+        details: [
+          "After completion, check Branded Mass and Volatile Magic plans before consuming currencies.",
+          "Move to Thunderhead Keep, nodes, or another active meta instead of waiting in place.",
+        ],
+      },
+    ],
+    rewards: [
+      { name: "Branded Mass", detail: "Thunderhead Peaks account currency tied to the wider map reward loop.", itemId: 89537, icon: "https://render.guildwars2.com/file/0C2FD403DACFABF74B9E3824914FB60B3C285804/2083245.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Branded_Mass" },
+    ],
+    sourceLinks: [
+      {
+        label: "The Oil Floes",
+        owner: "Guild Wars 2 Wiki contributors",
+        url: "https://wiki.guildwars2.com/wiki/The_Oil_Floes",
+        note: "Used for official event identity and map context.",
+      },
+      LWS4_SOURCE_LINKS[3],
+    ],
+    hideRelatedNotes: true,
   },
   "meta-events": {
     title: "Meta Event Farming",
@@ -1872,117 +2660,7 @@ const GW2_TILE_RENDER_MAX_ZOOM: Record<number, number> = {
 const GW2_TILE_SIZE = 256;
 const MAX_MAP_PREVIEW_TILES = 24;
 const MAP_PREVIEW_GRID_SIZE = 3;
-
-const BUILD_SOURCES: BuildSource[] = [
-  {
-    profession: "Elementalist",
-    source: "Snow Crows",
-    mode: "Raids",
-    title: "Elementalist raid builds",
-    role: "DPS, boon DPS, healer",
-    url: "https://snowcrows.com/builds/raids/elementalist",
-    note: "High-end instanced builds with rotation and gear references.",
-  },
-  {
-    profession: "Mesmer",
-    source: "Snow Crows",
-    mode: "Raids",
-    title: "Mesmer raid builds",
-    role: "DPS, boon, utility",
-    url: "https://snowcrows.com/builds/raids/mesmer",
-    note: "Strong source for Chronomancer, Mirage, and Virtuoso raid setups.",
-  },
-  {
-    profession: "Necromancer",
-    source: "Snow Crows",
-    mode: "Raids",
-    title: "Necromancer raid builds",
-    role: "DPS, barrier, boon",
-    url: "https://snowcrows.com/builds/raids/necromancer",
-    note: "Instanced builds for Reaper, Scourge, Harbinger, and newer elite specs.",
-  },
-  {
-    profession: "Engineer",
-    source: "Snow Crows",
-    mode: "Raids",
-    title: "Engineer raid builds",
-    role: "DPS, quickness, alacrity",
-    url: "https://snowcrows.com/builds/raids/engineer",
-    note: "Benchmark-oriented Holosmith, Mechanist, Scrapper, and related builds.",
-  },
-  {
-    profession: "Ranger",
-    source: "Snow Crows",
-    mode: "Raids",
-    title: "Ranger raid builds",
-    role: "DPS, healer, boon",
-    url: "https://snowcrows.com/builds/raids/ranger",
-    note: "Good source for Druid support and DPS variants.",
-  },
-  {
-    profession: "Thief",
-    source: "Snow Crows",
-    mode: "Raids",
-    title: "Thief raid builds",
-    role: "DPS, utility",
-    url: "https://snowcrows.com/builds/raids/thief",
-    note: "Instanced Thief builds with current gear and skill templates.",
-  },
-  {
-    profession: "Guardian",
-    source: "Snow Crows",
-    mode: "Raids",
-    title: "Guardian raid builds",
-    role: "DPS, quickness, healer",
-    url: "https://snowcrows.com/builds/raids/guardian",
-    note: "Popular source for Firebrand, Willbender, and Dragonhunter setups.",
-  },
-  {
-    profession: "Revenant",
-    source: "Snow Crows",
-    mode: "Raids",
-    title: "Revenant raid builds",
-    role: "DPS, alacrity, healer",
-    url: "https://snowcrows.com/builds/raids/revenant",
-    note: "Instanced Herald, Renegade, Vindicator, and support variants.",
-  },
-  {
-    profession: "Warrior",
-    source: "Snow Crows",
-    mode: "Raids",
-    title: "Warrior raid builds",
-    role: "DPS, boon DPS",
-    url: "https://snowcrows.com/builds/raids/warrior",
-    note: "Berserker, Spellbreaker, Bladesworn, and newer specialization builds.",
-  },
-  {
-    profession: "Any",
-    source: "MetaBattle",
-    mode: "Open World / PvP / WvW",
-    title: "MetaBattle build library",
-    role: "Broad build lookup",
-    url: "https://metabattle.com/wiki/MetaBattle_Wiki",
-    note: "Broad community wiki with many casual and competitive templates.",
-  },
-  {
-    profession: "Any",
-    source: "Hardstuck",
-    mode: "Open World / PvE / Competitive",
-    title: "Hardstuck build library",
-    role: "Guided build lookup",
-    url: "https://hardstuck.gg/gw2/builds/",
-    note: "Curated build pages and guides across several game modes.",
-  },
-  {
-    profession: "Any",
-    source: "Snow Crows",
-    mode: "Open World",
-    title: "Snow Crows open world builds",
-    role: "Solo and farming builds",
-    url: "https://snowcrows.com/builds/open-world",
-    note: "Useful for farming builds when survivability and low-friction damage matter.",
-  },
-];
+const GUIDE_MAP_GRID_SIZE = 7;
 
 const ACTIVITY_VALUE_DEFINITIONS: Record<string, ActivityValueDefinition> = {
   "open-world": {
@@ -4148,6 +4826,7 @@ function App() {
         },
         {
           includeRecipeIds: accountSnapshot?.recipes,
+          includeSpecialRecipeRows: true,
         },
       );
 
@@ -4555,7 +5234,14 @@ function App() {
     }
 
     if (activePage === "farming-builds") {
-      return <BuildLibraryPage />;
+      return (
+        <BuildLibraryPage
+          onOpenItem={(item) => {
+            selectDetailItem(buildMarketItemForDetail(item));
+            navigateToPage("market", { preserveSelectedItem: true });
+          }}
+        />
+      );
     }
 
     if (activePage === "farming-tracker") {
@@ -4584,21 +5270,6 @@ function App() {
           }}
           onCloseDetail={() => selectDetailItem(null)}
           onSelectItem={(item) => selectDetailItem(buildMarketItemForDetail(item))}
-        />
-      );
-    }
-
-    if (activePage === "farming-calculator") {
-      return (
-        <FarmingCalculatorPage
-          highValueCrafts={highValueCrafts}
-          highValueCraftLoadState={highValueCraftLoadState}
-          highValueCraftsUpdatedAt={highValueCraftsUpdatedAt}
-          onLoadHighValueCrafts={loadHighValueCraftOpportunities}
-          onSelectCraft={(opportunity) => {
-            selectCraftOpportunity(opportunity);
-            navigateToPage("crafting", { preserveSelectedItem: true });
-          }}
         />
       );
     }
@@ -4904,6 +5575,11 @@ function App() {
         maps={maps}
         onLoadMarket={loadCatalog}
         onOpenActivity={openActivityGuide}
+        onOpenItem={(item) => {
+          selectDetailItem(buildMarketItemForDetail(item));
+          navigateToPage("market", { preserveSelectedItem: true });
+        }}
+        onOpenPage={navigateToPage}
       />
     );
   })();
@@ -9704,7 +10380,7 @@ function ProfitableCraftsPage({
   onSelectItem: (item: Gw2Item) => void;
 }) {
   const now = useRelativeNow();
-  const [recipeFilter, setRecipeFilter] = useState<"all" | "unlocked">("all");
+  const [recipeFilter, setRecipeFilter] = useState<ProfitableRecipeFilter>("all");
   const [selectedCharacterName, setSelectedCharacterName] = useState("all");
   const characters = accountSnapshot?.characters ?? [];
   const accountRecipeIds = useMemo(
@@ -9717,11 +10393,30 @@ function ProfitableCraftsPage({
   const filteredCrafts = useMemo(
     () =>
       marketCrafts.filter((craft) => {
-        if (recipeFilter === "unlocked" && !accountRecipeIds.has(craft.recipe.id)) {
+        if (recipeFilter === "all" && craft.marketProfit <= 0) {
           return false;
         }
 
-        if (selectedCharacter && !canCharacterCraftRecipe(selectedCharacter, craft.recipe)) {
+        if (recipeFilter === "unlocked") {
+          if (craft.marketProfit <= 0) {
+            return false;
+          }
+
+          if (!accountRecipeIds.has(craft.recipe.id)) {
+            return false;
+          }
+        }
+
+        if (recipeFilter === "mystic-forge" && !isMysticForgeRecipe(craft.recipe)) {
+          return false;
+        }
+
+        if (recipeFilter === "spirit-shard" && !isSpiritShardCraft(craft)) {
+          return false;
+        }
+
+        const shouldApplyCharacterFilter = recipeFilter === "all" || recipeFilter === "unlocked";
+        if (shouldApplyCharacterFilter && selectedCharacter && !canCharacterCraftRecipe(selectedCharacter, craft.recipe)) {
           return false;
         }
 
@@ -9778,11 +10473,12 @@ function ProfitableCraftsPage({
             Recipe availability
             <select
               value={recipeFilter}
-              disabled={!accountSnapshot}
-              onChange={(event) => setRecipeFilter(event.target.value as "all" | "unlocked")}
+              onChange={(event) => setRecipeFilter(event.target.value as ProfitableRecipeFilter)}
             >
               <option value="all">All profitable recipes</option>
-              <option value="unlocked">Unlocked on this account</option>
+              <option value="unlocked" disabled={!accountSnapshot}>Unlocked on this account</option>
+              <option value="mystic-forge">Mystic Forge</option>
+              <option value="spirit-shard">Spirit Shard</option>
             </select>
           </label>
           <label>
@@ -9801,14 +10497,13 @@ function ProfitableCraftsPage({
             </select>
           </label>
           <div>
-            <span className="eyebrow">Account Filter</span>
+            <span className="eyebrow">{recipeFilter === "all" || recipeFilter === "unlocked" ? "Account Filter" : "Recipe Filter"}</span>
             <strong>{accountSnapshot ? `${hiddenCraftCount.toLocaleString()} hidden by filters` : "Load GW2 API to personalize"}</strong>
           </div>
           <p className="craft-filter-note">
-            Source: official GW2 recipe API plus cached GW2 Wiki Mystic Forge recipes. This table only
-            ranks recipes with a sellable output, positive after-fee profit, and fully priced Trading
-            Post ingredients. Account filters now keep every profitable recipe your API key reports as
-            unlocked, even outside the global top list.
+            Source: official GW2 recipe API plus cached GW2 Wiki Mystic Forge recipes. The default list
+            only ranks profitable sellable outputs. Mystic Forge and Spirit Shard filters include matching
+            recipes even when current prices make them a loss, so promotion chains stay visible.
           </p>
         </section>
 
@@ -13527,31 +14222,242 @@ function SalvageSimulator({
   );
 }
 
-function BuildLibraryPage() {
+const BUILD_PROFESSION_NAMES = [
+  "Elementalist",
+  "Engineer",
+  "Guardian",
+  "Mesmer",
+  "Necromancer",
+  "Ranger",
+  "Revenant",
+  "Thief",
+  "Warrior",
+] as const;
+
+const BUILD_QUALITY_ORDER = ["Meta", "Recommended", "Great", "Good", "Viable", "Draft", "Test", "Basic"];
+
+const BUILD_ELITE_SPEC_PROFESSIONS: Record<string, string> = {
+  Tempest: "Elementalist",
+  Weaver: "Elementalist",
+  Catalyst: "Elementalist",
+  Scrapper: "Engineer",
+  Holosmith: "Engineer",
+  Mechanist: "Engineer",
+  Dragonhunter: "Guardian",
+  Firebrand: "Guardian",
+  Willbender: "Guardian",
+  Chronomancer: "Mesmer",
+  Mirage: "Mesmer",
+  Virtuoso: "Mesmer",
+  Reaper: "Necromancer",
+  Scourge: "Necromancer",
+  Harbinger: "Necromancer",
+  Druid: "Ranger",
+  Soulbeast: "Ranger",
+  Untamed: "Ranger",
+  Herald: "Revenant",
+  Renegade: "Revenant",
+  Vindicator: "Revenant",
+  Daredevil: "Thief",
+  Deadeye: "Thief",
+  Specter: "Thief",
+  Berserker: "Warrior",
+  Spellbreaker: "Warrior",
+  Bladesworn: "Warrior",
+};
+
+function getBuildPrimaryProfession(build: MetaBattleBuildSummary): string {
+  if ((BUILD_PROFESSION_NAMES as readonly string[]).includes(build.profession)) {
+    return build.profession;
+  }
+  if (build.eliteSpec && BUILD_ELITE_SPEC_PROFESSIONS[build.eliteSpec]) {
+    return BUILD_ELITE_SPEC_PROFESSIONS[build.eliteSpec];
+  }
+  const matchingIcon = build.icons.find((icon) => (BUILD_PROFESSION_NAMES as readonly string[]).includes(icon.label));
+  return matchingIcon?.label ?? build.profession;
+}
+
+function getBuildClassLabel(build: MetaBattleBuildSummary): string {
+  const primaryProfession = getBuildPrimaryProfession(build);
+  if (build.eliteSpec && build.eliteSpec !== primaryProfession) {
+    return `${primaryProfession} · ${build.eliteSpec}`;
+  }
+  return primaryProfession;
+}
+
+function getBuildListDescription(build: MetaBattleBuildSummary): string {
+  return getBuildClassLabel(build);
+}
+
+function BuildLibraryPage({ onOpenItem }: { onOpenItem: (item: Gw2Item) => void }) {
   const [profession, setProfession] = useState("Any");
   const [mode, setMode] = useState("Any");
-  const professions = ["Any", ...Array.from(new Set(BUILD_SOURCES.map((source) => source.profession))).filter((item) => item !== "Any")];
-  const modes = ["Any", ...Array.from(new Set(BUILD_SOURCES.map((source) => source.mode)))];
-  const filteredSources = BUILD_SOURCES.filter((source) => {
-    const professionMatches = profession === "Any" || source.profession === profession || source.profession === "Any";
-    const modeMatches = mode === "Any" || source.mode === mode;
-    return professionMatches && modeMatches;
-  });
+  const [quality, setQuality] = useState("Any");
+  const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
+  const [builds, setBuilds] = useState<MetaBattleBuildSummary[]>([]);
+  const [selectedBuild, setSelectedBuild] = useState<MetaBattleBuildSummary | null>(null);
+  const [buildDetail, setBuildDetail] = useState<MetaBattleBuildDetail | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>("idle");
+  const [detailState, setDetailState] = useState<LoadState>("idle");
+  const [statusMessage, setStatusMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const buildDetailCacheRef = useRef(new Map<string, MetaBattleBuildDetail>());
+
+  const loadBuilds = useCallback(async () => {
+    setLoadState("loading");
+    setErrorMessage("");
+    setStatusMessage("Loading MetaBattle build lists");
+    try {
+      const loadedBuilds = await loadMetaBattleBuildLibrary((message, completed, total) => {
+        setStatusMessage(total ? `${message} ${completed ?? 0}/${total}` : message);
+      });
+      setBuilds(loadedBuilds);
+      setSelectedBuild((current) => current ?? loadedBuilds[0] ?? null);
+      setLoadState("ready");
+      setStatusMessage(`${loadedBuilds.length.toLocaleString()} MetaBattle builds loaded`);
+    } catch (error) {
+      setLoadState("error");
+      setErrorMessage(error instanceof Error ? error.message : "MetaBattle builds could not be loaded.");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (loadState !== "idle") {
+      return;
+    }
+    void loadBuilds();
+  }, [loadBuilds, loadState]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedBuild) {
+      setBuildDetail(null);
+      return undefined;
+    }
+
+    const cachedDetail = buildDetailCacheRef.current.get(selectedBuild.pageTitle);
+    if (cachedDetail) {
+      setBuildDetail({ ...cachedDetail, summary: selectedBuild });
+      setDetailState("ready");
+      return undefined;
+    }
+
+    setDetailState("loading");
+    setBuildDetail(null);
+    loadMetaBattleBuildDetail(selectedBuild)
+      .then((detail) => {
+        if (cancelled) {
+          return;
+        }
+        buildDetailCacheRef.current.set(selectedBuild.pageTitle, detail);
+        setBuildDetail(detail);
+        setDetailState("ready");
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        setDetailState("error");
+        setErrorMessage(error instanceof Error ? error.message : "Build detail could not be loaded.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBuild]);
+
+  const professions = useMemo(() => ["Any", ...BUILD_PROFESSION_NAMES], []);
+  const modes = useMemo(
+    () => ["Any", ...Array.from(new Set(builds.map((build) => build.mode))).sort()],
+    [builds],
+  );
+  const qualities = useMemo(() => {
+    const knownQualityRank = new Map(BUILD_QUALITY_ORDER.map((item, index) => [item, index]));
+    return [
+      "Any",
+      ...Array.from(new Set(builds.map((build) => build.quality).filter((item): item is string => Boolean(item))))
+        .sort((left, right) => {
+          const leftRank = knownQualityRank.get(left) ?? Number.MAX_SAFE_INTEGER;
+          const rightRank = knownQualityRank.get(right) ?? Number.MAX_SAFE_INTEGER;
+          return leftRank - rightRank || left.localeCompare(right);
+        }),
+    ];
+  }, [builds]);
+  const filteredBuilds = useMemo(() => {
+    const normalizedQuery = deferredQuery.trim().toLowerCase();
+    return builds.filter((build) => {
+      const primaryProfession = getBuildPrimaryProfession(build);
+      const professionMatches = profession === "Any" || primaryProfession === profession;
+      const modeMatches = mode === "Any" || build.mode === mode;
+      const qualityMatches = quality === "Any" || build.quality === quality;
+      const queryMatches =
+        !normalizedQuery ||
+        [build.title, primaryProfession, build.profession, build.eliteSpec, build.mode, build.section, build.quality]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(normalizedQuery));
+      return professionMatches && modeMatches && qualityMatches && queryMatches;
+    });
+  }, [builds, deferredQuery, mode, profession, quality]);
+
+  useEffect(() => {
+    if (loadState !== "ready" || filteredBuilds.length === 0) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      const warmBuilds = [
+        ...(selectedBuild ? [selectedBuild] : []),
+        ...filteredBuilds.filter((build) => build.pageTitle !== selectedBuild?.pageTitle),
+      ].slice(0, 5);
+
+      preloadMetaBattleBuildDetails(warmBuilds, warmBuilds.length);
+      warmBuilds.forEach((build) => {
+        if (buildDetailCacheRef.current.has(build.pageTitle)) {
+          return;
+        }
+        void loadMetaBattleBuildDetail(build)
+          .then((detail) => {
+            buildDetailCacheRef.current.set(build.pageTitle, detail);
+          })
+          .catch(() => undefined);
+      });
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [filteredBuilds, loadState, selectedBuild]);
 
   return (
     <div className="focused-page">
       <section className="page-header">
         <div>
-          <span className="eyebrow">External Build Sources</span>
-          <h2>Farming Builds</h2>
+          <span className="eyebrow">MetaBattle Build Browser</span>
+          <h2>Builds</h2>
           <p>
-            Build sites do not expose a stable public build API, so the app links curated public
-            pages and keeps the build data source visible.
+            Browse MetaBattle builds by game mode or profession, then open the source page for
+            full attribution and the latest author-maintained notes.
           </p>
         </div>
+        <a className="icon-button" href="https://metabattle.com/wiki/MetaBattle_Wiki" target="_blank" rel="noreferrer">
+          <ExternalLink />
+          <span>Open MetaBattle</span>
+        </a>
       </section>
 
       <section className="surface build-filter-panel">
+        <label className="build-search-filter">
+          Search
+          <span className="search-box compact">
+            <Search />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Build, profession, role"
+            />
+          </span>
+        </label>
         <label>
           Profession
           <select value={profession} onChange={(event) => setProfession(event.target.value)}>
@@ -13568,27 +14474,1019 @@ function BuildLibraryPage() {
             ))}
           </select>
         </label>
+        <label>
+          Tag
+          <select value={quality} onChange={(event) => setQuality(event.target.value)}>
+            {qualities.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
+          </select>
+        </label>
+        <p className="craft-filter-note">
+          {loadState === "loading" ? statusMessage : `${filteredBuilds.length.toLocaleString()} builds shown from MetaBattle cached pages.`}
+        </p>
       </section>
 
-      <section className="surface build-source-grid">
-        {filteredSources.map((source) => (
-          <a
-            key={`${source.source}-${source.profession}-${source.mode}-${source.title}`}
-            className="build-source-card"
-            href={source.url}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <span className="eyebrow">{source.source} · {source.mode}</span>
-            <strong>{source.title}</strong>
-            <span>{source.profession} · {source.role}</span>
-            <p>{source.note}</p>
-            <small>Open source page <ExternalLink /></small>
-          </a>
-        ))}
+      {errorMessage ? <p className="error-pill">{errorMessage}</p> : null}
+
+      <section className="build-browser-layout">
+        <div className="surface build-list-panel">
+          {loadState === "loading" && builds.length === 0 ? <SkeletonRows /> : null}
+          {filteredBuilds.map((build) => (
+            <button
+              key={build.id}
+              className={`build-list-row ${selectedBuild?.id === build.id ? "selected" : ""}`}
+              onClick={() => setSelectedBuild(build)}
+            >
+              <span className="build-row-main">
+                {build.icons[1]?.imageUrl ? <img src={build.icons[1].imageUrl} alt="" /> : null}
+                <span>
+                  <strong>{build.title}</strong>
+                  <small>{getBuildListDescription(build)}</small>
+                </span>
+              </span>
+              <span className="build-row-quality">
+                {build.quality ? <span>{build.quality}</span> : null}
+              </span>
+              <span className="build-row-icons">
+                {build.icons.slice(2, 7).map((icon) => (
+                  icon.imageUrl ? <img key={`${build.id}-${icon.label}-${icon.imageUrl}`} src={icon.imageUrl} alt={icon.label} title={icon.label} /> : null
+                ))}
+              </span>
+              <span className="build-row-meta">
+                <small>{build.mode}</small>
+                <strong>{build.rating ? `${build.rating}/5` : "-"}</strong>
+              </span>
+            </button>
+          ))}
+          {loadState !== "loading" && filteredBuilds.length === 0 ? (
+            <p className="muted-copy">No MetaBattle builds match the current filters.</p>
+          ) : null}
+        </div>
+
+        <MetaBattleBuildDetailPanel
+          build={selectedBuild}
+          detail={buildDetail}
+          detailState={detailState}
+          onOpenItem={onOpenItem}
+        />
       </section>
     </div>
   );
+}
+
+function MetaBattleBuildDetailPanel({
+  build,
+  detail,
+  detailState,
+  onOpenItem,
+}: {
+  build: MetaBattleBuildSummary | null;
+  detail: MetaBattleBuildDetail | null;
+  detailState: LoadState;
+  onOpenItem: (item: Gw2Item) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    setCopied(false);
+  }, [build?.id]);
+  const smartTerms = useMemo(() => (detail ? getBuildSmartTerms(detail) : []), [detail]);
+
+  if (!build) {
+    return (
+      <div className="surface build-detail-panel empty">
+        <BookOpen />
+        <p className="muted-copy">Select a build to inspect its setup, template code, equipment, and source link.</p>
+      </div>
+    );
+  }
+
+  const copyTemplate = async () => {
+    if (!detail?.templateCode) {
+      return;
+    }
+    await navigator.clipboard?.writeText(detail.templateCode);
+    setCopied(true);
+  };
+
+  return (
+    <div className="surface build-detail-panel">
+      <div className="build-detail-header">
+        <div>
+          <span className="eyebrow">{[build.mode, build.quality].filter(Boolean).join(" · ")}</span>
+          <h3>{build.title}</h3>
+          <p>
+            {[getBuildClassLabel(build), build.section, build.difficulty ? `${build.difficulty} difficulty` : null, build.rating ? `${build.rating}/5 rating` : null]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+        </div>
+        <a className="icon-button" href={build.url} target="_blank" rel="noreferrer">
+          <ExternalLink />
+          <span>Source</span>
+        </a>
+      </div>
+
+      {detailState === "loading" ? <SkeletonRows /> : null}
+      {detailState === "error" ? <p className="muted-copy">Build detail could not be loaded. The source page is still available.</p> : null}
+
+      {detail ? (
+        <>
+          {detail.updatedNote ? <p className="build-update-note">{detail.updatedNote}</p> : null}
+          {detail.overview ? (
+            <section className="build-detail-section">
+              <h4>Overview</h4>
+              <BuildGuideText title="Overview" text={detail.overview} terms={smartTerms} />
+            </section>
+          ) : null}
+
+          {detail.templateCode ? (
+            <section className="build-template-panel">
+              <span>{detail.templateCode}</span>
+              <button className="icon-button primary" onClick={() => void copyTemplate()}>
+                <span>{copied ? "Copied" : "Copy Template"}</span>
+              </button>
+            </section>
+          ) : null}
+
+          {detail.skillGroups.length ? (
+            <section className="build-detail-section">
+              <h4>Skill Bar</h4>
+              <MetaBattleSkillBar groups={detail.skillGroups} />
+            </section>
+          ) : null}
+
+          {detail.specializations.length ? (
+            <section className="build-detail-section">
+              <h4>Specializations</h4>
+              <MetaBattleSpecializationPanel specializations={detail.specializations} />
+            </section>
+          ) : null}
+
+          {detail.equipment.length ? (
+            <section className="build-detail-section">
+              <h4>Equipment</h4>
+              <MetaBattleEquipmentPanel equipment={detail.equipment} onOpenItem={onOpenItem} />
+            </section>
+          ) : null}
+
+          <div className="build-notes-grid">
+            {detail.weaponVariants ? <BuildNote title="Weapon Variants" text={detail.weaponVariants} terms={smartTerms} /> : null}
+            {detail.skillVariants ? <BuildNote title="Skill Variants" text={detail.skillVariants} terms={smartTerms} /> : null}
+            {detail.usage ? <BuildNote title="Usage" text={detail.usage} terms={smartTerms} /> : null}
+            {detail.defense ? <BuildNote title="Defense" text={detail.defense} terms={smartTerms} /> : null}
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+interface BuildSmartTerm {
+  name: string;
+  subtitle?: string;
+  icon?: string;
+  description?: string;
+  facts?: MetaBattleFactLine[];
+}
+
+function BuildNote({ title, text, terms }: { title: string; text: string; terms: BuildSmartTerm[] }) {
+  return (
+    <section className="build-detail-section compact">
+      <h4>{title}</h4>
+      <BuildGuideText title={title} text={text} terms={terms} />
+    </section>
+  );
+}
+
+function BuildGuideText({ title, text, terms = [] }: { title: string; text: string; terms?: BuildSmartTerm[] }) {
+  const lines = useMemo(() => getBuildGuideLines(text), [text]);
+  const renderedText = useMemo(() => renderBuildSmartText(text, terms), [terms, text]);
+  const renderedLines = useMemo(() => lines.map((line) => renderBuildSmartText(line, terms)), [lines, terms]);
+  if (lines.length <= 1) {
+    return <p>{renderedText}</p>;
+  }
+
+  const ListTag = shouldUseOrderedBuildGuide(title) ? "ol" : "ul";
+  return (
+    <ListTag className="build-guide-list">
+      {lines.map((line, index) => (
+        <li key={`${title}-${index}`}>{renderedLines[index]}</li>
+      ))}
+    </ListTag>
+  );
+}
+
+function MetaBattleSkillBar({
+  groups,
+}: {
+  groups: Array<{ label: string; skills: MetaBattleBuildSkill[] }>;
+}) {
+  const rows = useMemo(() => getMetaBattleSkillDisplayRows(groups), [groups]);
+  const renderSkill = (rowKey: string, skill: MetaBattleBuildSkill, index: number) => (
+    <BuildHoverCard
+      key={`${rowKey}-${skill.id}-${index}`}
+      title={skill.name}
+      subtitle={[skill.slot, skill.type].filter(Boolean).join(" · ")}
+      icon={skill.icon}
+      description={skill.description}
+      facts={skill.facts}
+    >
+      <span className="build-icon-card" aria-label={skill.name}>
+        {skill.icon ? <img src={skill.icon} alt="" /> : <span className="build-icon-placeholder" />}
+      </span>
+    </BuildHoverCard>
+  );
+
+  return (
+    <div className="build-skill-bar">
+      {rows.map((row) => (
+        <div key={row.key} className={`build-skill-row ${row.kind}`}>
+          {row.label ? <strong className="build-skill-row-label">{row.label}</strong> : null}
+          <div className="build-skill-lines">
+            {row.skillLines.map((line, lineIndex) => (
+              <div key={`${row.key}-line-${lineIndex}`} className="build-skill-icons">
+                {line.map((skill, index) => renderSkill(`${row.key}-${lineIndex}`, skill, index))}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+type MetaBattleSkillDisplayRow = {
+  key: string;
+  kind: "mechanic" | "weapon" | "utility";
+  label?: string;
+  skills: MetaBattleBuildSkill[];
+  skillLines: MetaBattleBuildSkill[][];
+};
+
+function getMetaBattleSkillDisplayRows(
+  groups: Array<{ label: string; skills: MetaBattleBuildSkill[] }>,
+): MetaBattleSkillDisplayRow[] {
+  const rows: MetaBattleSkillDisplayRow[] = [];
+  const mechanicSkills: MetaBattleBuildSkill[] = [];
+  let reachedWeaponRows = false;
+
+  const flushMechanics = () => {
+    if (mechanicSkills.length === 0) {
+      return;
+    }
+    rows.push({
+      key: "profession-mechanic",
+      kind: "mechanic",
+      skills: [...mechanicSkills],
+      skillLines: [[...mechanicSkills]],
+    });
+    mechanicSkills.length = 0;
+  };
+
+  groups.forEach((group, index) => {
+    if (group.skills.length === 0) {
+      return;
+    }
+    const label = group.label.trim();
+    const generic = isGenericMetaBattleSkillLabel(label);
+    if (!reachedWeaponRows && generic) {
+      mechanicSkills.push(...group.skills);
+      return;
+    }
+
+    flushMechanics();
+    reachedWeaponRows = true;
+
+    const utility = /^utility$/i.test(label);
+    const previousRow = rows.at(-1);
+    if (!utility && previousRow?.kind === "weapon" && previousRow.label === label && group.skills.length <= 2) {
+      previousRow.skills.push(...group.skills);
+      previousRow.skillLines.push(group.skills);
+      return;
+    }
+
+    rows.push({
+      key: `${label || "skill-row"}-${index}`,
+      kind: utility ? "utility" : "weapon",
+      label: utility ? "Utility" : generic ? "Weapon skills" : label,
+      skills: group.skills,
+      skillLines: [group.skills],
+    });
+  });
+
+  flushMechanics();
+  return rows;
+}
+
+function isGenericMetaBattleSkillLabel(label: string): boolean {
+  return /^(profession mechanic|skill bar \d+)$/i.test(label.trim());
+}
+
+function MetaBattleSpecializationPanel({
+  specializations,
+}: {
+  specializations: MetaBattleBuildSpecialization[];
+}) {
+  return (
+    <div className="build-specialization-panel">
+      {specializations.map((specialization) => {
+        const minorTraits = specialization.traits.filter((trait) => trait.minor);
+        const majorTraits = specialization.traits.filter((trait) => !trait.minor);
+        const majorColumns = [majorTraits.slice(0, 3), majorTraits.slice(3, 6), majorTraits.slice(6, 9)];
+        return (
+          <div
+            key={specialization.id}
+            className="build-specialization-track"
+            style={getBuildSpecializationStyle(specialization)}
+          >
+            <div className="build-specialization-board">
+              <BuildHoverCard
+                title={specialization.name}
+                subtitle={specialization.elite ? "Elite specialization" : specialization.profession ?? "Core specialization"}
+                icon={specialization.icon}
+                description={specialization.wikiDescription}
+                facts={getBuildSpecializationFacts(specialization)}
+              >
+                <span className="build-specialization-core" aria-label={specialization.name}>
+                  {specialization.icon ? <img src={specialization.icon} alt="" /> : <span className="build-icon-placeholder" />}
+                </span>
+              </BuildHoverCard>
+              {minorTraits.slice(0, 3).map((trait, index) => (
+                <div
+                  key={`minor-${trait.id}`}
+                  className={`build-trait-minor-cell stage-${index + 1}`}
+                >
+                  <BuildTraitNode trait={trait} />
+                </div>
+              ))}
+              {majorColumns.map((column, columnIndex) => (
+                <div
+                  key={`${specialization.id}-major-${columnIndex}`}
+                  className={`build-trait-major-column stage-${columnIndex + 1}`}
+                >
+                  {column.map((trait) => (
+                    <BuildTraitNode key={trait.id} trait={trait} />
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function BuildTraitNode({ trait }: { trait: MetaBattleBuildTrait }) {
+  return (
+    <BuildHoverCard
+      title={trait.name}
+      subtitle={trait.minor ? "Minor trait" : "Major trait"}
+      icon={trait.icon}
+      description={trait.description}
+      facts={trait.facts}
+    >
+      <span className={`build-trait-node ${trait.selected ? "selected" : "dimmed"}`} aria-label={trait.name}>
+        {trait.icon ? <img src={trait.icon} alt="" /> : <span className="build-icon-placeholder" />}
+      </span>
+    </BuildHoverCard>
+  );
+}
+
+function MetaBattleEquipmentPanel({
+  equipment,
+  onOpenItem,
+}: {
+  equipment: MetaBattleBuildEquipmentSlot[];
+  onOpenItem: (item: Gw2Item) => void;
+}) {
+  const layout = getBuildEquipmentLayout(equipment);
+  return (
+    <div className="build-equipment-layout">
+      <div className="build-equipment-left">
+        <BuildEquipmentSlotGrid
+          slots={layout.character}
+          onOpenItem={onOpenItem}
+          className="build-equipment-character-grid"
+        />
+      </div>
+      <div className="build-equipment-right">
+        <BuildEquipmentSegment label="Weapon Set 1" slots={layout.weaponSet1} onOpenItem={onOpenItem} />
+        <BuildEquipmentSegment label="Weapon Set 2" slots={layout.weaponSet2} onOpenItem={onOpenItem} />
+        <BuildEquipmentSegment label="Upgrades" slots={layout.upgrades} onOpenItem={onOpenItem} />
+      </div>
+    </div>
+  );
+}
+
+function BuildEquipmentSegment({
+  label,
+  slots,
+  onOpenItem,
+}: {
+  label: string;
+  slots: MetaBattleBuildEquipmentSlot[];
+  onOpenItem: (item: Gw2Item) => void;
+}) {
+  return (
+    <div className="build-equipment-segment">
+      <span className="build-equipment-segment-label">{label}</span>
+      <BuildEquipmentSlotGrid slots={slots} onOpenItem={onOpenItem} />
+    </div>
+  );
+}
+
+function BuildEquipmentSlotGrid({
+  slots,
+  onOpenItem,
+  className,
+}: {
+  slots: MetaBattleBuildEquipmentSlot[];
+  onOpenItem: (item: Gw2Item) => void;
+  className?: string;
+}) {
+  return (
+    <div className={`build-equipment-slots ${className ?? ""}`}>
+      {slots.map((slot, index) => (
+        <BuildEquipmentSlot
+          key={`${slot.slot}-${slot.itemId ?? slot.item?.name ?? index}-${index}`}
+          slot={slot}
+          onOpenItem={onOpenItem}
+        />
+      ))}
+    </div>
+  );
+}
+
+function BuildEquipmentSlot({
+  slot,
+  onOpenItem,
+}: {
+  slot: MetaBattleBuildEquipmentSlot;
+  onOpenItem: (item: Gw2Item) => void;
+}) {
+  if (slot.slot === "__empty__") {
+    return <span className="build-equipment-slot empty" aria-hidden="true" />;
+  }
+
+  const isClickable = Boolean(slot.item);
+  const facts = getBuildEquipmentFacts(slot);
+  const content = (
+    <>
+      {slot.item?.icon ? <img src={slot.item.icon} alt="" /> : <span className="build-icon-placeholder" />}
+      <strong>{slot.slot}</strong>
+      <small>{slot.stat ?? slot.item?.name ?? "Recommended item"}</small>
+    </>
+  );
+
+  return (
+    <BuildHoverCard
+      title={slot.item?.name ?? slot.slot}
+      subtitle={[slot.stat, slot.item?.rarity, slot.item?.type].filter(Boolean).join(" · ")}
+      icon={slot.item?.icon}
+      description={slot.item?.description}
+      facts={facts}
+    >
+      {isClickable && slot.item ? (
+        <button className="build-equipment-slot clickable" type="button" onClick={() => onOpenItem(slot.item as Gw2Item)}>
+          {content}
+        </button>
+      ) : (
+        <span className="build-equipment-slot">{content}</span>
+      )}
+    </BuildHoverCard>
+  );
+}
+
+function getBuildEquipmentFacts(slot: MetaBattleBuildEquipmentSlot): MetaBattleFactLine[] {
+  const attributeFacts = (slot.attributeBonuses ?? []).map((attribute) => ({
+    label: attribute.name,
+    value: typeof attribute.value === "number" ? attribute.value.toLocaleString() : attribute.tier,
+    icon: attribute.icon,
+  }));
+  const distribution = slot.attributeCombination?.distribution;
+  const distributionFacts = distribution
+    ? [
+        { label: "Strike", value: formatBuildDistribution(distribution.strikeDamage) },
+        { label: "Condition", value: formatBuildDistribution(distribution.conditionDamage) },
+        { label: "Defense", value: formatBuildDistribution(distribution.defense) },
+        { label: "Support", value: formatBuildDistribution(distribution.support) },
+      ].filter((fact) => Boolean(fact.value))
+    : [];
+  const availability = slot.attributeCombination?.availability.length
+    ? [{ label: "Available for", value: slot.attributeCombination.availability.join(", ") }]
+    : [];
+  return [...attributeFacts, ...distributionFacts, ...availability].slice(0, 12);
+}
+
+function formatBuildDistribution(value?: number): string | undefined {
+  return typeof value === "number" ? `${value.toFixed(value % 1 === 0 ? 0 : 2)}%` : undefined;
+}
+
+const BUILD_TOOLTIP_ENTITIES: Record<string, string> = {
+  amp: "&",
+  apos: "'",
+  gt: ">",
+  lt: "<",
+  nbsp: " ",
+  quot: "\"",
+};
+
+function decodeBuildTooltipEntities(text: string): string {
+  return text.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, entity: string) => {
+    const key = entity.toLowerCase();
+    if (key.startsWith("#x")) {
+      const codePoint = Number.parseInt(key.slice(2), 16);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match;
+    }
+    if (key.startsWith("#")) {
+      const codePoint = Number.parseInt(key.slice(1), 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match;
+    }
+    return BUILD_TOOLTIP_ENTITIES[key] ?? match;
+  });
+}
+
+function cleanBuildTooltipText(value?: string | number | null): string {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  return decodeBuildTooltipEntities(String(value))
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/?c(?:=[^>]*)?>/gi, "")
+    .replace(/<\/?[^>]+>/g, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]*\n[ \t]*/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+const BUILD_TOOLTIP_SUPPRESSED_FACT_LABELS = new Set(["apply buff/condition"]);
+
+function getCleanBuildHoverFacts(facts?: MetaBattleFactLine[]): MetaBattleFactLine[] {
+  const rows: MetaBattleFactLine[] = [];
+  const seenLabels = new Set<string>();
+  const seenRows = new Set<string>();
+
+  for (const fact of facts ?? []) {
+    const label = cleanBuildTooltipText(fact.label);
+    const value = cleanBuildTooltipText(fact.value);
+    const labelKey = label.toLowerCase();
+    const valueKey = value.toLowerCase();
+    const iconKey = fact.icon ?? "";
+
+    if (!label && !value) {
+      continue;
+    }
+    if (BUILD_TOOLTIP_SUPPRESSED_FACT_LABELS.has(labelKey)) {
+      continue;
+    }
+
+    const rowKey = `${labelKey}|${valueKey}|${iconKey}`;
+    if (seenRows.has(rowKey)) {
+      continue;
+    }
+    if (labelKey && seenLabels.has(labelKey)) {
+      continue;
+    }
+
+    seenRows.add(rowKey);
+    if (labelKey) {
+      seenLabels.add(labelKey);
+    }
+    rows.push({ ...fact, label, value });
+
+    if (rows.length >= 8) {
+      break;
+    }
+  }
+
+  return rows;
+}
+
+const BUILD_HOVER_ACTIVE_EVENT = "tyria-ledger:build-hover-active";
+let buildHoverCardSequence = 0;
+
+function BuildHoverCard({
+  title,
+  subtitle,
+  icon,
+  description,
+  facts,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  icon?: string;
+  description?: string;
+  facts?: MetaBattleFactLine[];
+  children: ReactNode;
+}) {
+  const cleanDescription = cleanBuildTooltipText(description);
+  const cleanFacts = getCleanBuildHoverFacts(facts);
+  const anchorRef = useRef<HTMLSpanElement | null>(null);
+  const hoverIdRef = useRef("");
+  if (!hoverIdRef.current) {
+    buildHoverCardSequence += 1;
+    hoverIdRef.current = `build-hover-${buildHoverCardSequence}`;
+  }
+  const [hoverPosition, setHoverPosition] = useState<{
+    arrowX: number;
+    left: number;
+    maxHeight: number;
+    placement: "above" | "below";
+    top: number;
+  } | null>(null);
+
+  const updateHoverPosition = useCallback((announce = true) => {
+    const anchor = anchorRef.current;
+    if (!anchor || typeof window === "undefined") {
+      return;
+    }
+    if (announce) {
+      window.dispatchEvent(new CustomEvent(BUILD_HOVER_ACTIVE_EVENT, { detail: hoverIdRef.current }));
+    }
+    const rect = anchor.getBoundingClientRect();
+    const margin = 12;
+    const gap = 10;
+    const width = Math.min(320, Math.max(220, window.innerWidth - margin * 2));
+    const center = rect.left + rect.width / 2;
+    const left = Math.min(Math.max(center - width / 2, margin), window.innerWidth - width - margin);
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const spaceAbove = rect.top - margin;
+    const placement = spaceBelow >= 180 || spaceBelow >= spaceAbove ? "below" : "above";
+    const availableHeight = placement === "below" ? spaceBelow - gap : spaceAbove - gap;
+
+    setHoverPosition({
+      arrowX: Math.min(Math.max(center - left, 16), width - 16),
+      left,
+      maxHeight: Math.max(140, availableHeight),
+      placement,
+      top: placement === "below" ? rect.bottom + gap : rect.top - gap,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const closeInactiveHover = (event: Event) => {
+      if (event instanceof CustomEvent && event.detail !== hoverIdRef.current) {
+        setHoverPosition(null);
+      }
+    };
+    window.addEventListener(BUILD_HOVER_ACTIVE_EVENT, closeInactiveHover);
+    return () => window.removeEventListener(BUILD_HOVER_ACTIVE_EVENT, closeInactiveHover);
+  }, []);
+
+  useEffect(() => {
+    if (!hoverPosition) {
+      return undefined;
+    }
+    const reposition = () => updateHoverPosition(false);
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [hoverPosition, updateHoverPosition]);
+
+  const card = (
+    <span
+      className={`build-hover-card build-hover-card-floating ${hoverPosition?.placement ?? "below"}`}
+      role="tooltip"
+      style={hoverPosition ? ({
+        left: hoverPosition.left,
+        maxHeight: hoverPosition.maxHeight,
+        top: hoverPosition.top,
+        "--build-tooltip-arrow-x": `${hoverPosition.arrowX}px`,
+      } as CSSProperties) : undefined}
+    >
+      <span className="build-hover-head">
+        {icon ? <img src={icon} alt="" /> : null}
+        <span>
+          <strong>{title}</strong>
+          {subtitle ? <small>{subtitle}</small> : null}
+        </span>
+      </span>
+      {cleanDescription ? <span className="build-hover-description">{cleanDescription}</span> : null}
+      {cleanFacts.length ? (
+        <span className="build-hover-facts">
+          {cleanFacts.map((fact, index) => (
+            <span key={`${title}-${fact.label}-${index}`}>
+              {fact.icon ? <img src={fact.icon} alt="" /> : null}
+              <span>{fact.label}{fact.value ? `: ${fact.value}` : ""}</span>
+            </span>
+          ))}
+        </span>
+      ) : null}
+    </span>
+  );
+
+  return (
+    <span
+      ref={anchorRef}
+      className="build-hover-wrap"
+      onBlur={() => setHoverPosition(null)}
+      onFocus={() => updateHoverPosition()}
+      onMouseEnter={() => updateHoverPosition()}
+      onMouseLeave={() => setHoverPosition(null)}
+    >
+      {children}
+      {hoverPosition && typeof document !== "undefined" ? createPortal(card, document.body) : null}
+    </span>
+  );
+}
+
+function getBuildSmartTerms(detail: MetaBattleBuildDetail): BuildSmartTerm[] {
+  const termMap = new Map<string, BuildSmartTerm>();
+  const addTerm = (term: BuildSmartTerm) => {
+    const key = term.name.trim().toLowerCase();
+    if (key.length < 4 || termMap.has(key)) {
+      return;
+    }
+    termMap.set(key, term);
+  };
+
+  detail.skillGroups.forEach((group) => {
+    group.skills.forEach((skill) => {
+      addTerm({
+        name: skill.name,
+        subtitle: [skill.slot, skill.type].filter(Boolean).join(" · "),
+        icon: skill.icon,
+        description: skill.description,
+        facts: skill.facts,
+      });
+    });
+  });
+  (detail.wikiSkills ?? []).forEach((skill) => {
+    const facts: MetaBattleFactLine[] = [];
+    if (skill.activation) {
+      facts.push({ label: "Activation", value: skill.activation });
+    }
+    if (skill.recharge) {
+      facts.push({ label: "Recharge", value: skill.recharge });
+    }
+    facts.push({ label: "Source", value: "GW2 Wiki skill list" });
+    addTerm({
+      name: skill.name,
+      subtitle: [skill.profession, skill.group || skill.section, skill.slot].filter(Boolean).join(" · "),
+      icon: skill.icon,
+      description: skill.description,
+      facts,
+    });
+  });
+  detail.specializations.forEach((specialization) => {
+    addTerm({
+      name: specialization.name,
+      subtitle: specialization.elite ? "Elite specialization" : specialization.profession ?? "Specialization",
+      icon: specialization.icon,
+      description: specialization.wikiDescription,
+      facts: getBuildSpecializationFacts(specialization),
+    });
+    specialization.traits.forEach((trait) => {
+      addTerm({
+        name: trait.name,
+        subtitle: trait.minor ? "Minor trait" : "Major trait",
+        icon: trait.icon,
+        description: trait.description,
+        facts: trait.facts,
+      });
+    });
+  });
+  detail.equipment.forEach((slot) => {
+    if (!slot.item) {
+      return;
+    }
+    addTerm({
+      name: slot.item.name,
+      subtitle: [slot.stat, slot.item.rarity, slot.item.type].filter(Boolean).join(" · "),
+      icon: slot.item.icon,
+      description: slot.item.description,
+      facts: getBuildEquipmentFacts(slot),
+    });
+  });
+
+  return [...termMap.values()].sort((left, right) => right.name.length - left.name.length);
+}
+
+function renderBuildSmartText(text: string, terms: BuildSmartTerm[]): ReactNode {
+  const lowerText = text.toLowerCase();
+  const activeTerms = terms.filter((term) => lowerText.includes(term.name.toLowerCase())).slice(0, 24);
+  if (activeTerms.length === 0) {
+    return text;
+  }
+
+  const pattern = new RegExp(`\\b(${activeTerms.map((term) => escapeBuildRegExp(term.name)).join("|")})\\b`, "gi");
+  const nodes: ReactNode[] = [];
+  let lastIndex = 0;
+
+  text.replace(pattern, (match, _term, offset: number) => {
+    if (offset > lastIndex) {
+      nodes.push(text.slice(lastIndex, offset));
+    }
+    const term = activeTerms.find((candidate) => candidate.name.toLowerCase() === match.toLowerCase());
+    nodes.push(term ? <BuildInlineTerm key={`${match}-${offset}`} term={term} label={match} /> : match);
+    lastIndex = offset + match.length;
+    return match;
+  });
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes;
+}
+
+function BuildInlineTerm({ term, label }: { term: BuildSmartTerm; label: string }) {
+  return (
+    <BuildHoverCard
+      title={term.name}
+      subtitle={term.subtitle}
+      icon={term.icon}
+      description={term.description}
+      facts={term.facts}
+    >
+      <span className="build-inline-term">
+        {term.icon ? <img src={term.icon} alt="" /> : null}
+        <span>{label}</span>
+      </span>
+    </BuildHoverCard>
+  );
+}
+
+function escapeBuildRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getBuildGuideLines(text: string): string[] {
+  const normalized = text
+    .replace(/\s+(?=(?:Use|Cast|Swap|Open|Keep|Avoid|For |If |When |You |Start |Repeat)\b)/g, "\n")
+    .replace(/\s+(?=\d+\.)/g, "\n");
+  return normalized
+    .split(/\n+|(?<=[.!?])\s+(?=[A-Z][a-z])/)
+    .map((line) => line.trim().replace(/^[•*-]\s*/, ""))
+    .filter((line) => line.length > 0)
+    .slice(0, 10);
+}
+
+function shouldUseOrderedBuildGuide(title: string): boolean {
+  return /usage|rotation|opener|defense/i.test(title);
+}
+
+function getBuildSpecializationStyle(specialization: MetaBattleBuildSpecialization): CSSProperties | undefined {
+  if (!specialization.background) {
+    return undefined;
+  }
+  return {
+    backgroundImage: `linear-gradient(90deg, rgba(8, 12, 14, 0.08), rgba(8, 12, 14, 0.36)), url("${specialization.background}")`,
+  };
+}
+
+function getBuildSpecializationFacts(specialization: MetaBattleBuildSpecialization): MetaBattleFactLine[] {
+  const facts: MetaBattleFactLine[] = [];
+  if (specialization.profession) {
+    facts.push({ label: "Profession", value: specialization.profession });
+  }
+  if (specialization.focus) {
+    facts.push({ label: "Focus", value: specialization.focus });
+  }
+  if (specialization.wikiUrl) {
+    facts.push({ label: "Source", value: "GW2 Wiki" });
+  }
+  return facts;
+}
+
+function getBuildEquipmentLayout(equipment: MetaBattleBuildEquipmentSlot[]): {
+  character: MetaBattleBuildEquipmentSlot[];
+  weaponSet1: MetaBattleBuildEquipmentSlot[];
+  weaponSet2: MetaBattleBuildEquipmentSlot[];
+  upgrades: MetaBattleBuildEquipmentSlot[];
+} {
+  const normalizedEquipment = equipment.map(normalizeBuildEquipmentSlot);
+  const characterOrder = ["Head", "Shoulders", "Chest", "Hands", "Legs", "Feet", "Backpiece", "Accessory", "Accessory", "Amulet", "Ring", "Ring"];
+  const characterSlots = new Set(["Head", "Shoulders", "Chest", "Hands", "Legs", "Feet", "Backpiece", "Accessory", "Amulet", "Ring"]);
+  const runePattern = /rune/i;
+  const sigilPattern = /sigil/i;
+  const relicPattern = /relic/i;
+  const infusionPattern = /infusion/i;
+  const upgradePattern = /rune|sigil|relic|infusion|upgrade/i;
+  const slotText = (slot: MetaBattleBuildEquipmentSlot) => `${slot.slot} ${slot.stat ?? ""} ${slot.item?.name ?? ""}`;
+  const characterBuckets = new Map<string, MetaBattleBuildEquipmentSlot[]>();
+  normalizedEquipment
+    .filter((slot) => characterSlots.has(slot.slot))
+    .forEach((slot) => {
+      const bucket = characterBuckets.get(slot.slot) ?? [];
+      bucket.push(slot);
+      characterBuckets.set(slot.slot, bucket);
+    });
+  const character = characterOrder
+    .map((slotName) => characterBuckets.get(slotName)?.shift())
+    .filter((slot): slot is MetaBattleBuildEquipmentSlot => Boolean(slot));
+  const weapons = normalizedEquipment.filter(
+    (slot) => !characterSlots.has(slot.slot) && !upgradePattern.test(slotText(slot)),
+  );
+  const sigils = normalizedEquipment.filter((slot) => sigilPattern.test(slotText(slot)));
+  const upgrades = normalizedEquipment.filter((slot) => {
+    const text = slotText(slot);
+    return runePattern.test(text) || relicPattern.test(text) || infusionPattern.test(text);
+  });
+  const sortedUpgrades = sortBuildEquipmentUpgrades(upgrades);
+
+  return {
+    character,
+    weaponSet1: fillBuildEquipmentRow([...weapons.slice(0, 2), ...sigils.slice(0, 2)], 4),
+    weaponSet2: [weapons[2] ?? emptyBuildEquipmentSlot(0), weapons[3] ?? emptyBuildEquipmentSlot(1), sigils[2] ?? emptyBuildEquipmentSlot(2), sigils[3] ?? emptyBuildEquipmentSlot(3)],
+    upgrades: fillBuildEquipmentRow(sortedUpgrades, Math.max(3, sortedUpgrades.length)),
+  };
+}
+
+const BUILD_EQUIPMENT_SLOT_LABELS = [
+  "Backpiece",
+  "Accessory",
+  "Shoulders",
+  "Shoulder",
+  "Amulet",
+  "Hammer",
+  "Longbow",
+  "Shortbow",
+  "Greatsword",
+  "Warhorn",
+  "Scepter",
+  "Sceptre",
+  "Trident",
+  "Harpoon",
+  "Pistol",
+  "Dagger",
+  "Shield",
+  "Focus",
+  "Torch",
+  "Sword",
+  "Staff",
+  "Rifle",
+  "Mace",
+  "Spear",
+  "Chest",
+  "Hands",
+  "Gloves",
+  "Legs",
+  "Feet",
+  "Boots",
+  "Head",
+  "Ring",
+  "Rune",
+  "Relic",
+  "Sigil",
+  "Infusion",
+].sort((a, b) => b.length - a.length);
+
+function normalizeBuildEquipmentSlot(slot: MetaBattleBuildEquipmentSlot): MetaBattleBuildEquipmentSlot {
+  if (slot.slot === "__empty__") {
+    return slot;
+  }
+
+  const normalizedSlot = slot.slot === "Shoulder" ? "Shoulders" : slot.slot === "Gloves" ? "Hands" : slot.slot === "Boots" ? "Feet" : slot.slot;
+  if (BUILD_EQUIPMENT_SLOT_LABELS.includes(normalizedSlot)) {
+    return {
+      ...slot,
+      slot: normalizedSlot,
+    };
+  }
+
+  const lower = normalizedSlot.toLowerCase();
+  const parsedSlot = BUILD_EQUIPMENT_SLOT_LABELS.find((label) => lower.startsWith(label.toLowerCase()));
+  if (!parsedSlot) {
+    return slot;
+  }
+
+  const parsedStat = normalizedSlot.slice(parsedSlot.length).trim();
+  return {
+    ...slot,
+    slot: parsedSlot === "Shoulder" ? "Shoulders" : parsedSlot === "Gloves" ? "Hands" : parsedSlot === "Boots" ? "Feet" : parsedSlot,
+    stat: slot.stat ?? (parsedStat || undefined),
+  };
+}
+
+function fillBuildEquipmentRow(slots: MetaBattleBuildEquipmentSlot[], count: number): MetaBattleBuildEquipmentSlot[] {
+  return Array.from({ length: count }, (_, index) => slots[index] ?? emptyBuildEquipmentSlot(index));
+}
+
+function emptyBuildEquipmentSlot(index = 0): MetaBattleBuildEquipmentSlot {
+  return { slot: "__empty__", stat: String(index) };
+}
+
+function sortBuildEquipmentUpgrades(slots: MetaBattleBuildEquipmentSlot[]): MetaBattleBuildEquipmentSlot[] {
+  const rank = (slot: MetaBattleBuildEquipmentSlot) => {
+    const text = `${slot.slot} ${slot.stat ?? ""} ${slot.item?.name ?? ""}`;
+    if (/rune/i.test(text)) return 0;
+    if (/infusion/i.test(text)) return 1;
+    if (/relic/i.test(text)) return 2;
+    return 3;
+  };
+  return [...slots].sort((a, b) => rank(a) - rank(b));
 }
 
 function FarmingCalculatorPage({
@@ -14287,8 +16185,34 @@ function isMysticForgeCraft(craft: CraftOpportunity): boolean {
 }
 
 function isMysticForgeRecipe(recipe: RecipeGuide["recipe"]): boolean {
-  const text = `${recipe.type} ${recipe.disciplines.join(" ")} ${recipe.flags.join(" ")}`.toLowerCase();
-  return text.includes("mystic") || text.includes("forge") || recipe.disciplines.length === 0;
+  const text = [
+    recipe.type,
+    recipe.source ?? "",
+    recipe.sourceName ?? "",
+    recipe.sourceUrl ?? "",
+    ...recipe.disciplines,
+    ...recipe.flags,
+  ].join(" ").toLowerCase();
+  return recipe.source === "wiki" || text.includes("mystic") || text.includes("forge") || recipe.disciplines.length === 0;
+}
+
+function isSpiritShardCraft(craft: CraftOpportunity): boolean {
+  const recipe = craft.recipe;
+  const text = [
+    recipe.type,
+    recipe.source ?? "",
+    recipe.sourceName ?? "",
+    recipe.sourceUrl ?? "",
+    ...recipe.disciplines,
+    ...recipe.flags,
+  ].join(" ").toLowerCase();
+
+  return (
+    text.includes("philosopher") ||
+    text.includes("spirit shard") ||
+    SPIRIT_SHARD_RECIPE_OUTPUT_NAMES.has(craft.output.name.toLowerCase()) ||
+    recipe.ingredients.some((ingredient) => ingredient.item_id === PHILOSOPHERS_STONE_ITEM_ID)
+  );
 }
 
 function getRecipeSourceLabel(recipe: RecipeGuide["recipe"]): string {
@@ -14754,15 +16678,20 @@ function CategoryPage({
   maps,
   onLoadMarket,
   onOpenActivity,
+  onOpenItem,
+  onOpenPage,
 }: {
   activePage: ActivePage;
   catalog: MarketItem[];
   maps: Gw2Map[];
   onLoadMarket: () => void;
   onOpenActivity: (suggestion: GoldSuggestion) => void;
+  onOpenItem: (item: Gw2Item) => void;
+  onOpenPage: (page: ActivePage) => void;
 }) {
   const guide = getGuideDefinition(activePage);
   const activityValue = getActivityValueDefinition(activePage);
+  const showRelatedNotes = !guide.hideRelatedNotes;
   const valueRows = useMemo(
     () => buildActivityValueRows(activityValue, catalog),
     [activityValue, catalog],
@@ -14807,6 +16736,18 @@ function CategoryPage({
     return false;
   });
 
+  if (guide.resourceHub && guide.resources?.length) {
+    return (
+      <GuideResourceHubPage
+        guide={guide}
+        catalog={catalog}
+        resources={guide.resources}
+        onOpenItem={onOpenItem}
+        onOpenPage={onOpenPage}
+      />
+    );
+  }
+
   return (
     <div className="category-page">
       <section className="page-header">
@@ -14817,35 +16758,77 @@ function CategoryPage({
         </div>
       </section>
 
-      <section className="guide-grid">
-        <div className="surface guide-steps">
-          <div className="section-title">
-            <BookOpen />
-            <h3>Route</h3>
-          </div>
-          <ol>
-            {guide.steps.map((step) => (
-              <li key={step}>{step}</li>
-            ))}
-          </ol>
+      <section className="guide-detail-layout">
+        <div className="surface guide-detail-panel">
+          {guide.timing ? (
+            <section className="guide-detail-section guide-timing-section">
+              <span className="eyebrow">Timing</span>
+              <p>{guide.timing}</p>
+            </section>
+          ) : null}
+
+          {guide.preparation?.length ? (
+            <section className="guide-detail-section">
+              <h3>Before You Start</h3>
+              <ul className="guide-check-list">
+                {guide.preparation.map((item) => (
+                  <li key={item}>
+                    <CheckCircle2 />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          <section className="guide-detail-section">
+            <h3>How To Do It</h3>
+            <ol className="guide-step-list">
+              {guide.steps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+          </section>
+
+          {guide.phases?.length ? (
+            <section className="guide-detail-section">
+              <h3>Meta Phases</h3>
+              <div className="guide-phase-list">
+                {guide.phases.map((phase, index) => (
+                  <article key={phase.title} className="guide-phase-card">
+                    <span>{index + 1}</span>
+                    <div>
+                      <strong>{phase.title}</strong>
+                      <p>{phase.objective}</p>
+                      <ul>
+                        {phase.details.map((detail) => (
+                          <li key={detail}>{detail}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
         </div>
 
-        <div className="surface guide-map-panel">
+        <div className="surface guide-map-panel guide-map-large-panel">
           <div className="section-title">
             <Database />
-            <h3>Map and GW2 Links</h3>
+            <h3>Interactive Map</h3>
           </div>
-          <div className="location-list">
-            {guide.locations.map((location) => (
-              <LocationCard
-                key={`${location.map}-${location.label}`}
-                location={location}
-                maps={maps}
-              />
-            ))}
-          </div>
+          <GuideInteractiveMap locations={guide.locations} maps={maps} />
         </div>
       </section>
+
+      {guide.rewards?.length ? (
+        <GuideRewardPanel rewards={guide.rewards} catalog={catalog} onOpenItem={onOpenItem} />
+      ) : null}
+
+      {guide.resources?.length ? (
+        <GuideResourcePanel resources={guide.resources} catalog={catalog} onOpenItem={onOpenItem} />
+      ) : null}
 
       {activityValue ? (
         <section className="surface activity-value-panel">
@@ -14940,7 +16923,12 @@ function CategoryPage({
         </section>
       ) : null}
 
-      <section className="surface suggestions-panel">
+      {guide.sourceLinks?.length ? (
+        <GuideSourcesPanel sources={guide.sourceLinks} />
+      ) : null}
+
+      {showRelatedNotes ? (
+        <section className="surface suggestions-panel">
         <div className="section-title">
           <TrendingUp />
           <h3>Related Money-Making Notes</h3>
@@ -14963,8 +16951,336 @@ function CategoryPage({
             </button>
           ))}
         </div>
-      </section>
+        </section>
+      ) : null}
     </div>
+  );
+}
+
+function GuideResourceHubPage({
+  guide,
+  catalog,
+  resources,
+  onOpenItem,
+  onOpenPage,
+}: {
+  guide: GuideDefinition;
+  catalog: MarketItem[];
+  resources: GuideResource[];
+  onOpenItem: (item: Gw2Item) => void;
+  onOpenPage: (page: ActivePage) => void;
+}) {
+  const [selectedName, setSelectedName] = useState(resources[0]?.name ?? "");
+  const selectedResource = resources.find((resource) => resource.name === selectedName) ?? resources[0];
+  const selectedItem = useMemo(
+    () => buildGuideResourceItem(selectedResource, catalog),
+    [catalog, selectedResource],
+  );
+
+  return (
+    <div className="category-page guide-resource-hub-page">
+      <section className="page-header">
+        <div>
+          <span className="eyebrow">Guide</span>
+          <h2>{guide.title}</h2>
+          <p>{guide.summary}</p>
+        </div>
+      </section>
+
+      <section className="surface guide-resource-table-panel">
+        <div className="section-title">
+          <Coins />
+          <h3>Resources and Purchases</h3>
+        </div>
+        <div className="craft-table-wrap guide-resource-table-wrap">
+          <table className="craft-profit-table guide-resource-table">
+            <thead>
+              <tr>
+                <th aria-label="Icon" />
+                <th>Name</th>
+                <th>Profit / VM</th>
+                <th>Profit</th>
+                <th>Price</th>
+                <th>Requires</th>
+                <th>Limitation</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {resources.map((resource) => {
+                const item = buildGuideResourceItem(resource, catalog);
+                const selected = resource.name === selectedResource.name;
+                return (
+                  <tr
+                    key={resource.name}
+                    className={selected ? "selected" : ""}
+                    onClick={() => setSelectedName(resource.name)}
+                  >
+                    <td>
+                      <ItemIcon item={item} />
+                    </td>
+                    <td>
+                      <button type="button" className="guide-resource-row-button">
+                        <strong>{resource.name}</strong>
+                        <span>{resource.map}</span>
+                      </button>
+                    </td>
+                    <td>{resource.profitPerVm ?? "Check vendor"}</td>
+                    <td>{resource.profit ?? "Account value"}</td>
+                    <td>{resource.price ?? "Varies"}</td>
+                    <td>{resource.requires ?? "LWS4"}</td>
+                    <td>{resource.limitation ?? "Check vendor"}</td>
+                    <td>{resource.notes ?? resource.vendor}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="surface guide-resource-detail-panel">
+        <div className="guide-resource-detail-header">
+          <ItemIcon item={selectedItem} />
+          <div>
+            <span className="guide-resource-rarity">{selectedItem.rarity}</span>
+            <h3>{selectedResource.name}</h3>
+            <p>{selectedItem.type}{selectedItem.chat_link ? ` - ${selectedItem.chat_link}` : ""}</p>
+          </div>
+          <div className="guide-resource-detail-actions">
+            <button type="button" className="icon-button" onClick={() => onOpenItem(selectedItem)}>
+              <PackageSearch />
+              <span>Item Detail</span>
+            </button>
+            <a className="icon-button" href={selectedResource.wikiUrl} target="_blank" rel="noreferrer">
+              <ExternalLink />
+              <span>Wiki</span>
+            </a>
+          </div>
+        </div>
+
+        <div className="guide-resource-detail-grid">
+          <section className="guide-detail-section">
+            <h3>How To Obtain</h3>
+            <ul className="guide-check-list">
+              {(selectedResource.acquisition?.length ? selectedResource.acquisition : [selectedResource.route]).map((item) => (
+                <li key={item}>
+                  <CheckCircle2 />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section className="guide-detail-section">
+            <h3>Purchases And Uses</h3>
+            <ul className="guide-step-list">
+              {(selectedResource.purchases?.length ? selectedResource.purchases : [selectedResource.value]).map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </section>
+
+          <section className="guide-detail-section">
+            <h3>Vendor Context</h3>
+            <p>{selectedResource.vendor}</p>
+            <p>{selectedResource.value}</p>
+          </section>
+
+          <section className="guide-detail-section">
+            <h3>Related Meta Guides</h3>
+            {selectedResource.metaLinks?.length ? (
+              <div className="guide-meta-link-list">
+                {selectedResource.metaLinks.map((link) => (
+                  <button key={link.page} type="button" onClick={() => onOpenPage(link.page)}>
+                    <MapPin />
+                    <span>
+                      <strong>{link.label}</strong>
+                      <small>{link.detail}</small>
+                    </span>
+                    <ChevronRight />
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="guide-muted-copy">
+                No dedicated meta guide is wired for this resource yet. Use the wiki source and map notes for now.
+              </p>
+            )}
+          </section>
+        </div>
+      </section>
+
+      {guide.sourceLinks?.length ? <GuideSourcesPanel sources={guide.sourceLinks} /> : null}
+    </div>
+  );
+}
+
+function GuideRewardPanel({
+  rewards,
+  catalog,
+  onOpenItem,
+}: {
+  rewards: GuideReward[];
+  catalog: MarketItem[];
+  onOpenItem: (item: Gw2Item) => void;
+}) {
+  return (
+    <section className="surface guide-reward-panel">
+      <div className="section-title">
+        <Coins />
+        <h3>Key Rewards</h3>
+      </div>
+      <div className="guide-reward-grid">
+        {rewards.map((reward) => {
+          const item = buildGuideRewardItem(reward, catalog);
+          return (
+            <article key={reward.name} className="guide-reward-card">
+              <button type="button" onClick={() => item && onOpenItem(item)} disabled={!item}>
+                <ItemIcon item={item ?? { name: reward.name, icon: reward.icon }} />
+                <span>
+                  <strong>{reward.name}</strong>
+                  <small>{item ? `${item.rarity} ${item.type}` : "Guide reward"}</small>
+                </span>
+              </button>
+              <p>{reward.detail}</p>
+              {reward.wikiUrl ? (
+                <a href={reward.wikiUrl} target="_blank" rel="noreferrer">
+                  Wiki
+                  <ExternalLink />
+                </a>
+              ) : null}
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function GuideResourcePanel({
+  resources,
+  catalog,
+  onOpenItem,
+}: {
+  resources: GuideResource[];
+  catalog: MarketItem[];
+  onOpenItem: (item: Gw2Item) => void;
+}) {
+  return (
+    <section className="surface guide-resource-panel">
+      <div className="section-title">
+        <Coins />
+        <h3>Resources and Vendor Sources</h3>
+      </div>
+      <p>
+        LWS4 resources are usually account-bound first and conversion fuel second. Open the item or
+        linked source before consuming large stacks.
+      </p>
+      <div className="guide-resource-grid">
+        {resources.map((resource) => {
+          const item = buildGuideResourceItem(resource, catalog);
+          return (
+            <article key={resource.name} className="guide-resource-card">
+              <div className="guide-resource-card-head">
+                <button type="button" onClick={() => onOpenItem(item)}>
+                  <ItemIcon item={item} />
+                  <span>
+                    <strong>{resource.name}</strong>
+                    <small>{item.chat_link ?? `${item.rarity} ${item.type}`}</small>
+                  </span>
+                </button>
+                <a href={resource.wikiUrl} target="_blank" rel="noreferrer" aria-label={`${resource.name} wiki source`}>
+                  <ExternalLink />
+                </a>
+              </div>
+              <dl>
+                <div>
+                  <dt>Map</dt>
+                  <dd>{resource.map}</dd>
+                </div>
+                <div>
+                  <dt>Earned From</dt>
+                  <dd>{resource.route}</dd>
+                </div>
+                <div>
+                  <dt>Vendor / Value</dt>
+                  <dd>{resource.vendor} {resource.value}</dd>
+                </div>
+              </dl>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function buildGuideRewardItem(reward: GuideReward, catalog: MarketItem[]): Gw2Item | null {
+  const match = reward.itemId
+    ? catalog.find((item) => item.id === reward.itemId) ?? getStoredItem(reward.itemId)
+    : findMarketItemByName(catalog, reward.name);
+  if (match) {
+    return match;
+  }
+
+  if (!reward.itemId) {
+    return null;
+  }
+
+  return {
+    id: reward.itemId,
+    name: reward.name,
+    icon: reward.icon,
+    type: "Guide reward",
+    rarity: "Basic",
+    level: 0,
+    vendor_value: 0,
+  };
+}
+
+function buildGuideResourceItem(resource: GuideResource, catalog: MarketItem[]): Gw2Item {
+  const match = resource.itemId
+    ? catalog.find((item) => item.id === resource.itemId) ?? getStoredItem(resource.itemId)
+    : findMarketItemByName(catalog, resource.name);
+  if (match) {
+    return match;
+  }
+
+  return {
+    id: resource.itemId ?? 0,
+    name: resource.name,
+    icon: resource.icon,
+    chat_link: resource.chatLink,
+    type: resource.type ?? "Account currency",
+    rarity: resource.rarity ?? "Basic",
+    level: 0,
+    vendor_value: 0,
+  };
+}
+
+function GuideSourcesPanel({ sources }: { sources: GuideSourceLink[] }) {
+  return (
+    <section className="surface guide-sources-panel">
+      <div className="section-title">
+        <ExternalLink />
+        <h3>Sources and Credits</h3>
+      </div>
+      <div className="guide-source-list">
+        {sources.map((source) => (
+          <a key={`${source.owner}-${source.label}`} href={source.url} target="_blank" rel="noreferrer">
+            <strong>{source.label}</strong>
+            <span>{source.owner}</span>
+            <small>{source.note}</small>
+            <ExternalLink />
+          </a>
+        ))}
+      </div>
+      <p className="muted-copy">
+        User-pasted reference screenshots are not bundled as app assets; linked guides and maps remain
+        attributed to their original publishers.
+      </p>
+    </section>
   );
 }
 
@@ -15010,6 +17326,15 @@ function getGuideDefinition(activePage: ActivePage): GuideDefinition {
 }
 
 function getActivityValueDefinition(activePage: ActivePage): ActivityValueDefinition | null {
+  const guide = GUIDE_DEFINITIONS[activePage];
+  if (guide?.activityValueId === null) {
+    return null;
+  }
+
+  if (guide?.activityValueId && ACTIVITY_VALUE_DEFINITIONS[guide.activityValueId]) {
+    return ACTIVITY_VALUE_DEFINITIONS[guide.activityValueId];
+  }
+
   if (ACTIVITY_VALUE_DEFINITIONS[activePage]) {
     return ACTIVITY_VALUE_DEFINITIONS[activePage];
   }
@@ -15502,6 +17827,222 @@ function isGuideFamily(activePage: ActivePage, familyId: ActivePage): boolean {
 
   const group = SIDEBAR_GROUPS.find((entry) => entry.items.some((item) => item.id === activePage));
   return group?.items[0]?.id === familyId;
+}
+
+function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; maps: Gw2Map[] }) {
+  const primaryLocation = locations.find((location) => !ABSTRACT_LOCATION_MAPS.has(normalizeMapName(location.map))) ?? locations[0];
+  const primaryMap = primaryLocation ? findGw2MapByName(primaryLocation.map, maps) : undefined;
+  const primaryMapLocation = primaryMap
+    ? locations.find((location) => findGw2MapByName(location.map, maps)?.id === primaryMap.id)
+    : undefined;
+  const maxZoom = primaryMap ? GW2_CONTINENT_MAX_ZOOM[primaryMap.continent_id] ?? 8 : 8;
+  const maxTileZoom = primaryMap ? GW2_TILE_RENDER_MAX_ZOOM[primaryMap.continent_id] ?? maxZoom : maxZoom;
+  const defaultCenter = useMemo<[number, number]>(() => {
+    if (!primaryMap) {
+      return [0, 0];
+    }
+
+    const markerCoords = locations
+      .filter((location) => findGw2MapByName(location.map, maps)?.id === primaryMap.id)
+      .map((location) => location.continentCoord)
+      .filter((coord): coord is [number, number] => Boolean(coord));
+    if (markerCoords.length) {
+      return [
+        markerCoords.reduce((sum, coord) => sum + coord[0], 0) / markerCoords.length,
+        markerCoords.reduce((sum, coord) => sum + coord[1], 0) / markerCoords.length,
+      ];
+    }
+
+    const [[left, top], [right, bottom]] = primaryMap.continent_rect;
+    return primaryLocation?.continentCoord ?? [left + (right - left) / 2, top + (bottom - top) / 2];
+  }, [locations, maps, primaryLocation, primaryMap]);
+  const defaultZoom = primaryMap
+    ? Math.max(
+        0,
+        Math.min(
+          (locations.length > 1 ? (primaryLocation?.zoom ?? chooseMapPreviewZoom(primaryMap, maxZoom)) - 2 : primaryLocation?.zoom ?? chooseMapPreviewZoom(primaryMap, maxZoom)),
+          maxZoom,
+          maxTileZoom,
+        ),
+      )
+    : 0;
+  const [center, setCenter] = useState<[number, number]>(defaultCenter);
+  const [zoom, setZoom] = useState(defaultZoom);
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    center: [number, number];
+  } | null>(null);
+
+  useEffect(() => {
+    setCenter(defaultCenter);
+    setZoom(defaultZoom);
+  }, [defaultCenter, defaultZoom, primaryMap?.id]);
+
+  if (!primaryMap) {
+    return (
+      <div className="guide-interactive-map guide-interactive-map-fallback">
+        <Database />
+        <p>Map data is not loaded for this guide yet. Use the source links below for the wiki map.</p>
+      </div>
+    );
+  }
+
+  const floor = primaryMapLocation?.floor ?? primaryMap.default_floor ?? primaryMap.floors?.[0] ?? 1;
+  const tileWorldSize = GW2_TILE_SIZE * 2 ** (maxZoom - zoom);
+  const worldPerPixel = tileWorldSize / GW2_TILE_SIZE;
+  const centerTileX = Math.max(0, Math.floor(center[0] / tileWorldSize));
+  const centerTileY = Math.max(0, Math.floor(center[1] / tileWorldSize));
+  const tileLeft = Math.max(0, centerTileX - Math.floor(GUIDE_MAP_GRID_SIZE / 2));
+  const tileTop = Math.max(0, centerTileY - Math.floor(GUIDE_MAP_GRID_SIZE / 2));
+  const centerPixelX = (center[0] / tileWorldSize - tileLeft) * GW2_TILE_SIZE;
+  const centerPixelY = (center[1] / tileWorldSize - tileTop) * GW2_TILE_SIZE;
+  const tiles: MapPreviewTile[] = [];
+
+  for (let y = tileTop; y < tileTop + GUIDE_MAP_GRID_SIZE; y += 1) {
+    for (let x = tileLeft; x < tileLeft + GUIDE_MAP_GRID_SIZE; x += 1) {
+      tiles.push({
+        key: `${primaryMap.id}-${zoom}-${x}-${y}`,
+        src: `https://tiles.guildwars2.com/${primaryMap.continent_id}/${floor}/${zoom}/${x}/${y}.jpg`,
+      });
+    }
+  }
+
+  const mapLocations = locations
+    .map((location) => ({
+      location,
+      map: findGw2MapByName(location.map, maps),
+    }))
+    .filter((entry) => entry.map?.id === primaryMap.id);
+
+  const adjustZoom = (delta: number) => {
+    setZoom((current) => Math.max(0, Math.min(current + delta, maxZoom, maxTileZoom)));
+  };
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      center,
+    };
+  };
+
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
+    setCenter([
+      drag.center[0] - dx * worldPerPixel,
+      drag.center[1] - dy * worldPerPixel,
+    ]);
+  };
+
+  const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId === event.pointerId) {
+      dragRef.current = null;
+    }
+  };
+
+  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    adjustZoom(event.deltaY < 0 ? 1 : -1);
+  };
+
+  return (
+    <div className="guide-map-shell">
+      <div
+        className="guide-interactive-map"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onWheel={handleWheel}
+        role="application"
+        aria-label={`${primaryMap.name} interactive guide map`}
+      >
+        <div
+          className="guide-map-tile-mosaic"
+          style={{
+            gridTemplateColumns: `repeat(${GUIDE_MAP_GRID_SIZE}, ${GW2_TILE_SIZE}px)`,
+            gridTemplateRows: `repeat(${GUIDE_MAP_GRID_SIZE}, ${GW2_TILE_SIZE}px)`,
+            width: `${GUIDE_MAP_GRID_SIZE * GW2_TILE_SIZE}px`,
+            height: `${GUIDE_MAP_GRID_SIZE * GW2_TILE_SIZE}px`,
+            left: `calc(50% - ${centerPixelX}px)`,
+            top: `calc(50% - ${centerPixelY}px)`,
+          }}
+        >
+          {tiles.map((tile) => (
+            <img
+              key={tile.key}
+              src={tile.src}
+              alt=""
+              draggable={false}
+              onError={(event) => {
+                event.currentTarget.classList.add("missing");
+              }}
+            />
+          ))}
+        </div>
+        {mapLocations.map(({ location }, index) => {
+          const markerCoord = location.continentCoord;
+          if (!markerCoord) {
+            return null;
+          }
+
+          const left = 50 + ((markerCoord[0] - center[0]) / worldPerPixel);
+          const top = 50 + ((markerCoord[1] - center[1]) / worldPerPixel);
+          return (
+            <a
+              key={`${location.label}-${index}`}
+              className="guide-map-marker"
+              href={location.wikiUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{ left: `calc(50% + ${left - 50}px)`, top: `calc(50% + ${top - 50}px)` }}
+              title={location.label}
+            >
+              <MapPin />
+              <span>{location.label}</span>
+            </a>
+          );
+        })}
+        <div className="guide-map-toolbar" aria-label="Map controls">
+          <button type="button" onClick={() => adjustZoom(1)} aria-label="Zoom in">
+            <Plus />
+          </button>
+          <button type="button" onClick={() => adjustZoom(-1)} aria-label="Zoom out">
+            <Minus />
+          </button>
+          <button type="button" onClick={() => setCenter(defaultCenter)} aria-label="Center map">
+            <LocateFixed />
+          </button>
+        </div>
+        <span className="guide-map-name">{primaryMap.name}</span>
+      </div>
+      <div className="guide-map-location-list">
+        {locations.map((location) => (
+          <article key={`${location.map}-${location.label}`}>
+            <strong>{location.label}</strong>
+            <span>{location.note}</span>
+            {location.waypoint ? <code>{location.waypoint}</code> : null}
+            {location.wikiUrl ? (
+              <a href={location.wikiUrl} target="_blank" rel="noreferrer">
+                Wiki source
+                <ExternalLink />
+              </a>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function LocationCard({ location, maps }: { location: GuideLocation; maps: Gw2Map[] }) {

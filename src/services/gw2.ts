@@ -29,6 +29,18 @@ import type {
   ItemTransactions,
   LegendaryReadiness,
   MarketItem,
+  MetaBattleAttributeCombination,
+  MetaBattleAttributeComponent,
+  MetaBattleAttributeDistribution,
+  MetaBattleBuildDetail,
+  MetaBattleBuildEquipmentSlot,
+  MetaBattleBuildSpecialization,
+  MetaBattleBuildSkill,
+  MetaBattleBuildTrait,
+  MetaBattleFactLine,
+  MetaBattleBuildSummary,
+  MetaBattleWikiSkill,
+  MetaBattleIcon,
   PermanentGatheringNode,
   RecipeGuide,
   RecipeIngredient,
@@ -58,6 +70,8 @@ import {
 
 const GW2_API = "https://api.guildwars2.com/v2";
 const WIKI_API = "https://wiki.guildwars2.com/api.php";
+const METABATTLE_API = "https://metabattle.com/wiki/api.php";
+const METABATTLE_BASE_URL = "https://metabattle.com";
 const TRADING_POST_NET_RATE = 0.85;
 const CHUNK_SIZE = 180;
 const COMMERCE_PAGE_SIZE = 200;
@@ -84,6 +98,7 @@ const SQL_CACHE_TTL = {
   wikiPage: 7 * DAY_MS,
   wizardVaultPublic: 30 * MINUTE_MS,
   wizardVaultGuide: 24 * HOUR_MS,
+  metabattleBuilds: 24 * HOUR_MS,
 };
 
 type ProgressCallback = (message: string, completed?: number, total?: number) => void;
@@ -134,6 +149,7 @@ interface WizardVaultEasyObjectiveEntry {
 interface ProfitableCraftOptions {
   limit?: number;
   includeRecipeIds?: Iterable<number>;
+  includeSpecialRecipeRows?: boolean;
 }
 
 interface MysticForgeRecipeOptions {
@@ -196,6 +212,7 @@ const MYSTIC_FORGE_SEED_PAGES = [
   "Mystic Crystal/Material promotion recipes",
   "Philosopher's Stone/crafting materials",
 ];
+const PHILOSOPHERS_STONE_ITEM_ID = 20796;
 const LEGENDARY_READINESS_OUTPUT_NAMES = new Set([
   "Mystic Clover",
   "Mystic Tribute",
@@ -869,10 +886,36 @@ function getMarketBuyCost(itemId: number, count = 1): number {
 }
 
 function isMysticForgeRecipeRecord(recipe: Gw2Recipe): boolean {
-  const text = `${recipe.type} ${recipe.disciplines.join(" ")} ${recipe.flags.join(" ")} ${
-    recipe.sourceName ?? ""
-  } ${recipe.sourceUrl ?? ""}`.toLowerCase();
+  const text = [
+    recipe.type,
+    recipe.source ?? "",
+    recipe.sourceName ?? "",
+    recipe.sourceUrl ?? "",
+    ...recipe.disciplines,
+    ...recipe.flags,
+  ].join(" ").toLowerCase();
   return recipe.source === "wiki" || text.includes("mystic") || text.includes("forge") || recipe.disciplines.length === 0;
+}
+
+function isSpiritShardRecipeRecord(recipe: Gw2Recipe): boolean {
+  const text = [
+    recipe.type,
+    recipe.source ?? "",
+    recipe.sourceName ?? "",
+    recipe.sourceUrl ?? "",
+    ...recipe.disciplines,
+    ...recipe.flags,
+  ].join(" ").toLowerCase();
+
+  return (
+    text.includes("philosopher") ||
+    text.includes("spirit shard") ||
+    recipe.ingredients.some((ingredient) => ingredient.item_id === PHILOSOPHERS_STONE_ITEM_ID)
+  );
+}
+
+function isSpecialProfitableCraftRecipe(recipe: Gw2Recipe): boolean {
+  return isMysticForgeRecipeRecord(recipe) || isSpiritShardRecipeRecord(recipe);
 }
 
 function getUnknownNumber(value: unknown): number | null {
@@ -1190,6 +1233,7 @@ export async function loadProfitableCrafts(
       : optionsOrLimit;
   const limit = options.limit ?? Number.POSITIVE_INFINITY;
   const includeRecipeIds = new Set(options.includeRecipeIds ?? []);
+  const includeSpecialRecipeRows = options.includeSpecialRecipeRows ?? false;
   const [, officialRecipes, wikiMysticRecipes] = await Promise.all([
     ensureCommercePrices(onProgress),
     loadAllRecipes(onProgress),
@@ -1233,22 +1277,31 @@ export async function loadProfitableCrafts(
       (
         item,
       ): item is Pick<CraftOpportunity, "recipe" | "outputValue" | "marketCost" | "marketProfit"> =>
-        item !== null && item.marketProfit > 0,
+        item !== null,
     )
     .sort((left, right) => right.marketProfit - left.marketProfit);
 
+  const profitableRanked = ranked.filter((entry) => entry.marketProfit > 0);
   const candidatesByRecipeId = new Map<number, (typeof ranked)[number]>();
   const marketCandidateCount = Math.max(limit, 0);
   const marketCandidates = Number.isFinite(marketCandidateCount)
-    ? ranked.slice(0, marketCandidateCount)
-    : ranked;
+    ? profitableRanked.slice(0, marketCandidateCount)
+    : profitableRanked;
   for (const entry of marketCandidates) {
     candidatesByRecipeId.set(entry.recipe.id, entry);
   }
 
   if (includeRecipeIds.size > 0) {
-    for (const entry of ranked) {
+    for (const entry of profitableRanked) {
       if (includeRecipeIds.has(entry.recipe.id)) {
+        candidatesByRecipeId.set(entry.recipe.id, entry);
+      }
+    }
+  }
+
+  if (includeSpecialRecipeRows) {
+    for (const entry of ranked) {
+      if (isSpecialProfitableCraftRecipe(entry.recipe)) {
         candidatesByRecipeId.set(entry.recipe.id, entry);
       }
     }
@@ -1621,6 +1674,1893 @@ function getWikiLinkTitle(cell: string): string {
 
 function wikiPageUrl(title: string): string {
   return `https://wiki.guildwars2.com/wiki/${encodeURIComponent(title).replace(/%20/g, "_")}`;
+}
+
+function metaBattlePageUrl(title: string): string {
+  return `${METABATTLE_BASE_URL}/wiki/${encodeURIComponent(title).replace(/%20/g, "_").replace(/%3A/g, ":")}`;
+}
+
+function toAbsoluteMetaBattleUrl(value: string | null): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    return new URL(value, METABATTLE_BASE_URL).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+const METABATTLE_BUILD_PAGES = [
+  { page: "Open_World", mode: "Open World" },
+  { page: "Fractal", mode: "Fractal & Dungeon" },
+  { page: "Raid", mode: "Raid" },
+  { page: "PvP", mode: "PvP" },
+  { page: "WvW_Roaming", mode: "WvW - Roaming" },
+  { page: "WvW_Zerg", mode: "WvW - Zerg" },
+  { page: "Core", mode: "Core / F2P" },
+];
+
+const METABATTLE_PROFESSION_SKILL_PAGES: Record<string, string> = {
+  Elementalist: "List of elementalist skills",
+  Engineer: "List of engineer skills",
+  Guardian: "List of guardian skills",
+  Mesmer: "List of mesmer skills",
+  Necromancer: "List of necromancer skills",
+  Ranger: "List of ranger skills",
+  Revenant: "List of revenant skills",
+  Thief: "List of thief skills",
+  Warrior: "List of warrior skills",
+};
+
+const METABATTLE_ELITE_SPEC_PROFESSIONS: Record<string, string> = {
+  Berserker: "Warrior",
+  Bladesworn: "Warrior",
+  Catalyst: "Elementalist",
+  Chronomancer: "Mesmer",
+  Daredevil: "Thief",
+  Deadeye: "Thief",
+  Dragonhunter: "Guardian",
+  Druid: "Ranger",
+  Elementalist: "Elementalist",
+  Engineer: "Engineer",
+  Firebrand: "Guardian",
+  Guardian: "Guardian",
+  Harbinger: "Necromancer",
+  Herald: "Revenant",
+  Holosmith: "Engineer",
+  Mechanist: "Engineer",
+  Mesmer: "Mesmer",
+  Mirage: "Mesmer",
+  Necromancer: "Necromancer",
+  Ranger: "Ranger",
+  Reaper: "Necromancer",
+  Renegade: "Revenant",
+  Revenant: "Revenant",
+  Scourge: "Necromancer",
+  Scrapper: "Engineer",
+  Soulbeast: "Ranger",
+  Specter: "Thief",
+  Spellbreaker: "Warrior",
+  Tempest: "Elementalist",
+  Thief: "Thief",
+  Untamed: "Ranger",
+  Vindicator: "Revenant",
+  Virtuoso: "Mesmer",
+  Warrior: "Warrior",
+  Weaver: "Elementalist",
+  Willbender: "Guardian",
+};
+
+const metaBattleWikiSkillMemoryCache = new Map<string, MetaBattleWikiSkill[]>();
+const metaBattleHtmlMemoryCache = new Map<string, MetaBattleHtmlPage | null>();
+const metaBattleHtmlInflightCache = new Map<string, Promise<MetaBattleHtmlPage | null>>();
+const metaBattleBuildDetailMemoryCache = new Map<string, MetaBattleBuildDetail>();
+const metaBattleBuildDetailInflightCache = new Map<string, Promise<MetaBattleBuildDetail>>();
+const metaBattleSkillBundleMemoryCache = new Map<string, MetaBattleBuildSkill[]>();
+const metaBattleSpecializationBundleMemoryCache = new Map<string, Gw2SpecializationApiEntry[]>();
+const metaBattleTraitBundleMemoryCache = new Map<string, Gw2TraitApiEntry[]>();
+let metaBattleBuildLibraryMemoryCache: MetaBattleBuildSummary[] | null = null;
+let metaBattleBuildLibraryInflight: Promise<MetaBattleBuildSummary[]> | null = null;
+let metaBattleWikiSpecializationIndexMemoryCache: Map<string, MetaBattleWikiSpecializationInfo> | null = null;
+const metaBattleWikiSpecializationDetailMemoryCache = new Map<string, MetaBattleWikiSpecializationInfo | undefined>();
+const wikiHtmlMemoryCache = new Map<string, { title: string; html: string; url: string } | null>();
+const wikiHtmlInflightCache = new Map<string, Promise<{ title: string; html: string; url: string } | null>>();
+
+interface MetaBattleHtmlPage {
+  title: string;
+  html: string;
+  url: string;
+}
+
+interface MetaBattleWikiSpecializationInfo {
+  name: string;
+  profession?: string;
+  focus?: string;
+  icon?: string;
+  background?: string;
+  description?: string;
+  url: string;
+}
+
+interface Gw2SkillApiEntry {
+  id: number;
+  name: string;
+  icon?: string;
+  description?: string;
+  type?: string;
+  slot?: string;
+  facts?: Gw2FactApiEntry[];
+}
+
+interface Gw2SpecializationApiEntry {
+  id: number;
+  name: string;
+  profession?: string;
+  elite?: boolean;
+  icon?: string;
+  background?: string;
+  minor_traits?: number[];
+  major_traits?: number[];
+}
+
+interface Gw2TraitApiEntry {
+  id: number;
+  name: string;
+  icon?: string;
+  description?: string;
+  specialization?: number;
+  facts?: Gw2FactApiEntry[];
+}
+
+interface Gw2FactApiEntry {
+  text?: string;
+  type?: string;
+  icon?: string;
+  value?: number | boolean | string;
+  percent?: number;
+  duration?: number;
+  status?: string;
+  description?: string;
+  field_type?: string;
+  finisher_type?: string;
+  hit_count?: number;
+  distance?: number;
+  prefix?: {
+    text?: string;
+    icon?: string;
+    status?: string;
+    description?: string;
+  };
+}
+
+async function loadMetaBattleHtml(page: string): Promise<MetaBattleHtmlPage | null> {
+  const memoryKey = normalizeWikiLookupName(page);
+  if (metaBattleHtmlMemoryCache.has(memoryKey)) {
+    return metaBattleHtmlMemoryCache.get(memoryKey) ?? null;
+  }
+  const inflight = metaBattleHtmlInflightCache.get(memoryKey);
+  if (inflight) {
+    return inflight;
+  }
+
+  const promise = loadMetaBattleHtmlUncached(page)
+    .then((result) => {
+      metaBattleHtmlMemoryCache.set(memoryKey, result);
+      return result;
+    })
+    .finally(() => {
+      metaBattleHtmlInflightCache.delete(memoryKey);
+    });
+  metaBattleHtmlInflightCache.set(memoryKey, promise);
+  return promise;
+}
+
+async function loadMetaBattleHtmlUncached(page: string): Promise<MetaBattleHtmlPage | null> {
+  const cacheKey = getNamedCacheKey("metabattle:html", page);
+  const cached = await loadSqlCache(cacheKey, SQL_CACHE_TTL.metabattleBuilds, isMetaBattleHtmlPage);
+  if (cached) {
+    return cached;
+  }
+
+  const params = new URLSearchParams({
+    action: "parse",
+    page,
+    prop: "text|displaytitle",
+    redirects: "1",
+    origin: "*",
+    format: "json",
+  });
+
+  try {
+    const payload = await fetchJson<{
+      parse?: {
+        title: string;
+        text?: {
+          "*": string;
+        };
+      };
+    }>(`${METABATTLE_API}?${params.toString()}`);
+
+    if (!payload.parse?.text?.["*"]) {
+      return null;
+    }
+
+    const result = {
+      title: payload.parse.title,
+      html: payload.parse.text["*"],
+      url: metaBattlePageUrl(payload.parse.title),
+    };
+    void saveSqlCache(cacheKey, result);
+    return result;
+  } catch (error) {
+    console.warn(`MetaBattle page failed: ${page}`, error);
+    return null;
+  }
+}
+
+function parseMetaBattleBuildRows(page: MetaBattleHtmlPage, mode: string): MetaBattleBuildSummary[] {
+  const document = new DOMParser().parseFromString(page.html, "text/html");
+  const root = document.querySelector(".mw-parser-output") ?? document.body;
+  const rows: MetaBattleBuildSummary[] = [];
+  let currentSection = "Builds";
+  let currentProfession = "Any";
+
+  for (const child of Array.from(root.children)) {
+    if (/^H[2-3]$/i.test(child.tagName)) {
+      currentSection = normalizePlainText(child.textContent ?? "").replace(/\[edit]$/i, "").trim() || currentSection;
+      continue;
+    }
+
+    if (child.classList.contains("build-row-header")) {
+      currentProfession = normalizePlainText(child.textContent ?? "") || currentProfession;
+      continue;
+    }
+
+    if (!child.classList.contains("build-row")) {
+      continue;
+    }
+
+    const link = child.querySelector<HTMLAnchorElement>('a[title^="Build:"]');
+    const pageTitle = link?.getAttribute("title")?.trim();
+    const title = normalizePlainText(link?.textContent ?? "");
+    if (!link || !pageTitle || !title) {
+      continue;
+    }
+
+    const rowIcons = Array.from(child.querySelectorAll<HTMLImageElement>("img"))
+      .map((image): MetaBattleIcon | null => {
+        const label = normalizePlainText(
+          image.closest<HTMLElement>("[title]")?.getAttribute("title") ?? image.getAttribute("alt") ?? "",
+        );
+        if (!label || label === "Optional") {
+          return null;
+        }
+        return {
+          label,
+          imageUrl: toAbsoluteMetaBattleUrl(image.getAttribute("src")),
+        };
+      })
+      .filter((icon): icon is MetaBattleIcon => Boolean(icon));
+
+    const uniqueIcons = dedupeMetaBattleIcons(rowIcons);
+    const quality = uniqueIcons[0]?.label;
+    const eliteSpec = uniqueIcons.find((icon) => icon.label !== quality && /profession|spec/i.test(icon.imageUrl ?? ""))?.label
+      ?? uniqueIcons.find((icon) => icon.label !== quality)?.label;
+    const difficulty = normalizePlainText(
+      child.querySelector<HTMLElement>('[title^="Difficulty:"]')?.getAttribute("title")?.replace(/^Difficulty:\s*/i, "") ?? "",
+    );
+    const ratingValue = Number(normalizePlainText(child.querySelector(".build-row-rating")?.textContent ?? ""));
+    const url = toAbsoluteMetaBattleUrl(link.getAttribute("href")) ?? metaBattlePageUrl(pageTitle);
+
+    rows.push({
+      id: `${mode}:${pageTitle}`,
+      title,
+      pageTitle,
+      url,
+      mode,
+      section: currentSection,
+      profession: currentProfession,
+      eliteSpec,
+      quality,
+      difficulty: difficulty || undefined,
+      rating: Number.isFinite(ratingValue) ? ratingValue : undefined,
+      icons: uniqueIcons.slice(0, 12),
+    });
+  }
+
+  return rows;
+}
+
+function dedupeMetaBattleIcons(icons: MetaBattleIcon[]): MetaBattleIcon[] {
+  const seen = new Set<string>();
+  const result: MetaBattleIcon[] = [];
+
+  for (const icon of icons) {
+    const key = `${icon.label}:${icon.imageUrl ?? ""}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(icon);
+  }
+
+  return result;
+}
+
+export async function loadMetaBattleBuildLibrary(onProgress?: ProgressCallback): Promise<MetaBattleBuildSummary[]> {
+  if (metaBattleBuildLibraryMemoryCache) {
+    onProgress?.("MetaBattle builds loaded", 1, 1);
+    return metaBattleBuildLibraryMemoryCache;
+  }
+  if (metaBattleBuildLibraryInflight) {
+    return metaBattleBuildLibraryInflight;
+  }
+
+  metaBattleBuildLibraryInflight = loadMetaBattleBuildLibraryUncached(onProgress).finally(() => {
+    metaBattleBuildLibraryInflight = null;
+  });
+  return metaBattleBuildLibraryInflight;
+}
+
+async function loadMetaBattleBuildLibraryUncached(onProgress?: ProgressCallback): Promise<MetaBattleBuildSummary[]> {
+  const cached = await loadSqlCache(
+    "metabattle:build-library",
+    SQL_CACHE_TTL.metabattleBuilds,
+    (value): value is MetaBattleBuildSummary[] => isArrayOf(value, isMetaBattleBuildSummary),
+  );
+  if (cached) {
+    metaBattleBuildLibraryMemoryCache = cached;
+    return cached;
+  }
+
+  const allBuilds: MetaBattleBuildSummary[] = [];
+  for (const [index, source] of METABATTLE_BUILD_PAGES.entries()) {
+    onProgress?.(`Loading MetaBattle ${source.mode} builds`, index, METABATTLE_BUILD_PAGES.length);
+    const page = await loadMetaBattleHtml(source.page);
+    if (!page) {
+      continue;
+    }
+    allBuilds.push(...parseMetaBattleBuildRows(page, source.mode));
+  }
+
+  const deduped = dedupeMetaBattleBuilds(allBuilds).sort((left, right) =>
+    `${left.mode}:${left.profession}:${left.title}`.localeCompare(`${right.mode}:${right.profession}:${right.title}`),
+  );
+  onProgress?.("MetaBattle builds loaded", METABATTLE_BUILD_PAGES.length, METABATTLE_BUILD_PAGES.length);
+  void saveSqlCache("metabattle:build-library", deduped);
+  metaBattleBuildLibraryMemoryCache = deduped;
+  return deduped;
+}
+
+function dedupeMetaBattleBuilds(builds: MetaBattleBuildSummary[]): MetaBattleBuildSummary[] {
+  const seen = new Set<string>();
+  return builds.filter((build) => {
+    const key = `${build.mode}:${build.pageTitle}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+export async function loadMetaBattleBuildDetail(summary: MetaBattleBuildSummary): Promise<MetaBattleBuildDetail> {
+  const memoryKey = normalizeWikiLookupName(summary.pageTitle);
+  const memoryCached = metaBattleBuildDetailMemoryCache.get(memoryKey);
+  if (memoryCached) {
+    return { ...memoryCached, summary };
+  }
+  const inflight = metaBattleBuildDetailInflightCache.get(memoryKey);
+  if (inflight) {
+    return inflight.then((detail) => ({ ...detail, summary }));
+  }
+
+  const promise = loadMetaBattleBuildDetailUncached(summary)
+    .then((detail) => {
+      metaBattleBuildDetailMemoryCache.set(memoryKey, detail);
+      return detail;
+    })
+    .finally(() => {
+      metaBattleBuildDetailInflightCache.delete(memoryKey);
+    });
+  metaBattleBuildDetailInflightCache.set(memoryKey, promise);
+  return promise;
+}
+
+async function loadMetaBattleBuildDetailUncached(summary: MetaBattleBuildSummary): Promise<MetaBattleBuildDetail> {
+  const cacheKey = getNamedCacheKey("metabattle:build-detail:v4", summary.pageTitle);
+  const cached = await loadSqlCache(cacheKey, SQL_CACHE_TTL.metabattleBuilds, isMetaBattleBuildDetail);
+  if (cached && cached.skillGroups.length > 0) {
+    const wikiSkills = cached.wikiSkills?.length
+      ? cached.wikiSkills
+      : await loadMetaBattleWikiSkillsForBuild(summary).catch(() => []);
+    const specializations = await enrichCachedMetaBattleSpecializations(cached.specializations).catch(
+      () => cached.specializations,
+    );
+    const detail = {
+      ...cached,
+      summary,
+      equipment: await hydrateMetaBattleEquipment(cached.equipment),
+      specializations,
+      wikiSkills,
+    };
+    if (
+      !cached.wikiSkills?.length ||
+      detail.specializations.some((specialization) => specialization.focus || specialization.wikiDescription)
+    ) {
+      void saveSqlCache(cacheKey, detail);
+    }
+    return detail;
+  }
+
+  const page = await loadMetaBattleHtml(summary.pageTitle);
+  if (!page) {
+    throw new Error(`MetaBattle build page could not be loaded: ${summary.title}`);
+  }
+
+  const detail = await parseMetaBattleBuildDetail(summary, page.html);
+  void saveSqlCache(cacheKey, detail);
+  return detail;
+}
+
+export function preloadMetaBattleBuildDetails(summaries: MetaBattleBuildSummary[], limit = 6): void {
+  const uniqueSummaries = summaries
+    .filter((summary, index, all) => all.findIndex((candidate) => candidate.pageTitle === summary.pageTitle) === index)
+    .slice(0, limit);
+  uniqueSummaries.forEach((summary) => {
+    const memoryKey = normalizeWikiLookupName(summary.pageTitle);
+    if (metaBattleBuildDetailMemoryCache.has(memoryKey) || metaBattleBuildDetailInflightCache.has(memoryKey)) {
+      return;
+    }
+    void loadMetaBattleBuildDetail(summary).catch(() => undefined);
+  });
+}
+
+async function parseMetaBattleBuildDetail(
+  summary: MetaBattleBuildSummary,
+  html: string,
+): Promise<MetaBattleBuildDetail> {
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const templateCode = normalizePlainText(document.querySelector(".build-template-code")?.textContent ?? "")
+    .replace(/&amp;/g, "&") || undefined;
+  const equipment = await hydrateMetaBattleEquipment(parseMetaBattleEquipment(document));
+  const specializations = await hydrateMetaBattleSpecializations(parseMetaBattleSpecializations(document));
+  const wikiSkills = await loadMetaBattleWikiSkillsForBuild(summary).catch(() => []);
+  const skillGroups = await hydrateMetaBattleSkillGroups(parseMetaBattleSkillGroups(document), wikiSkills);
+
+  return {
+    summary,
+    overview: getMetaBattleSectionText(document, "Overview", 900, 2),
+    templateCode,
+    skillGroups,
+    specializations,
+    equipment,
+    wikiSkills,
+    weaponVariants: getMetaBattleSectionText(document, "Weapon_Variants", 700, 3),
+    skillVariants: getMetaBattleSectionText(document, "Skill_Variants", 1200, 2),
+    usage: getMetaBattleSectionText(document, "Usage", 1600, 2),
+    defense: getMetaBattleSectionText(document, "Defense", 900, 3),
+    updatedNote: normalizePlainText(document.querySelector(".alert")?.textContent ?? "") || undefined,
+  };
+}
+
+function getMetaBattleSectionText(
+  document: Document,
+  sectionId: string,
+  maxLength: number,
+  stopAtHeadingLevel: number,
+): string {
+  const headline = document.getElementById(sectionId);
+  const heading = headline?.closest("h2,h3,h4");
+  if (!heading) {
+    return "";
+  }
+
+  const chunks: string[] = [];
+  let sibling = heading.nextElementSibling;
+  while (sibling) {
+    const headingMatch = sibling.tagName.match(/^H([1-6])$/i);
+    if (headingMatch && Number(headingMatch[1]) <= stopAtHeadingLevel) {
+      break;
+    }
+    const clone = sibling.cloneNode(true) as Element;
+    clone.querySelectorAll(".mw-editsection, style, script, table.metadata").forEach((node) => node.remove());
+    const text = normalizePlainText(clone.textContent ?? "");
+    if (text) {
+      chunks.push(text);
+    }
+    sibling = sibling.nextElementSibling;
+  }
+
+  const text = chunks.join(" ");
+  return text.length > maxLength ? `${text.slice(0, maxLength).trim()}...` : text;
+}
+
+function getMetaBattleSectionElement(document: Document, sectionId: string, stopAtHeadingLevel: number): HTMLElement {
+  const container = document.createElement("div");
+  const headline = document.getElementById(sectionId);
+  const heading = headline?.closest("h2,h3,h4");
+  if (!heading) {
+    return container;
+  }
+
+  let sibling = heading.nextElementSibling;
+  while (sibling) {
+    const headingMatch = sibling.tagName.match(/^H([1-6])$/i);
+    if (headingMatch && Number(headingMatch[1]) <= stopAtHeadingLevel) {
+      break;
+    }
+    container.appendChild(sibling.cloneNode(true));
+    sibling = sibling.nextElementSibling;
+  }
+
+  return container;
+}
+
+interface ParsedMetaBattleSkillGroup {
+  label: string;
+  ids: number[];
+  names: string[];
+}
+
+function parseMetaBattleSkillGroups(document: Document): ParsedMetaBattleSkillGroup[] {
+  const groups: ParsedMetaBattleSkillGroup[] = [];
+  const elements = getMetaBattleSkillEmbedElements(document);
+
+  elements.forEach((element, index) => {
+    const ids = parseMetaBattleSkillIds(element);
+    const names = parseMetaBattleSkillNames(element);
+    if (ids.length === 0 && names.length === 0) {
+      return;
+    }
+    const label = getMetaBattleSkillGroupLabel(element, index);
+    groups.push({ label, ids, names });
+  });
+
+  return groups;
+}
+
+function getMetaBattleSkillEmbedElements(document: Document): HTMLElement[] {
+  const sectionIds = ["Skill_Bar", "Skillbar", "Skill_Bars", "Skills"];
+  for (const sectionId of sectionIds) {
+    const section = getMetaBattleLeadingSectionElement(document, sectionId, 3);
+    const elements = Array.from(section.querySelectorAll<HTMLElement>('[data-armory-embed="skills"]'));
+    if (elements.length > 0) {
+      return elements;
+    }
+  }
+
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-armory-embed="skills"]'));
+}
+
+function parseMetaBattleSkillIds(element: HTMLElement): number[] {
+  const direct = parseMetaBattleSkillIdsFromElement(element);
+  const nested = Array.from(
+    element.querySelectorAll<HTMLElement>("[data-armory-ids], [data-armory-id], [data-skill-id], [data-id]"),
+  ).flatMap(parseMetaBattleSkillIdsFromElement);
+  return [...new Set([...direct, ...nested])];
+}
+
+function parseMetaBattleSkillIdsFromElement(element: HTMLElement): number[] {
+  return parseNumberList(
+    [
+      element.getAttribute("data-armory-ids"),
+      element.getAttribute("data-armory-id"),
+      element.getAttribute("data-skill-id"),
+      element.getAttribute("data-id"),
+    ]
+      .filter(Boolean)
+      .join(","),
+  );
+}
+
+function parseMetaBattleSkillNames(element: HTMLElement): string[] {
+  const names = Array.from(element.querySelectorAll<HTMLAnchorElement | HTMLImageElement>("a[title], img[alt], img[title]"))
+    .map((node) =>
+      normalizeMetaBattleSkillName(
+        node instanceof HTMLImageElement
+          ? node.getAttribute("alt") || node.getAttribute("title") || ""
+          : node.getAttribute("title") || node.textContent || "",
+      ),
+    )
+    .filter(Boolean);
+  return [...new Set(names)];
+}
+
+function normalizeMetaBattleSkillName(name: string): string {
+  return normalizePlainText(name)
+    .replace(/^Skill:/i, "")
+    .replace(/\s+\((?:skill|effect|trait)\)$/i, "")
+    .trim();
+}
+
+function getMetaBattleLeadingSectionElement(
+  document: Document,
+  sectionId: string,
+  stopAtHeadingLevel: number,
+): HTMLElement {
+  const section = getMetaBattleSectionElement(document, sectionId, 2);
+  const container = document.createElement("div");
+  for (const child of Array.from(section.children)) {
+    const headingMatch = child.tagName.match(/^H([1-6])$/i);
+    if (headingMatch && Number(headingMatch[1]) <= stopAtHeadingLevel) {
+      break;
+    }
+    container.appendChild(child.cloneNode(true));
+  }
+  return container;
+}
+
+function getMetaBattleSkillGroupLabel(element: HTMLElement, index: number): string {
+  const previousLabel = findPreviousMetaBattleSkillLabel(element);
+  if (previousLabel) {
+    return previousLabel;
+  }
+  return index === 0 ? "Profession mechanic" : `Skill bar ${index}`;
+}
+
+function findPreviousMetaBattleSkillLabel(element: HTMLElement): string {
+  let current: HTMLElement | null = element;
+  for (let depth = 0; current && depth < 7; depth += 1) {
+    const label = getMetaBattleShortSkillLabel(current.previousElementSibling);
+    if (label) {
+      return label;
+    }
+    current = current.parentElement;
+  }
+  return "";
+}
+
+function getMetaBattleShortSkillLabel(element: Element | null): string {
+  if (!element || element.querySelector("[data-armory-embed]")) {
+    return "";
+  }
+  const text = normalizePlainText(element.textContent ?? "");
+  if (!text || text.length > 48 || /^optional$/i.test(text)) {
+    return "";
+  }
+  return text;
+}
+
+async function hydrateMetaBattleSkillGroups(
+  groups: ParsedMetaBattleSkillGroup[],
+  wikiSkills: MetaBattleWikiSkill[] = [],
+): Promise<Array<{ label: string; skills: MetaBattleBuildSkill[] }>> {
+  const ids = [...new Set(groups.flatMap((group) => group.ids))];
+  const skills = await loadMetaBattleSkills(ids).catch(() => []);
+  const skillMap = new Map(skills.map((skill) => [skill.id, skill]));
+  const wikiSkillMap = new Map(wikiSkills.map((skill) => [normalizeWikiLookupName(skill.name), skill]));
+
+  return groups.map((group) => ({
+    label: group.label,
+    skills: group.ids.length
+      ? group.ids.map((id) => skillMap.get(id) ?? { id, name: `Skill ${id}` })
+      : group.names.map((name, index) => {
+          const wikiSkill = wikiSkillMap.get(normalizeWikiLookupName(name));
+          if (!wikiSkill) {
+            return { id: -index - 1, name };
+          }
+
+          const facts: MetaBattleFactLine[] = [];
+          if (wikiSkill.activation) {
+            facts.push({ label: "Activation", value: wikiSkill.activation });
+          }
+          if (wikiSkill.recharge) {
+            facts.push({ label: "Recharge", value: wikiSkill.recharge });
+          }
+          return {
+            id: -index - 1,
+            name: wikiSkill.name,
+            icon: wikiSkill.icon,
+            description: wikiSkill.description,
+            facts,
+            type: wikiSkill.group || wikiSkill.section,
+            slot: wikiSkill.slot,
+          };
+        }),
+  }));
+}
+
+async function loadMetaBattleSkills(ids: number[]): Promise<MetaBattleBuildSkill[]> {
+  const uniqueIds = [...new Set(ids.filter((id) => Number.isFinite(id) && id > 0))];
+  if (uniqueIds.length === 0) {
+    return [];
+  }
+
+  const cacheKey = `gw2:skills:${uniqueIds.sort((left, right) => left - right).join(",")}`;
+  const memoryCached = metaBattleSkillBundleMemoryCache.get(cacheKey);
+  if (memoryCached) {
+    return memoryCached;
+  }
+  const cached = await loadSqlCache(
+    cacheKey,
+    SQL_CACHE_TTL.staticCatalog,
+    (value): value is MetaBattleBuildSkill[] => isArrayOf(value, isMetaBattleBuildSkill),
+  );
+  if (cached) {
+    metaBattleSkillBundleMemoryCache.set(cacheKey, cached);
+    return cached;
+  }
+
+  const loaded: MetaBattleBuildSkill[] = [];
+  for (const idChunk of chunk(uniqueIds, CHUNK_SIZE)) {
+    const response = await fetchJson<Gw2SkillApiEntry[]>(`${GW2_API}/skills?ids=${idChunk.join(",")}`);
+    loaded.push(
+      ...response.map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        icon: skill.icon,
+        description: cleanGw2Description(skill.description),
+        facts: parseGw2FactLines(skill.facts),
+        type: skill.type,
+        slot: skill.slot,
+      })),
+    );
+  }
+
+  void saveSqlCache(cacheKey, loaded);
+  metaBattleSkillBundleMemoryCache.set(cacheKey, loaded);
+  return loaded;
+}
+
+async function loadMetaBattleWikiSkillsForBuild(summary: MetaBattleBuildSummary): Promise<MetaBattleWikiSkill[]> {
+  const profession = getMetaBattlePrimaryProfession(summary);
+  return profession ? loadMetaBattleWikiSkillsForProfession(profession) : [];
+}
+
+function getMetaBattlePrimaryProfession(summary: MetaBattleBuildSummary): string | undefined {
+  const candidates = [
+    summary.profession,
+    summary.eliteSpec,
+    summary.title.split(/\s+/).slice(-1)[0],
+    ...summary.icons.map((icon) => icon.label),
+  ].filter(Boolean) as string[];
+
+  for (const candidate of candidates) {
+    const normalized = normalizePlainText(candidate);
+    if (METABATTLE_PROFESSION_SKILL_PAGES[normalized]) {
+      return normalized;
+    }
+    if (METABATTLE_ELITE_SPEC_PROFESSIONS[normalized]) {
+      return METABATTLE_ELITE_SPEC_PROFESSIONS[normalized];
+    }
+  }
+  return undefined;
+}
+
+async function loadMetaBattleWikiSkillsForProfession(profession: string): Promise<MetaBattleWikiSkill[]> {
+  const page = METABATTLE_PROFESSION_SKILL_PAGES[profession];
+  if (!page) {
+    return [];
+  }
+  const memoryKey = profession.toLowerCase();
+  const memoryCached = metaBattleWikiSkillMemoryCache.get(memoryKey);
+  if (memoryCached) {
+    return memoryCached;
+  }
+
+  const cacheKey = getNamedCacheKey("wiki:profession-skills", profession);
+  const cached = await loadSqlCache(
+    cacheKey,
+    SQL_CACHE_TTL.wikiDerived,
+    (value): value is MetaBattleWikiSkill[] => isArrayOf(value, isMetaBattleWikiSkill),
+  );
+  if (cached) {
+    metaBattleWikiSkillMemoryCache.set(memoryKey, cached);
+    return cached;
+  }
+
+  const wikiPage = await loadWikiHtml(page);
+  if (!wikiPage) {
+    return [];
+  }
+
+  const parsed = parseMetaBattleWikiSkillPage(wikiPage.html, profession, wikiPage.url);
+  metaBattleWikiSkillMemoryCache.set(memoryKey, parsed);
+  void saveSqlCache(cacheKey, parsed);
+  return parsed;
+}
+
+function parseMetaBattleWikiSkillPage(html: string, profession: string, sourceUrl: string): MetaBattleWikiSkill[] {
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const output = document.querySelector(".mw-parser-output") ?? document.body;
+  const skills: MetaBattleWikiSkill[] = [];
+  let section = "Skills";
+  let group = "";
+
+  Array.from(output.children).forEach((child) => {
+    const tag = child.tagName.toUpperCase();
+    if (/^H[2-4]$/.test(tag)) {
+      const heading = cleanWikiSkillText(child).replace(/\s*\[edit\]\s*$/i, "");
+      if (!heading) {
+        return;
+      }
+      if (tag === "H2") {
+        section = heading;
+        group = "";
+        return;
+      }
+      group = heading;
+      return;
+    }
+    if (tag !== "TABLE" || !child.classList.contains("wikitable")) {
+      return;
+    }
+    skills.push(...parseMetaBattleWikiSkillTable(child, profession, section, group, sourceUrl));
+  });
+
+  const seen = new Set<string>();
+  return skills.filter((skill) => {
+    const key = `${skill.name.toLowerCase()}:${skill.section.toLowerCase()}:${(skill.group ?? "").toLowerCase()}:${skill.slot ?? ""}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function parseMetaBattleWikiSkillTable(
+  table: Element,
+  profession: string,
+  section: string,
+  initialGroup: string,
+  sourceUrl: string,
+): MetaBattleWikiSkill[] {
+  const skills: MetaBattleWikiSkill[] = [];
+  let group = initialGroup;
+
+  Array.from(table.querySelectorAll("tr")).forEach((row) => {
+    const cells = Array.from(row.children).filter((cell) => ["TD", "TH"].includes(cell.tagName.toUpperCase()));
+    if (cells.length < 2) {
+      return;
+    }
+
+    const headerText = cleanWikiSkillText(cells[0]).replace(/\s*\[edit\]\s*$/i, "");
+    const hasSkillIcon = Boolean(row.querySelector("img"));
+    const skillCellIndex = cells.findIndex((cell, index) => {
+      if (index === 0) {
+        return false;
+      }
+      return Boolean(getWikiSkillCellLink(cell));
+    });
+
+    if (skillCellIndex < 0) {
+      if (headerText && cells[0].tagName.toUpperCase() === "TH" && !/^#|skill|description$/i.test(headerText)) {
+        group = headerText;
+      }
+      return;
+    }
+
+    const skillCell = cells[skillCellIndex];
+    const link = getWikiSkillCellLink(skillCell);
+    const name = normalizePlainText(link?.textContent ?? link?.getAttribute("title") ?? "");
+    if (!name || name.toLowerCase() === "edit" || !hasSkillIcon) {
+      return;
+    }
+
+    const descriptionCell = cells[cells.length - 1];
+    const middleCells = cells.slice(skillCellIndex + 1, -1).map(cleanWikiSkillText).filter(Boolean);
+    const slot = cleanWikiSkillText(cells[0]);
+    const iconSrc = skillCell.querySelector<HTMLImageElement>("img")?.getAttribute("src") ?? undefined;
+    const description = cleanWikiSkillDescription(descriptionCell);
+
+    skills.push({
+      name,
+      profession,
+      section,
+      group: group || undefined,
+      slot: slot || undefined,
+      activation: middleCells[0],
+      recharge: middleCells[1],
+      description,
+      icon: iconSrc ? toAbsoluteWikiAssetUrl(iconSrc) : undefined,
+      url: link?.href ? new URL(link.getAttribute("href") ?? wikiPageUrl(name), sourceUrl).toString() : wikiPageUrl(name),
+    });
+  });
+
+  return skills;
+}
+
+function getWikiSkillCellLink(cell: Element): HTMLAnchorElement | undefined {
+  return Array.from(cell.querySelectorAll<HTMLAnchorElement>("a[title]")).find((link) => {
+    const title = link.getAttribute("title") ?? "";
+    const text = normalizePlainText(link.textContent ?? "");
+    return Boolean(title && !title.startsWith("File:") && text && text.toLowerCase() !== "edit");
+  });
+}
+
+function cleanWikiSkillText(element: Element | undefined): string {
+  if (!element) {
+    return "";
+  }
+  const clone = element.cloneNode(true) as Element;
+  clone.querySelectorAll(".mw-editsection, style, script").forEach((node) => node.remove());
+  return normalizePlainText(clone.textContent ?? "");
+}
+
+function cleanWikiSkillDescription(element: Element | undefined): string {
+  const text = cleanWikiSkillText(element)
+    .replace(/\s*\[edit\]\s*/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 480 ? `${text.slice(0, 480).trim()}...` : text;
+}
+
+function parseMetaBattleSpecializations(document: Document): Array<{ id: number; traits: number[] }> {
+  const section = getMetaBattleSectionElement(document, "Specializations", 2);
+  return Array.from(section.querySelectorAll<HTMLElement>('[data-armory-embed="specializations"][data-armory-ids]'))
+    .map((element) => {
+      const id = parseNumberList(element.getAttribute("data-armory-ids") ?? "")[0];
+      const traits = id ? parseNumberList(element.getAttribute(`data-armory-${id}-traits`) ?? "") : [];
+      return id ? { id, traits } : null;
+    })
+    .filter((entry): entry is { id: number; traits: number[] } => Boolean(entry));
+}
+
+async function hydrateMetaBattleSpecializations(
+  entries: Array<{ id: number; traits: number[] }>,
+): Promise<MetaBattleBuildSpecialization[]> {
+  const specializationIds = [...new Set(entries.map((entry) => entry.id))];
+  if (specializationIds.length === 0) {
+    return [];
+  }
+
+  const specializations = await loadMetaBattleSpecializationEntries(specializationIds).catch(() => []);
+  const specMap = new Map(specializations.map((specialization) => [specialization.id, specialization]));
+  const traitIds = [
+    ...new Set(
+      specializations.flatMap((specialization) => [
+        ...(specialization.minor_traits ?? []),
+        ...(specialization.major_traits ?? []),
+      ]),
+    ),
+  ];
+  const traits = await loadMetaBattleTraitEntries(traitIds).catch(() => []);
+  const traitMap = new Map(traits.map((trait) => [trait.id, trait]));
+  const wikiSpecializations = await loadMetaBattleWikiSpecializationsForNames(
+    specializations.map((specialization) => specialization.name),
+  ).catch(() => new Map<string, MetaBattleWikiSpecializationInfo>());
+
+  return entries.map((entry) => {
+    const specialization = specMap.get(entry.id);
+    const wikiInfo = specialization ? wikiSpecializations.get(specialization.name.toLowerCase()) : undefined;
+    const selectedTraitIds = new Set(entry.traits);
+    const minorTraits = (specialization?.minor_traits ?? []).map((traitId) =>
+      mapMetaBattleTrait(traitMap.get(traitId), traitId, { minor: true, selected: true }),
+    );
+    const majorTraits = (specialization?.major_traits ?? []).map((traitId) =>
+      mapMetaBattleTrait(traitMap.get(traitId), traitId, { selected: selectedTraitIds.has(traitId) }),
+    );
+
+    return {
+      id: entry.id,
+      name: specialization?.name ?? `Specialization ${entry.id}`,
+      profession: specialization?.profession,
+      elite: specialization?.elite,
+      icon: wikiInfo?.icon ?? specialization?.icon,
+      background: wikiInfo?.background ?? specialization?.background,
+      focus: wikiInfo?.focus,
+      wikiDescription: wikiInfo?.description,
+      wikiUrl: wikiInfo?.url,
+      traits: [...minorTraits, ...majorTraits],
+    };
+  });
+}
+
+async function enrichCachedMetaBattleSpecializations(
+  specializations: MetaBattleBuildSpecialization[],
+): Promise<MetaBattleBuildSpecialization[]> {
+  if (
+    specializations.length === 0 ||
+    specializations.every((specialization) => specialization.focus || specialization.wikiDescription || specialization.wikiUrl)
+  ) {
+    return specializations;
+  }
+
+  const wikiSpecializations = await loadMetaBattleWikiSpecializationsForNames(
+    specializations.map((specialization) => specialization.name),
+  );
+  return specializations.map((specialization) => {
+    const wikiInfo = wikiSpecializations.get(specialization.name.toLowerCase());
+    if (!wikiInfo) {
+      return specialization;
+    }
+    return {
+      ...specialization,
+      profession: specialization.profession ?? wikiInfo.profession,
+      icon: wikiInfo.icon ?? specialization.icon,
+      background: wikiInfo.background ?? specialization.background,
+      focus: specialization.focus ?? wikiInfo.focus,
+      wikiDescription: specialization.wikiDescription ?? wikiInfo.description,
+      wikiUrl: specialization.wikiUrl ?? wikiInfo.url,
+    };
+  });
+}
+
+async function loadMetaBattleWikiSpecializationsForNames(
+  names: string[],
+): Promise<Map<string, MetaBattleWikiSpecializationInfo>> {
+  const uniqueNames = [...new Set(names.map((name) => normalizePlainText(name)).filter(Boolean))];
+  if (uniqueNames.length === 0) {
+    return new Map();
+  }
+  const index = await loadMetaBattleWikiSpecializationIndex();
+  const entries = await Promise.all(
+    uniqueNames.map(async (name) => {
+      const indexed = index.get(name.toLowerCase());
+      const detail = await loadMetaBattleWikiSpecializationDetail(name).catch(() => undefined);
+      const merged: MetaBattleWikiSpecializationInfo = {
+        name,
+        url: indexed?.url ?? detail?.url ?? wikiPageUrl(name),
+        profession: indexed?.profession ?? detail?.profession,
+        focus: indexed?.focus ?? detail?.focus,
+        icon: detail?.icon ?? indexed?.icon,
+        background: detail?.background ?? indexed?.background,
+        description: detail?.description ?? indexed?.description,
+      };
+      return [name.toLowerCase(), merged] as const;
+    }),
+  );
+  return new Map(entries);
+}
+
+async function loadMetaBattleWikiSpecializationIndex(): Promise<Map<string, MetaBattleWikiSpecializationInfo>> {
+  if (metaBattleWikiSpecializationIndexMemoryCache) {
+    return metaBattleWikiSpecializationIndexMemoryCache;
+  }
+  const cacheKey = getNamedCacheKey("wiki:specialization-index", "all");
+  const cached = await loadSqlCache(
+    cacheKey,
+    SQL_CACHE_TTL.wikiDerived,
+    (value): value is MetaBattleWikiSpecializationInfo[] => isArrayOf(value, isMetaBattleWikiSpecializationInfo),
+  );
+  if (cached) {
+    metaBattleWikiSpecializationIndexMemoryCache = new Map(cached.map((entry) => [entry.name.toLowerCase(), entry]));
+    return metaBattleWikiSpecializationIndexMemoryCache;
+  }
+
+  const page = await loadWikiHtml("Specialization");
+  const parsed = page ? parseMetaBattleWikiSpecializationIndex(page.html, page.url) : [];
+  void saveSqlCache(cacheKey, parsed);
+  metaBattleWikiSpecializationIndexMemoryCache = new Map(parsed.map((entry) => [entry.name.toLowerCase(), entry]));
+  return metaBattleWikiSpecializationIndexMemoryCache;
+}
+
+function parseMetaBattleWikiSpecializationIndex(html: string, sourceUrl: string): MetaBattleWikiSpecializationInfo[] {
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const output = document.querySelector(".mw-parser-output") ?? document.body;
+  const entries: MetaBattleWikiSpecializationInfo[] = [];
+  let profession = "";
+  let tier = "";
+
+  output.querySelectorAll("table.wikitable tr").forEach((row) => {
+    const cells = Array.from(row.children).filter((cell) => ["TD", "TH"].includes(cell.tagName.toUpperCase()));
+    if (cells.length === 0) {
+      return;
+    }
+    if (cells.length === 1 && cells[0].tagName.toUpperCase() === "TH") {
+      const text = cleanWikiSkillText(cells[0]).replace(/\s*\[edit\]\s*$/i, "");
+      if (METABATTLE_PROFESSION_SKILL_PAGES[text]) {
+        profession = text;
+        tier = "";
+      } else if (/core|elite/i.test(text)) {
+        tier = text;
+      }
+      return;
+    }
+
+    const firstCell = cells[0];
+    const link = getFirstUsefulWikiLink(firstCell);
+    if (!link || !profession || /^specialization$/i.test(link.title)) {
+      return;
+    }
+    const focus = cells[1] ? cleanWikiSkillText(cells[1]) : undefined;
+    const iconSrc = firstCell.querySelector<HTMLImageElement>("img")?.getAttribute("src") ?? undefined;
+    entries.push({
+      name: link.title,
+      profession,
+      focus: [tier, focus].filter(Boolean).join(" · ") || undefined,
+      icon: iconSrc ? toAbsoluteWikiAssetUrl(iconSrc) : undefined,
+      url: link.url || new URL(firstCell.querySelector<HTMLAnchorElement>("a[title]")?.getAttribute("href") ?? wikiPageUrl(link.title), sourceUrl).toString(),
+    });
+  });
+
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    const key = entry.name.toLowerCase();
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+async function loadMetaBattleWikiSpecializationDetail(
+  name: string,
+): Promise<MetaBattleWikiSpecializationInfo | undefined> {
+  const memoryKey = normalizeWikiLookupName(name);
+  if (metaBattleWikiSpecializationDetailMemoryCache.has(memoryKey)) {
+    return metaBattleWikiSpecializationDetailMemoryCache.get(memoryKey);
+  }
+  const cacheKey = getNamedCacheKey("wiki:specialization-detail", name);
+  const cached = await loadSqlCache(cacheKey, SQL_CACHE_TTL.wikiDerived, isMetaBattleWikiSpecializationInfo);
+  if (cached) {
+    metaBattleWikiSpecializationDetailMemoryCache.set(memoryKey, cached);
+    return cached;
+  }
+
+  const page = await loadWikiHtml(name);
+  if (!page) {
+    metaBattleWikiSpecializationDetailMemoryCache.set(memoryKey, undefined);
+    return undefined;
+  }
+  const parsed = parseMetaBattleWikiSpecializationDetail(page.html, page.title, page.url);
+  metaBattleWikiSpecializationDetailMemoryCache.set(memoryKey, parsed);
+  void saveSqlCache(cacheKey, parsed);
+  return parsed;
+}
+
+function parseMetaBattleWikiSpecializationDetail(
+  html: string,
+  name: string,
+  sourceUrl: string,
+): MetaBattleWikiSpecializationInfo {
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const output = document.querySelector(".mw-parser-output") ?? document.body;
+  const icon = getWikiSpecializationIcon(output);
+  const background = getWikiSpecializationBackground(output);
+  const description = getWikiSpecializationDescription(output);
+
+  return {
+    name,
+    icon,
+    background,
+    description,
+    url: sourceUrl,
+  };
+}
+
+function getWikiSpecializationIcon(output: Element): string | undefined {
+  const images = Array.from(output.querySelectorAll<HTMLImageElement>("img"));
+  const icon = images.find((image) => {
+    const alt = image.getAttribute("alt") ?? "";
+    const src = image.getAttribute("src") ?? "";
+    return /specialization/i.test(alt) || /specialization/i.test(src);
+  }) ?? images.find((image) => {
+    const width = Number(image.getAttribute("width") ?? image.naturalWidth);
+    const height = Number(image.getAttribute("height") ?? image.naturalHeight);
+    return width > 24 && height > 24 && Math.abs(width - height) <= 20;
+  });
+  return icon ? getBestWikiImageUrl(icon) : undefined;
+}
+
+function getWikiSpecializationBackground(output: Element): string | undefined {
+  const figures = Array.from(output.querySelectorAll<HTMLElement>(".thumb, figure, .gallerybox"));
+  const figure = figures.find((item) => /specialization background/i.test(item.textContent ?? ""));
+  const backgroundImage = figure?.querySelector<HTMLImageElement>("img");
+  if (backgroundImage) {
+    return getBestWikiImageUrl(backgroundImage);
+  }
+
+  const image = Array.from(output.querySelectorAll<HTMLImageElement>("img")).find((item) => {
+    const text = `${item.getAttribute("alt") ?? ""} ${item.getAttribute("src") ?? ""}`;
+    return /background/i.test(text) || /specialization.*bg/i.test(text);
+  });
+  return image ? getBestWikiImageUrl(image) : undefined;
+}
+
+function getBestWikiImageUrl(image: HTMLImageElement): string | undefined {
+  const srcset = image.getAttribute("srcset");
+  const bestSrcsetUrl = srcset
+    ?.split(",")
+    .map((part) => part.trim().split(/\s+/)[0])
+    .filter(Boolean)
+    .pop();
+  const src = bestSrcsetUrl || image.getAttribute("src");
+  return src ? toAbsoluteWikiAssetUrl(src) : undefined;
+}
+
+function getWikiSpecializationDescription(output: Element): string | undefined {
+  const clone = output.cloneNode(true) as Element;
+  clone.querySelectorAll("table, .thumb, figure, .gallery, .mw-editsection, style, script, .toc, .navbox").forEach((node) => node.remove());
+  const paragraphs = Array.from(clone.querySelectorAll("p"))
+    .map((paragraph) => cleanWikiSkillText(paragraph))
+    .filter((text) => text.length > 40 && !/^This article/i.test(text))
+    .slice(0, 3);
+  const text = paragraphs.join(" ");
+  return text ? (text.length > 560 ? `${text.slice(0, 560).trim()}...` : text) : undefined;
+}
+
+function mapMetaBattleTrait(
+  trait: Gw2TraitApiEntry | undefined,
+  id: number,
+  options: { selected?: boolean; minor?: boolean } = {},
+): MetaBattleBuildTrait {
+  return {
+    id,
+    name: trait?.name ?? `Trait ${id}`,
+    icon: trait?.icon,
+    description: cleanGw2Description(trait?.description),
+    facts: parseGw2FactLines(trait?.facts),
+    selected: options.selected,
+    minor: options.minor,
+  };
+}
+
+async function loadMetaBattleSpecializationEntries(ids: number[]): Promise<Gw2SpecializationApiEntry[]> {
+  const uniqueIds = [...new Set(ids.filter((id) => Number.isFinite(id) && id > 0))];
+  if (uniqueIds.length === 0) {
+    return [];
+  }
+
+  const cacheKey = `gw2:specializations:${uniqueIds.sort((left, right) => left - right).join(",")}`;
+  const memoryCached = metaBattleSpecializationBundleMemoryCache.get(cacheKey);
+  if (memoryCached) {
+    return memoryCached;
+  }
+  const cached = await loadSqlCache(
+    cacheKey,
+    SQL_CACHE_TTL.staticCatalog,
+    (value): value is Gw2SpecializationApiEntry[] => isArrayOf(value, isGw2SpecializationApiEntry),
+  );
+  if (cached) {
+    metaBattleSpecializationBundleMemoryCache.set(cacheKey, cached);
+    return cached;
+  }
+
+  const loaded: Gw2SpecializationApiEntry[] = [];
+  for (const idChunk of chunk(uniqueIds, CHUNK_SIZE)) {
+    loaded.push(
+      ...(await fetchJson<Gw2SpecializationApiEntry[]>(
+        `${GW2_API}/specializations?ids=${idChunk.join(",")}`,
+      )),
+    );
+  }
+
+  void saveSqlCache(cacheKey, loaded);
+  metaBattleSpecializationBundleMemoryCache.set(cacheKey, loaded);
+  return loaded;
+}
+
+async function loadMetaBattleTraitEntries(ids: number[]): Promise<Gw2TraitApiEntry[]> {
+  const uniqueIds = [...new Set(ids.filter((id) => Number.isFinite(id) && id > 0))];
+  if (uniqueIds.length === 0) {
+    return [];
+  }
+
+  const cacheKey = `gw2:traits:${uniqueIds.sort((left, right) => left - right).join(",")}`;
+  const memoryCached = metaBattleTraitBundleMemoryCache.get(cacheKey);
+  if (memoryCached) {
+    return memoryCached;
+  }
+  const cached = await loadSqlCache(
+    cacheKey,
+    SQL_CACHE_TTL.staticCatalog,
+    (value): value is Gw2TraitApiEntry[] => isArrayOf(value, isGw2TraitApiEntry),
+  );
+  if (cached) {
+    metaBattleTraitBundleMemoryCache.set(cacheKey, cached);
+    return cached;
+  }
+
+  const loaded: Gw2TraitApiEntry[] = [];
+  for (const idChunk of chunk(uniqueIds, CHUNK_SIZE)) {
+    loaded.push(...(await fetchJson<Gw2TraitApiEntry[]>(`${GW2_API}/traits?ids=${idChunk.join(",")}`)));
+  }
+
+  void saveSqlCache(cacheKey, loaded);
+  metaBattleTraitBundleMemoryCache.set(cacheKey, loaded);
+  return loaded;
+}
+
+function cleanGw2Description(description?: string): string | undefined {
+  const text = normalizePlainText(
+    (description ?? "")
+      .replace(/<br\s*\/?>/gi, " ")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">"),
+  );
+  return text || undefined;
+}
+
+function parseGw2FactLines(facts?: Gw2FactApiEntry[]): MetaBattleFactLine[] {
+  return (facts ?? [])
+    .map((fact): MetaBattleFactLine | null => {
+      const label =
+        fact.text ??
+        fact.status ??
+        fact.field_type ??
+        fact.finisher_type ??
+        fact.type ??
+        fact.prefix?.text ??
+        "";
+      const value = getGw2FactValue(fact);
+      if (!label && !value) {
+        return null;
+      }
+
+      return {
+        label: normalizePlainText(label),
+        value,
+        icon: fact.icon ?? fact.prefix?.icon,
+      };
+    })
+    .filter((fact): fact is MetaBattleFactLine => Boolean(fact));
+}
+
+function getGw2FactValue(fact: Gw2FactApiEntry): string | undefined {
+  if (typeof fact.value === "number") {
+    return fact.type === "Percent" || fact.percent ? `${fact.value}%` : fact.value.toLocaleString();
+  }
+  if (typeof fact.value === "string") {
+    return fact.value;
+  }
+  if (typeof fact.percent === "number") {
+    return `${fact.percent}%`;
+  }
+  if (typeof fact.duration === "number") {
+    return `${fact.duration}s`;
+  }
+  if (typeof fact.hit_count === "number") {
+    return fact.hit_count.toLocaleString();
+  }
+  if (typeof fact.distance === "number") {
+    return fact.distance.toLocaleString();
+  }
+  if (fact.description) {
+    return cleanGw2Description(fact.description);
+  }
+  if (fact.prefix?.description) {
+    return cleanGw2Description(fact.prefix.description);
+  }
+  return undefined;
+}
+
+function parseMetaBattleEquipment(document: Document): MetaBattleBuildEquipmentSlot[] {
+  const section = getMetaBattleSectionElement(document, "Equipment", 2);
+  return Array.from(section.querySelectorAll<HTMLElement>(".equipment-slot"))
+    .map((slot) => {
+      const embed = slot.querySelector<HTMLElement>("[data-armory-ids]");
+      const itemId = parseNumberList(embed?.getAttribute("data-armory-ids") ?? "")[0];
+      const text = getMetaBattleEquipmentLabelText(slot, embed);
+      const { slotName, stat } = parseMetaBattleEquipmentLabel(text);
+      return {
+        slot: slotName || "Equipment",
+        stat,
+        itemId,
+      };
+    })
+    .filter((slot) => slot.slot || slot.itemId);
+}
+
+function getMetaBattleEquipmentLabelText(slot: HTMLElement, embed?: HTMLElement | null): string {
+  const candidates = [
+    slot.querySelector("small")?.textContent,
+    slot.getAttribute("aria-label"),
+    slot.getAttribute("title"),
+    embed?.getAttribute("aria-label"),
+    embed?.getAttribute("title"),
+    slot.querySelector("img")?.getAttribute("alt"),
+    slot.querySelector("img")?.getAttribute("title"),
+    slot.textContent,
+  ];
+
+  return candidates.map((candidate) => normalizePlainText(candidate ?? "")).find(Boolean) ?? "";
+}
+
+const METABATTLE_EQUIPMENT_SLOT_LABELS = [
+  "Backpiece",
+  "Accessory",
+  "Shoulders",
+  "Shoulder",
+  "Amulet",
+  "Hammer",
+  "Longbow",
+  "Shortbow",
+  "Greatsword",
+  "Warhorn",
+  "Scepter",
+  "Sceptre",
+  "Trident",
+  "Harpoon",
+  "Pistol",
+  "Dagger",
+  "Shield",
+  "Focus",
+  "Torch",
+  "Sword",
+  "Staff",
+  "Rifle",
+  "Mace",
+  "Spear",
+  "Chest",
+  "Hands",
+  "Gloves",
+  "Legs",
+  "Feet",
+  "Boots",
+  "Head",
+  "Ring",
+  "Rune",
+  "Relic",
+  "Sigil",
+  "Infusion",
+].sort((a, b) => b.length - a.length);
+
+function parseMetaBattleEquipmentLabel(text: string): { slotName: string; stat?: string } {
+  const compact = text.trim();
+  if (!compact) {
+    return { slotName: "Equipment" };
+  }
+
+  const lower = compact.toLowerCase();
+  const embeddedUpgrade = ["Infusion", "Rune", "Relic", "Sigil"].find((label) =>
+    new RegExp(`\\b${label}\\b`, "i").test(compact),
+  );
+  if (embeddedUpgrade) {
+    const count = compact.match(/\bx\d+\b/i)?.[0];
+    return {
+      slotName: embeddedUpgrade,
+      stat: count,
+    };
+  }
+
+  const spacedMatch = compact.match(/^(.+?)\s+([A-Z][A-Za-z' -]+|x\d+)$/);
+  if (spacedMatch) {
+    return {
+      slotName: spacedMatch[1].trim(),
+      stat: spacedMatch[2].trim() || undefined,
+    };
+  }
+
+  const slotName = METABATTLE_EQUIPMENT_SLOT_LABELS.find((label) => lower.startsWith(label.toLowerCase()));
+  if (!slotName) {
+    return { slotName: compact };
+  }
+
+  const stat = compact.slice(slotName.length).trim();
+  return {
+    slotName,
+    stat: stat || undefined,
+  };
+}
+
+async function hydrateMetaBattleEquipment(slots: MetaBattleBuildEquipmentSlot[]): Promise<MetaBattleBuildEquipmentSlot[]> {
+  const itemIds = [...new Set(slots.map((slot) => slot.itemId).filter((id): id is number => Boolean(id)))];
+  const items = itemIds.length ? await loadItems(itemIds).catch(() => []) : [];
+  const itemMap = new Map(items.map((item) => [item.id, item]));
+  const attributeReference = await loadMetaBattleAttributeReference().catch(() => null);
+  return slots.map((slot) => {
+    const parsedSlot = slot.stat ? null : parseMetaBattleEquipmentLabel(slot.slot);
+    const normalizedSlot = parsedSlot
+      ? {
+          ...slot,
+          slot: parsedSlot.slotName,
+          stat: parsedSlot.stat,
+        }
+      : slot;
+    const item = slot.itemId ? itemMap.get(slot.itemId) ?? slot.item : slot.item;
+    return enrichMetaBattleEquipmentSlot(
+      {
+        ...normalizedSlot,
+        item,
+      },
+      attributeReference,
+    );
+  });
+}
+
+interface MetaBattleAttributeReference {
+  combinations: MetaBattleAttributeCombination[];
+  bonuses: Record<string, MetaBattleLevel80Bonus>;
+}
+
+interface MetaBattleLevel80Bonus {
+  major1?: number;
+  minor1?: number;
+  major2?: number;
+  minor2?: number;
+  celestial?: number;
+}
+
+let metaBattleAttributeReferenceCache: MetaBattleAttributeReference | null = null;
+
+async function loadMetaBattleAttributeReference(): Promise<MetaBattleAttributeReference | null> {
+  if (metaBattleAttributeReferenceCache) {
+    return metaBattleAttributeReferenceCache;
+  }
+
+  const cacheKey = "wiki:attribute-combinations-reference:v1";
+  const cached = await loadSqlCache(cacheKey, SQL_CACHE_TTL.wikiDerived, isMetaBattleAttributeReference);
+  if (cached) {
+    metaBattleAttributeReferenceCache = cached;
+    return cached;
+  }
+
+  const page = await loadWikiHtml("Attribute combinations");
+  if (!page?.html) {
+    return null;
+  }
+
+  const reference = parseMetaBattleAttributeReference(page.html);
+  metaBattleAttributeReferenceCache = reference;
+  void saveSqlCache(cacheKey, reference);
+  return reference;
+}
+
+function parseMetaBattleAttributeReference(html: string): MetaBattleAttributeReference {
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const tables = Array.from(document.querySelectorAll<HTMLTableElement>("table"));
+  const combinations = [
+    ...parseThreeOrFourAttributeCombinations(tables[0]),
+    ...parseOneOrTwoAttributeCombinations(tables[1]),
+  ];
+  const distributions = parseAttributeDistributions(tables[3]);
+  const bonuses = parseLevel80AttributeBonuses(tables[2]);
+
+  return {
+    combinations: combinations.map((combination) => {
+      const distribution = findAttributeRecord(distributions, combination.prefix);
+      return distribution ? { ...combination, distribution } : combination;
+    }),
+    bonuses,
+  };
+}
+
+function parseThreeOrFourAttributeCombinations(table?: HTMLTableElement): MetaBattleAttributeCombination[] {
+  if (!table) {
+    return [];
+  }
+
+  const availabilityLabels = ["Armor", "Weapon", "Trinket", "Back", "Upgrade", "PvP"];
+  return Array.from(table.querySelectorAll<HTMLTableRowElement>("tbody tr"))
+    .map((row): MetaBattleAttributeCombination | null => {
+      const cells = Array.from(row.children);
+      const prefix = cleanAttributeCellText(cells[0]);
+      if (!prefix || prefix.toLowerCase() === "prefix") {
+        return null;
+      }
+
+      const attributes = [
+        parseAttributeComponent(cells[1], "major"),
+        parseAttributeComponent(cells[2], "major"),
+        parseAttributeComponent(cells[3], "minor"),
+        parseAttributeComponent(cells[4], "minor"),
+      ].filter((attribute): attribute is MetaBattleAttributeComponent => Boolean(attribute));
+
+      return {
+        prefix,
+        attributes,
+        availability: parseAvailabilityCells(cells.slice(5, 11), availabilityLabels),
+      };
+    })
+    .filter((combination): combination is MetaBattleAttributeCombination => Boolean(combination));
+}
+
+function parseOneOrTwoAttributeCombinations(table?: HTMLTableElement): MetaBattleAttributeCombination[] {
+  if (!table) {
+    return [];
+  }
+
+  const availabilityLabels = ["Armor", "Weapon", "Trinket", "Back", "Upgrade"];
+  return Array.from(table.querySelectorAll<HTMLTableRowElement>("tbody tr"))
+    .map((row): MetaBattleAttributeCombination | null => {
+      const cells = Array.from(row.children);
+      const prefix = cleanAttributeCellText(cells[0]);
+      if (!prefix || prefix.toLowerCase() === "prefix") {
+        return null;
+      }
+
+      const suffix = cleanAttributeCellText(cells[1]) || undefined;
+      const attributes = [
+        parseAttributeComponent(cells[2], "major"),
+        parseAttributeComponent(cells[3], "minor"),
+      ].filter((attribute): attribute is MetaBattleAttributeComponent => Boolean(attribute));
+
+      return {
+        prefix,
+        suffix,
+        attributes,
+        availability: parseAvailabilityCells(cells.slice(4, 9), availabilityLabels),
+      };
+    })
+    .filter((combination): combination is MetaBattleAttributeCombination => Boolean(combination));
+}
+
+function parseAttributeComponent(cell: Element | undefined, tier: "major" | "minor"): MetaBattleAttributeComponent | null {
+  const name = cleanAttributeCellText(cell);
+  if (!name || name === "-") {
+    return null;
+  }
+
+  const icon = cell?.querySelector<HTMLImageElement>("img")?.getAttribute("src");
+  return {
+    name,
+    tier,
+    icon: icon ? toAbsoluteWikiAssetUrl(icon) : undefined,
+  };
+}
+
+function parseAvailabilityCells(cells: Element[], labels: string[]): string[] {
+  return cells
+    .map((cell, index) => {
+      const text = normalizePlainText(cell.textContent ?? "").toLowerCase();
+      const imageAlt = cell.querySelector<HTMLImageElement>("img")?.getAttribute("alt")?.toLowerCase() ?? "";
+      const isAvailable = imageAlt.includes("yes") || text === "1" || text.includes("yes");
+      return isAvailable ? labels[index] : null;
+    })
+    .filter((label): label is string => Boolean(label));
+}
+
+function parseAttributeDistributions(table?: HTMLTableElement): Record<string, MetaBattleAttributeDistribution> {
+  if (!table) {
+    return {};
+  }
+
+  const result: Record<string, MetaBattleAttributeDistribution> = {};
+  Array.from(table.querySelectorAll<HTMLTableRowElement>("tbody tr")).forEach((row) => {
+    const cells = Array.from(row.children);
+    const prefix = cleanAttributeCellText(cells[0]);
+    if (!prefix || prefix.toLowerCase() === "prefix") {
+      return;
+    }
+
+    result[prefix] = {
+      strikeDamage: parseAttributePercent(cells[1]),
+      conditionDamage: parseAttributePercent(cells[2]),
+      defense: parseAttributePercent(cells[3]),
+      support: parseAttributePercent(cells[4]),
+    };
+  });
+  return result;
+}
+
+function parseLevel80AttributeBonuses(table?: HTMLTableElement): Record<string, MetaBattleLevel80Bonus> {
+  if (!table) {
+    return {};
+  }
+
+  const result: Record<string, MetaBattleLevel80Bonus> = {};
+  let currentCategory = "";
+  const rarityGroups = [
+    { rarity: "Ascended", offset: 0, keys: ["major1", "minor1", "major2", "minor2", "celestial"] as const },
+    { rarity: "Exotic", offset: 5, keys: ["major1", "minor1", "major2", "minor2", "celestial"] as const },
+    { rarity: "Rare", offset: 10, keys: ["major1", "minor1", "major2", "minor2", "celestial"] as const },
+    { rarity: "Masterwork", offset: 15, keys: ["major1", "minor1"] as const },
+    { rarity: "Fine", offset: 17, keys: ["major1", "minor1"] as const },
+    { rarity: "Basic", offset: 19, keys: ["major1", "minor1"] as const },
+  ];
+
+  Array.from(table.querySelectorAll<HTMLTableRowElement>("tbody tr")).forEach((row) => {
+    const cells = Array.from(row.children);
+    if (cells.length < 4) {
+      return;
+    }
+
+    let typeCellIndex = 0;
+    const first = cleanAttributeCellText(cells[0]);
+    if (["Weapons", "Armor", "Trinkets"].includes(first)) {
+      currentCategory = first;
+      typeCellIndex = 1;
+    }
+
+    const type = cleanAttributeCellText(cells[typeCellIndex]);
+    if (!currentCategory || !type || /^total/i.test(type)) {
+      return;
+    }
+
+    const values = cells.slice(typeCellIndex + 1).map(parseAttributeNumber);
+    rarityGroups.forEach((group) => {
+      const bonus: MetaBattleLevel80Bonus = {};
+      group.keys.forEach((key, index) => {
+        const value = values[group.offset + index];
+        if (typeof value === "number") {
+          bonus[key] = value;
+        }
+      });
+
+      if (Object.keys(bonus).length > 0) {
+        result[getAttributeBonusKey(group.rarity, currentCategory, type)] = bonus;
+      }
+    });
+  });
+
+  return result;
+}
+
+function enrichMetaBattleEquipmentSlot(
+  slot: MetaBattleBuildEquipmentSlot,
+  reference: MetaBattleAttributeReference | null,
+): MetaBattleBuildEquipmentSlot {
+  if (!reference || !slot.stat) {
+    return slot;
+  }
+
+  const attributeCombination = findAttributeRecord(reference.combinations, slot.stat);
+  if (!attributeCombination) {
+    return slot;
+  }
+
+  const bonus = findEquipmentAttributeBonus(slot, reference);
+  const attributeBonuses = bonus ? applyEquipmentAttributeBonus(attributeCombination, bonus) : attributeCombination.attributes;
+  return {
+    ...slot,
+    attributeCombination,
+    attributeBonuses,
+  };
+}
+
+function applyEquipmentAttributeBonus(
+  combination: MetaBattleAttributeCombination,
+  bonus: MetaBattleLevel80Bonus,
+): MetaBattleAttributeComponent[] {
+  const isCelestial = normalizeAttributeLookupKey(combination.prefix) === "celestial";
+  const usesFourAttributeValues = combination.attributes.filter((attribute) => attribute.tier === "major").length > 1;
+  return combination.attributes.map((attribute) => ({
+    ...attribute,
+    value: isCelestial
+      ? bonus.celestial
+      : attribute.tier === "major"
+        ? usesFourAttributeValues
+          ? bonus.major2
+          : bonus.major1
+        : usesFourAttributeValues
+          ? bonus.minor2
+          : bonus.minor1,
+  }));
+}
+
+function findEquipmentAttributeBonus(
+  slot: MetaBattleBuildEquipmentSlot,
+  reference: MetaBattleAttributeReference,
+): MetaBattleLevel80Bonus | null {
+  const rarity = normalizeAttributeRarity(slot.item?.rarity) ?? "Ascended";
+  const category = getEquipmentAttributeCategory(slot);
+  const type = getEquipmentAttributeType(slot);
+  if (!category || !type) {
+    return null;
+  }
+
+  return reference.bonuses[getAttributeBonusKey(rarity, category, type)] ?? null;
+}
+
+function getEquipmentAttributeCategory(slot: MetaBattleBuildEquipmentSlot): string | null {
+  const itemType = slot.item?.type;
+  if (itemType === "Weapon") {
+    return "Weapons";
+  }
+  if (itemType === "Armor") {
+    return "Armor";
+  }
+  if (itemType === "Trinket" || itemType === "Back") {
+    return "Trinkets";
+  }
+
+  const slotName = slot.slot.toLowerCase();
+  if (/(hammer|staff|bow|rifle|sword|axe|dagger|focus|scepter|pistol|mace|shield|warhorn|torch|greatsword|harpoon|spear|trident)/.test(slotName)) {
+    return "Weapons";
+  }
+  if (/(head|shoulder|chest|hand|leg|feet|boot|glove)/.test(slotName)) {
+    return "Armor";
+  }
+  if (/(ring|amulet|accessory|back)/.test(slotName)) {
+    return "Trinkets";
+  }
+  return null;
+}
+
+function getEquipmentAttributeType(slot: MetaBattleBuildEquipmentSlot): string | null {
+  const slotName = slot.slot.toLowerCase();
+  if (slot.item?.type === "Weapon" || getEquipmentAttributeCategory(slot) === "Weapons") {
+    const weaponType = typeof slot.item?.details?.type === "string" ? slot.item.details.type.toLowerCase() : slotName;
+    return /(greatsword|hammer|longbow|shortbow|rifle|staff|harpoon|spear|trident)/.test(weaponType)
+      ? "Two-handed"
+      : "One-handed";
+  }
+
+  if (/chest/.test(slotName)) return "Chest";
+  if (/leg/.test(slotName)) return "Legs";
+  if (/head/.test(slotName)) return "Head";
+  if (/shoulder/.test(slotName)) return "Shoulders";
+  if (/hand|glove/.test(slotName)) return "Gloves";
+  if (/feet|boot/.test(slotName)) return "Boots";
+  if (/amulet/.test(slotName)) return "Amulet";
+  if (/ring/.test(slotName)) return "Ring";
+  if (/accessory/.test(slotName)) return "Accessory";
+  if (/back/.test(slotName)) return "Back item";
+  return null;
+}
+
+function getAttributeBonusKey(rarity: string, category: string, type: string): string {
+  return `${normalizeAttributeLookupKey(rarity)}:${normalizeAttributeLookupKey(category)}:${normalizeAttributeLookupKey(type.replace(/\s*\([^)]*\)/g, ""))}`;
+}
+
+function findAttributeRecord<T>(records: Record<string, T> | T[], name: string): T | undefined {
+  const entries = Array.isArray(records)
+    ? records.map((record) => [getAttributeRecordName(record), record] as const)
+    : Object.entries(records);
+  const wantedKeys = getAttributeLookupKeys(name);
+  return entries.find(([key]) => getAttributeLookupKeys(key).some((candidate) => wantedKeys.includes(candidate)))?.[1];
+}
+
+function getAttributeRecordName(record: unknown): string {
+  return isRecord(record) && typeof record.prefix === "string" ? record.prefix : "";
+}
+
+function getAttributeLookupKeys(value: string): string[] {
+  const base = normalizeAttributeLookupKey(value);
+  const keys = new Set([base]);
+  if (base.endsWith("s")) {
+    keys.add(base.slice(0, -1));
+  }
+  return Array.from(keys);
+}
+
+function normalizeAttributeLookupKey(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/&amp;/g, "&")
+    .replace(/[’']/g, "")
+    .replace(/[^a-z0-9]+/g, "")
+    .replace(/s$/, "");
+}
+
+function normalizeAttributeRarity(value?: string): string | null {
+  if (!value) {
+    return null;
+  }
+
+  return ["Ascended", "Exotic", "Rare", "Masterwork", "Fine", "Basic"].find(
+    (rarity) => rarity.toLowerCase() === value.toLowerCase(),
+  ) ?? null;
+}
+
+function cleanAttributeCellText(cell: Element | undefined): string {
+  if (!cell) {
+    return "";
+  }
+
+  return normalizePlainText(
+    cell
+      .textContent
+      ?.replace(/\[[^\]]+]/g, " ")
+      .replace(/—/g, "-") ?? "",
+  );
+}
+
+function parseAttributeNumber(cell: Element | undefined): number | undefined {
+  const text = cleanAttributeCellText(cell);
+  if (!text || text === "-" || text === "?") {
+    return undefined;
+  }
+  const value = Number(text.replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function parseAttributePercent(cell: Element | undefined): number | undefined {
+  const value = parseAttributeNumber(cell);
+  return typeof value === "number" ? value : undefined;
+}
+
+function toAbsoluteWikiAssetUrl(src: string): string {
+  if (/^https?:\/\//i.test(src)) {
+    return src;
+  }
+  return new URL(src, "https://wiki.guildwars2.com").toString();
+}
+
+function parseNumberList(value: string): number[] {
+  return value
+    .split(",")
+    .map((part) => Number(part.trim()))
+    .filter((value) => Number.isFinite(value) && value > 0);
 }
 
 function parseWikiQuantityTitle(value: string): { title: string; count: number } | null {
@@ -4111,6 +6051,28 @@ export async function searchWikiGuides(query: string, limit = 6): Promise<WikiGu
 }
 
 async function loadWikiHtml(page: string): Promise<{ title: string; html: string; url: string } | null> {
+  const memoryKey = normalizeWikiLookupName(page);
+  if (wikiHtmlMemoryCache.has(memoryKey)) {
+    return wikiHtmlMemoryCache.get(memoryKey) ?? null;
+  }
+  const inflight = wikiHtmlInflightCache.get(memoryKey);
+  if (inflight) {
+    return inflight;
+  }
+
+  const promise = loadWikiHtmlUncached(page)
+    .then((result) => {
+      wikiHtmlMemoryCache.set(memoryKey, result);
+      return result;
+    })
+    .finally(() => {
+      wikiHtmlInflightCache.delete(memoryKey);
+    });
+  wikiHtmlInflightCache.set(memoryKey, promise);
+  return promise;
+}
+
+async function loadWikiHtmlUncached(page: string): Promise<{ title: string; html: string; url: string } | null> {
   const cacheKey = getNamedCacheKey("wiki:html", page);
   const cached = await loadSqlCache(cacheKey, SQL_CACHE_TTL.wikiPage, isWikiHtmlPage);
   if (cached) {
@@ -5667,6 +7629,174 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isArrayOf<T>(value: unknown, guard: (item: unknown) => item is T): value is T[] {
   return Array.isArray(value) && value.every(guard);
+}
+
+function isMetaBattleHtmlPage(value: unknown): value is MetaBattleHtmlPage {
+  return Boolean(
+    isRecord(value) &&
+      typeof value.title === "string" &&
+      typeof value.html === "string" &&
+      typeof value.url === "string",
+  );
+}
+
+function isMetaBattleIcon(value: unknown): value is MetaBattleIcon {
+  return Boolean(
+    isRecord(value) &&
+      typeof value.label === "string" &&
+      (value.imageUrl === undefined || typeof value.imageUrl === "string"),
+  );
+}
+
+function isMetaBattleAttributeComponent(value: unknown): value is MetaBattleAttributeComponent {
+  return Boolean(
+    isRecord(value) &&
+      typeof value.name === "string" &&
+      (value.tier === "major" || value.tier === "minor") &&
+      (value.icon === undefined || typeof value.icon === "string") &&
+      (value.value === undefined || typeof value.value === "number"),
+  );
+}
+
+function isMetaBattleAttributeDistribution(value: unknown): value is MetaBattleAttributeDistribution {
+  return Boolean(
+    isRecord(value) &&
+      (value.strikeDamage === undefined || typeof value.strikeDamage === "number") &&
+      (value.conditionDamage === undefined || typeof value.conditionDamage === "number") &&
+      (value.defense === undefined || typeof value.defense === "number") &&
+      (value.support === undefined || typeof value.support === "number"),
+  );
+}
+
+function isMetaBattleAttributeCombination(value: unknown): value is MetaBattleAttributeCombination {
+  return Boolean(
+    isRecord(value) &&
+      typeof value.prefix === "string" &&
+      (value.suffix === undefined || typeof value.suffix === "string") &&
+      isArrayOf(value.attributes, isMetaBattleAttributeComponent) &&
+      isArrayOf(value.availability, (item): item is string => typeof item === "string") &&
+      (value.distribution === undefined || isMetaBattleAttributeDistribution(value.distribution)),
+  );
+}
+
+function isMetaBattleLevel80Bonus(value: unknown): value is MetaBattleLevel80Bonus {
+  return Boolean(
+    isRecord(value) &&
+      (value.major1 === undefined || typeof value.major1 === "number") &&
+      (value.minor1 === undefined || typeof value.minor1 === "number") &&
+      (value.major2 === undefined || typeof value.major2 === "number") &&
+      (value.minor2 === undefined || typeof value.minor2 === "number") &&
+      (value.celestial === undefined || typeof value.celestial === "number"),
+  );
+}
+
+function isMetaBattleAttributeReference(value: unknown): value is MetaBattleAttributeReference {
+  return Boolean(
+    isRecord(value) &&
+      isArrayOf(value.combinations, isMetaBattleAttributeCombination) &&
+      isRecord(value.bonuses) &&
+      Object.values(value.bonuses).every(isMetaBattleLevel80Bonus),
+  );
+}
+
+function isMetaBattleBuildSummary(value: unknown): value is MetaBattleBuildSummary {
+  return Boolean(
+    isRecord(value) &&
+      typeof value.id === "string" &&
+      typeof value.title === "string" &&
+      typeof value.pageTitle === "string" &&
+      typeof value.url === "string" &&
+      typeof value.mode === "string" &&
+      typeof value.section === "string" &&
+      typeof value.profession === "string" &&
+      isArrayOf(value.icons, isMetaBattleIcon),
+  );
+}
+
+function isMetaBattleBuildSkill(value: unknown): value is MetaBattleBuildSkill {
+  return Boolean(
+    isRecord(value) &&
+      typeof value.id === "number" &&
+      typeof value.name === "string" &&
+      (value.icon === undefined || typeof value.icon === "string"),
+  );
+}
+
+function isMetaBattleWikiSkill(value: unknown): value is MetaBattleWikiSkill {
+  return Boolean(
+    isRecord(value) &&
+      typeof value.name === "string" &&
+      typeof value.profession === "string" &&
+      typeof value.section === "string" &&
+      typeof value.description === "string" &&
+      typeof value.url === "string" &&
+      (value.icon === undefined || typeof value.icon === "string"),
+  );
+}
+
+function isMetaBattleWikiSpecializationInfo(value: unknown): value is MetaBattleWikiSpecializationInfo {
+  return Boolean(
+    isRecord(value) &&
+      typeof value.name === "string" &&
+      typeof value.url === "string" &&
+      (value.profession === undefined || typeof value.profession === "string") &&
+      (value.focus === undefined || typeof value.focus === "string") &&
+      (value.icon === undefined || typeof value.icon === "string") &&
+      (value.background === undefined || typeof value.background === "string") &&
+      (value.description === undefined || typeof value.description === "string"),
+  );
+}
+
+function isMetaBattleBuildTrait(value: unknown): value is MetaBattleBuildTrait {
+  return Boolean(
+    isRecord(value) &&
+      typeof value.id === "number" &&
+      typeof value.name === "string" &&
+      (value.icon === undefined || typeof value.icon === "string"),
+  );
+}
+
+function isMetaBattleBuildSpecialization(value: unknown): value is MetaBattleBuildSpecialization {
+  return Boolean(
+    isRecord(value) &&
+      typeof value.id === "number" &&
+      typeof value.name === "string" &&
+      (value.focus === undefined || typeof value.focus === "string") &&
+      (value.wikiDescription === undefined || typeof value.wikiDescription === "string") &&
+      (value.wikiUrl === undefined || typeof value.wikiUrl === "string") &&
+      isArrayOf(value.traits, isMetaBattleBuildTrait),
+  );
+}
+
+function isMetaBattleBuildDetail(value: unknown): value is MetaBattleBuildDetail {
+  return Boolean(
+    isRecord(value) &&
+      isMetaBattleBuildSummary(value.summary) &&
+      typeof value.overview === "string" &&
+      Array.isArray(value.skillGroups) &&
+      isArrayOf(value.specializations, isMetaBattleBuildSpecialization) &&
+      Array.isArray(value.equipment) &&
+      (value.wikiSkills === undefined || isArrayOf(value.wikiSkills, isMetaBattleWikiSkill)),
+  );
+}
+
+function isGw2SpecializationApiEntry(value: unknown): value is Gw2SpecializationApiEntry {
+  return Boolean(
+    isRecord(value) &&
+      typeof value.id === "number" &&
+      typeof value.name === "string" &&
+      (value.icon === undefined || typeof value.icon === "string") &&
+      (value.background === undefined || typeof value.background === "string"),
+  );
+}
+
+function isGw2TraitApiEntry(value: unknown): value is Gw2TraitApiEntry {
+  return Boolean(
+    isRecord(value) &&
+      typeof value.id === "number" &&
+      typeof value.name === "string" &&
+      (value.icon === undefined || typeof value.icon === "string"),
+  );
 }
 
 function isGw2World(value: unknown): value is Gw2World {
