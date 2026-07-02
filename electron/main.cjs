@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, nativeTheme, safeStorage, screen, shell } = require("electron");
+const { app, BrowserWindow, Menu, Tray, clipboard, dialog, ipcMain, nativeImage, nativeTheme, safeStorage, screen, shell } = require("electron");
 const fs = require("node:fs/promises");
 const fsSync = require("node:fs");
 const path = require("node:path");
@@ -1990,6 +1990,10 @@ if (!hasSingleInstanceLock) {
     ipcMain.handle("app-cache:load", loadAppCache);
     ipcMain.handle("app-cache:save", saveAppCache);
     ipcMain.handle("app-cache:delete-prefix", deleteAppCachePrefix);
+    ipcMain.handle("clipboard:copy-text", (_event, text) => {
+      clipboard.writeText(typeof text === "string" ? text : "");
+      return true;
+    });
     ipcMain.handle("updates:check", checkForUpdates);
     ipcMain.handle("updates:open-download", openUpdateDownload);
     ipcMain.handle("startup:get", getStartupSettings);

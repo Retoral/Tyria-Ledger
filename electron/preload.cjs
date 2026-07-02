@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld("gw2Desktop", {
   loadAppCache: (cacheKey) => ipcRenderer.invoke("app-cache:load", cacheKey),
   saveAppCache: (cacheKey, value) => ipcRenderer.invoke("app-cache:save", cacheKey, value),
   deleteAppCachePrefix: (prefix) => ipcRenderer.invoke("app-cache:delete-prefix", prefix),
+  copyText: (text) => ipcRenderer.invoke("clipboard:copy-text", text),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),
   openUpdateDownload: (updateInfo) => ipcRenderer.invoke("updates:open-download", updateInfo),
   getStartupSettings: () => ipcRenderer.invoke("startup:get"),

@@ -135,6 +135,7 @@ declare global {
       loadAppCache: (cacheKey: string) => Promise<DesktopAppCacheResult | null>;
       saveAppCache: (cacheKey: string, value: unknown) => Promise<DesktopAppCacheSaveResult>;
       deleteAppCachePrefix: (prefix: string) => Promise<DesktopAppCacheDeleteResult>;
+      copyText: (text: string) => Promise<boolean>;
       checkForUpdates: () => Promise<DesktopUpdateCheckResult>;
       openUpdateDownload: (updateInfo: DesktopUpdateCheckResult) => Promise<DesktopOpenUpdateResult>;
       getStartupSettings: () => Promise<DesktopStartupSettings>;

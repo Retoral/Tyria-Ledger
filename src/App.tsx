@@ -10,6 +10,7 @@ import {
   Clock,
   Coins,
   Container,
+  Copy,
   Database,
   ExternalLink,
   Fish,
@@ -19,6 +20,7 @@ import {
   LocateFixed,
   ListChecks,
   Loader2,
+  MapPinned,
   MapPin,
   Minus,
   PackageSearch,
@@ -26,6 +28,7 @@ import {
   RefreshCcw,
   Search,
   ShieldCheck,
+  ShoppingCart,
   SlidersHorizontal,
   Star,
   Toilet,
@@ -35,6 +38,7 @@ import {
 } from "lucide-react";
 import {
   createContext,
+  Fragment,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -50,6 +54,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { findGw2WikiMapPointByChatLink, findGw2WikiMapPointByName, findNearestGw2WikiWaypoint } from "./data/gw2WikiMapPoints";
 import {
   analyzeAccount,
   checkApiStatuses,
@@ -83,6 +88,7 @@ import {
   loadWizardVaultObjectiveGuide,
   loadWikiGuide,
   loadWikiItemAcquisition,
+  loadWikiItemFallback,
 } from "./services/gw2";
 import type {
   AccountAnalysis,
@@ -172,6 +178,17 @@ interface GuideLocation {
   continentCoord?: [number, number];
   floor?: number;
   zoom?: number;
+  wikiPointName?: string;
+  wikiPointType?: string;
+}
+
+interface GuideWaypointCoordinate {
+  name: string;
+  map: string;
+  waypoint: string;
+  continentCoord: [number, number];
+  floor: number;
+  wikiUrl?: string;
 }
 
 interface GuideSourceLink {
@@ -195,6 +212,12 @@ interface GuideReward {
   wikiUrl?: string;
 }
 
+interface GuideInlineItem {
+  name: string;
+  detail: string;
+  item: Gw2Item;
+}
+
 interface GuideResource {
   name: string;
   itemId?: number;
@@ -215,7 +238,49 @@ interface GuideResource {
   notes?: string;
   acquisition?: string[];
   purchases?: string[];
-  metaLinks?: Array<{ label: string; page: ActivePage; detail: string }>;
+  vendors?: GuideVendorLink[];
+  metaLinks?: Array<{ label: string; page?: ActivePage; detail: string }>;
+}
+
+interface GuideVendorLink {
+  name: string;
+  url: string;
+  location: string;
+  locationUrl: string;
+  note: string;
+}
+
+interface GuideStoreItem {
+  name: string;
+  price: string;
+  quantity?: string;
+  limit?: string;
+  requirement?: string;
+  note?: string;
+  wikiUrl?: string;
+}
+
+interface GuideStore {
+  name: string;
+  location: string;
+  url: string;
+  map?: string;
+  waypoint?: string;
+  wikiPointName?: string;
+  wikiPointType?: string;
+  note?: string;
+  items: GuideStoreItem[];
+}
+
+interface GuideCurrencyDefinition {
+  name: string;
+  icon: string;
+  wikiUrl: string;
+  summary: string;
+  acquisition: string[];
+  uses: string[];
+  vendors?: GuideVendorLink[];
+  relatedGuides?: Array<{ label: string; page: ActivePage; detail: string }>;
 }
 
 interface GuideDefinition {
@@ -229,9 +294,11 @@ interface GuideDefinition {
   phases?: GuidePhase[];
   rewards?: GuideReward[];
   resources?: GuideResource[];
+  stores?: GuideStore[];
   sourceLinks?: GuideSourceLink[];
   hideRelatedNotes?: boolean;
   resourceHub?: boolean;
+  metaEventGuideId?: string;
 }
 
 interface ActivityGuideDefinition extends GuideDefinition {
@@ -252,6 +319,21 @@ interface MetaFarmEstimate {
   access: string;
   confidence: "High" | "Medium" | "Variable";
   wikiUrl: string;
+}
+
+interface MetaEventGuide {
+  id: string;
+  title: string;
+  map: string;
+  expansion: string;
+  summary: string;
+  timing: string;
+  preparation: string[];
+  phases: GuidePhase[];
+  locations: GuideLocation[];
+  rewards: GuideReward[];
+  sources: GuideSourceLink[];
+  relatedPageIds?: ActivePage[];
 }
 
 type AchievementFilter = "unfinished" | "completed" | "all";
@@ -382,6 +464,64 @@ interface IngredientCraftRouteSummary {
 
 const ingredientCraftRouteCache = new Map<string, Promise<IngredientCraftRouteSummary | null>>();
 const FAVORITE_ITEM_IDS_STORAGE_KEY = "tyria-ledger:favorites:item-ids:v1";
+const GUIDE_CURRENCY_DEFINITIONS: Record<string, GuideCurrencyDefinition> = {
+  "Volatile Magic": {
+    name: "Volatile Magic",
+    icon: "https://render.guildwars2.com/file/57F51A1F62E3FBB7B5E02CBD7C9717371D1CC8F2/1894697.png",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Volatile_Magic",
+    summary: "Living World Season 4 account currency used for local rewards, trophy shipments, and other Volatile Magic Collector purchases.",
+    acquisition: [
+      "Earn it from Living World Season 4 events, metas, hearts, map rewards, reward tracks, and map bonus rewards.",
+      "Gather Season 4 map resources and open local reward containers while running Istan, Sandswept Isles, Kourna, Jahai Bluffs, Thunderhead Peaks, or Dragonfall routes.",
+      "Consume spare Season 4 map currencies for Volatile Magic only after collection, mount, trinket, and vendor goals are covered.",
+      "Use Dragonfall and other active Season 4 meta trains when you want a repeatable mix of Volatile Magic, map currencies, unidentified gear, and containers.",
+    ],
+    uses: [
+      "Buy Trophy Shipments and other shipment containers from Volatile Magic Collector vendors when the material basket value is favorable.",
+      "Buy local Season 4 collection items, minis, recipes, and account progression rewards from map vendors.",
+      "Keep a reserve before converting large stacks so you do not block Skyscale, Aurora/Vision, trinket, or map collection progress.",
+    ],
+    vendors: [
+      {
+        name: "Volatile Magic Collector",
+        url: "https://wiki.guildwars2.com/wiki/Volatile_Magic_Collector",
+        location: "Living World Season 4 maps",
+        locationUrl: "https://wiki.guildwars2.com/wiki/Living_World_Season_4",
+        note: "Primary vendor category for Trophy Shipments and Season 4 Volatile Magic conversion purchases.",
+      },
+    ],
+    relatedGuides: [
+      { label: "LWS4 resource hub", page: "lws4-resources", detail: "Compare Season 4 currencies, Trophy Shipments, and Volatile Magic conversion notes." },
+      { label: "Dragonfall Volatile Magic", page: "dragonfall-volatile-magic", detail: "Continuous farm route for Mistborn Motes, coffers, and Volatile Magic." },
+      { label: "Thunderhead Peaks Volatile Magic", page: "thunderhead-peaks-volatile-magic", detail: "Thunderhead route that links Branded Mass, metas, and shipment decisions." },
+    ],
+  },
+};
+const EXTRA_GUIDE_CURRENCY_ICONS: Record<string, string> = {
+  Karma: "https://wiki.guildwars2.com/images/a/af/Karma.png",
+  "Spirit Shard": "https://wiki.guildwars2.com/images/6/63/Spirit_Shard.png",
+  Laurel: "https://wiki.guildwars2.com/images/5/56/Laurel.png",
+  "War Supplies": "https://wiki.guildwars2.com/images/5/5b/War_Supplies.png",
+  "Eternal Ice Shard": "https://wiki.guildwars2.com/images/2/23/Eternal_Ice_Shard.png",
+  "Kralkatite Ore": "https://wiki.guildwars2.com/images/0/02/Kralkatite_Ore.png",
+  "Branded Mass": "https://wiki.guildwars2.com/images/c/c2/Branded_Mass.png",
+  "Mistborn Mote": "https://wiki.guildwars2.com/images/b/b3/Mistborn_Mote.png",
+  "Charr Commendation": "https://wiki.guildwars2.com/images/6/6a/Charr_Commendation.png",
+};
+const GW2_CURRENCY_ICONS: Record<string, string> = {
+  ...EXTRA_GUIDE_CURRENCY_ICONS,
+  ...Object.fromEntries(Object.values(GUIDE_CURRENCY_DEFINITIONS).map((currency) => [currency.name, currency.icon])),
+};
+const GUIDE_STORE_ITEM_IDS_BY_NAME: Record<string, number> = {
+  [normalizeSearchText("Trance Stone")]: 91098,
+  [normalizeSearchText("Season 4 Portal Tome")]: 85656,
+  [normalizeSearchText("Karmic Retribution (Domain of Istan)")]: 85708,
+  [normalizeSearchText("Istani Empowerment")]: 85762,
+  [normalizeSearchText("Karmic Retribution (Thunderhead Peaks)")]: 89933,
+  [normalizeSearchText("Thunderhead Peaks Empowerment")]: 89889,
+  [normalizeSearchText("Karmic Retribution (Dragonfall)")]: 90661,
+  [normalizeSearchText("Dragonfall Empowerment")]: 90896,
+};
 const PHILOSOPHERS_STONE_ITEM_ID = 20796;
 const SPIRIT_SHARD_RECIPE_OUTPUT_NAMES = new Set(
   [
@@ -1568,7 +1708,7 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     title: "Farming",
     items: [
-      { id: "open-world", label: "Open World", icon: <TrendingUp /> },
+      { id: "meta-events", label: "Meta", icon: <ShieldCheck /> },
       { id: "lws4-resources", label: "LWS4 Resources", icon: <Coins /> },
       { id: "dragonfall-volatile-magic", label: "Dragonfall", icon: <PackageSearch /> },
       { id: "palawadan-volatile-magic", label: "Palawadan", icon: <ShieldCheck /> },
@@ -1576,7 +1716,6 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
       { id: "thunderhead-peaks-volatile-magic", label: "Thunderhead Peaks", icon: <Database /> },
       { id: "oil-floes-volatile-magic", label: "Oil Floes", icon: <Database /> },
       { id: "drizzlewood-donation", label: "Drizzlewood Material Donation", icon: <Database /> },
-      { id: "meta-events", label: "Meta", icon: <ShieldCheck /> },
       { id: "solo-farming", label: "Solo Farming", icon: <PackageSearch /> },
     ],
   },
@@ -1604,8 +1743,9 @@ const LWS4_RESOURCE_ROWS: GuideResource[] = [
     limitation: "Limit 5x daily per heart vendor",
     notes: "[&BN4LAAA=] Traveling Elonian Trader",
     acquisition: [
+      "Run Palawadan, Jewel of Istan as the main repeatable meta route for Kralkatite Ore and Istan chests.",
+      "Add the Great Hall/Sunspear Uprising chain when it is active for extra Istan rewards.",
       "Gather Brandstone Chunks in Domain of Istan with an Orichalcum Mining Pick.",
-      "Complete Palawadan and Sunspear Uprising event chains for Istan chests.",
       "Buy daily bundles from Domain of Istan heart vendors after completing the heart.",
       "Earn from Istan map bonus rewards, reward tracks, achievements, and home instance nodes.",
     ],
@@ -1613,6 +1753,22 @@ const LWS4_RESOURCE_ROWS: GuideResource[] = [
       "Domain of Istan vendor purchases and collection progress.",
       "Astral and Stellar weapon crafting routes.",
       "Consumed directly for Volatile Magic once account needs are covered.",
+    ],
+    vendors: [
+      {
+        name: "Traveling Elonian Trader",
+        url: "https://wiki.guildwars2.com/wiki/Traveling_Elonian_Trader",
+        location: "Domain of Istan",
+        locationUrl: "https://wiki.guildwars2.com/wiki/Domain_of_Istan",
+        note: "Use for Kralkatite Ore exchanges and daily Istan currency purchases when available.",
+      },
+      {
+        name: "Volatile Magic Collector",
+        url: "https://wiki.guildwars2.com/wiki/Volatile_Magic_Collector",
+        location: "Domain of Istan",
+        locationUrl: "https://wiki.guildwars2.com/wiki/Domain_of_Istan",
+        note: "Season 4 currency vendor category that also handles shipment-style Volatile Magic spending.",
+      },
     ],
     metaLinks: [
       { label: "Palawadan daily route", page: "palawadan-volatile-magic", detail: "Primary Istan meta route for Kralkatite Ore and daily chests." },
@@ -1638,14 +1794,26 @@ const LWS4_RESOURCE_ROWS: GuideResource[] = [
     limitation: "Limit 5x daily per heart vendor",
     notes: "Sandswept Isles heart vendors after daily heart completion",
     acquisition: [
+      "Run Sandswept Isles event trains around Gathering Storms and The Specimen Chamber for daily chest rewards.",
       "Gather Difluorite Crystals in Sandswept Isles with an Orichalcum Logging Axe.",
-      "Complete Gathering Storms and The Specimen Chamber meta events for daily chest rewards.",
       "Buy daily bundles from Sandswept Isles heart vendors after completing each heart.",
       "Earn from Sandswept Isles map bonus rewards, reward track cache, achievements, and home instance node.",
     ],
     purchases: [
       "Sandswept Isles vendor purchases and local collection progress.",
       "Consumed directly for 15-25 Volatile Magic when spare.",
+    ],
+    vendors: [
+      {
+        name: "Volatile Magic Collector",
+        url: "https://wiki.guildwars2.com/wiki/Volatile_Magic_Collector",
+        location: "Sandswept Isles",
+        locationUrl: "https://wiki.guildwars2.com/wiki/Sandswept_Isles",
+        note: "Use for Sandswept Isles local currency purchases and Volatile Magic exchange options.",
+      },
+    ],
+    metaLinks: [
+      { label: "Sandswept Isles event loop", detail: "Prioritize Gathering Storms, The Specimen Chamber, heart dailies, and the Difluorite Crystal node route." },
     ],
   },
   {
@@ -1667,14 +1835,26 @@ const LWS4_RESOURCE_ROWS: GuideResource[] = [
     limitation: "Limit 5x daily per heart vendor",
     notes: "Domain of Kourna hearts, meta rewards, map rewards",
     acquisition: [
-      "Earn from Domain of Kourna events and containers.",
-      "Complete Containing the Scarab Plague event chains for Kournan chest rewards.",
+      "Run Domain of Kourna's Containing the Scarab Plague chain as the main event route for Inscribed Shards.",
+      "Earn from Domain of Kourna events and containers while the map chain is progressing.",
       "Buy daily bundles from Domain of Kourna heart vendors after completing the heart.",
       "Earn from the Domain of Kourna reward track, achievements, map bonus rewards, and home instance node.",
     ],
     purchases: [
       "Domain of Kourna vendor purchases and collection progress.",
       "Consumed directly for 15-25 Volatile Magic when spare.",
+    ],
+    vendors: [
+      {
+        name: "Volatile Magic Collector",
+        url: "https://wiki.guildwars2.com/wiki/Volatile_Magic_Collector",
+        location: "Domain of Kourna",
+        locationUrl: "https://wiki.guildwars2.com/wiki/Domain_of_Kourna",
+        note: "Use for Kourna local currency purchases and Volatile Magic exchange options.",
+      },
+    ],
+    metaLinks: [
+      { label: "Domain of Kourna event chain", detail: "Use Containing the Scarab Plague, Kournan hearts, containers, and map rewards for Inscribed Shards." },
     ],
   },
   {
@@ -1696,6 +1876,7 @@ const LWS4_RESOURCE_ROWS: GuideResource[] = [
     limitation: "Limit 5x daily per heart vendor",
     notes: "Jahai Bluffs heart vendors and map rewards",
     acquisition: [
+      "Run Jahai Bluffs events around the Death-Branded Shatterer cycle when active for map rewards and currency flow.",
       "Gather Mistonium nodes in Jahai Bluffs with an Orichalcum Mining Pick.",
       "Complete Jahai Bluffs events, bounties, achievements, and map bonus rewards.",
       "Buy daily bundles from Jahai Bluffs heart vendors after completing the heart.",
@@ -1704,6 +1885,18 @@ const LWS4_RESOURCE_ROWS: GuideResource[] = [
     purchases: [
       "Jahai Bluffs vendor purchases and collection progress.",
       "Consumed directly for 15-25 Volatile Magic when spare.",
+    ],
+    vendors: [
+      {
+        name: "Volatile Magic Collector",
+        url: "https://wiki.guildwars2.com/wiki/Volatile_Magic_Collector",
+        location: "Jahai Bluffs",
+        locationUrl: "https://wiki.guildwars2.com/wiki/Jahai_Bluffs",
+        note: "Use for Jahai Bluffs local currency purchases and Volatile Magic exchange options.",
+      },
+    ],
+    metaLinks: [
+      { label: "Jahai Bluffs event loop", detail: "Use Death-Branded Shatterer timing, Jahai events, heart dailies, and Mistonium nodes for Lump of Mistonium." },
     ],
   },
   {
@@ -1725,14 +1918,23 @@ const LWS4_RESOURCE_ROWS: GuideResource[] = [
     limitation: "Limit 5x daily per heart vendor",
     notes: "Thunderhead Peaks hearts, meta rewards, and nodes",
     acquisition: [
+      "Complete Thunderhead Keep and The Oil Floes as the main Branded Mass meta route.",
       "Gather Dragon Crystal Nodes in Thunderhead Peaks with an Orichalcum Mining Pick.",
-      "Complete Thunderhead Keep and The Oil Floes for map rewards.",
       "Buy daily bundles from Thunderhead Peaks heart vendors after completing the heart.",
       "Earn from Thunderhead Peaks reward track, achievements, map bonus rewards, and home instance node.",
     ],
     purchases: [
       "Thunderhead Peaks vendor purchases, local gear, and collection progress.",
       "Consumed directly for 15-25 Volatile Magic when spare.",
+    ],
+    vendors: [
+      {
+        name: "Volatile Magic Collector",
+        url: "https://wiki.guildwars2.com/wiki/Volatile_Magic_Collector",
+        location: "Thunderhead Peaks",
+        locationUrl: "https://wiki.guildwars2.com/wiki/Thunderhead_Peaks",
+        note: "Use for Branded Mass purchases, local Thunderhead rewards, and Volatile Magic exchange options.",
+      },
     ],
     metaLinks: [
       { label: "Thunderhead Peaks route", page: "thunderhead-peaks-volatile-magic", detail: "Combines Thunderhead Keep and Oil Floes with Branded Mass decisions." },
@@ -1758,14 +1960,38 @@ const LWS4_RESOURCE_ROWS: GuideResource[] = [
     limitation: "No daily heart limit; tied to Dragonfall farm flow",
     notes: "Dragonfall camp events, coffers, nodes, and meta cleanup",
     acquisition: [
+      "Run the Dragonfall camp rotation into the final Kralkatorrik meta and bonus bosses for the main Mistborn Mote farm.",
+      "Open Mistborn Coffers from camp progress, champions, and post-meta cleanup.",
       "Gather Mistborn Mote nodes in Dragonfall with an Orichalcum Harvesting Sickle.",
-      "Run Dragonfall camp upgrade events, Mistborn Coffers, champion trains, and final meta cleanup.",
       "Earn from map completion, achievements, Dragonfall reward track, and home instance node.",
-      "Use commander maps for the fastest continuous flow.",
+      "Use organized commander maps for the fastest continuous camp-to-meta flow.",
     ],
     purchases: [
       "Dragonfall camp vendor purchases and collection progress.",
       "Consumed directly for 15-25 Volatile Magic when spare.",
+    ],
+    vendors: [
+      {
+        name: "Mist Warden Quartermaster",
+        url: "https://wiki.guildwars2.com/wiki/Mist_Warden_Quartermaster",
+        location: "Mist Warden Camp",
+        locationUrl: "https://wiki.guildwars2.com/wiki/Mist_Warden_Camp",
+        note: "Dragonfall camp vendor that uses Mistborn Motes for local rewards after camp progress.",
+      },
+      {
+        name: "Crystal Bloom Quartermaster",
+        url: "https://wiki.guildwars2.com/wiki/Crystal_Bloom_Quartermaster",
+        location: "Crystal Bloom Camp",
+        locationUrl: "https://wiki.guildwars2.com/wiki/Crystal_Bloom_Camp",
+        note: "Dragonfall camp vendor tied to Crystal Bloom progress and Mistborn Mote spending.",
+      },
+      {
+        name: "Olmakhan Quartermaster",
+        url: "https://wiki.guildwars2.com/wiki/Olmakhan_Quartermaster",
+        location: "Olmakhan Camp",
+        locationUrl: "https://wiki.guildwars2.com/wiki/Olmakhan_Camp",
+        note: "Dragonfall camp vendor tied to Olmakhan progress and Mistborn Mote spending.",
+      },
     ],
     metaLinks: [
       { label: "Dragonfall Volatile Magic", page: "dragonfall-volatile-magic", detail: "Main continuous farm for Mistborn Motes, coffers, and Volatile Magic." },
@@ -1790,13 +2016,26 @@ const LWS4_RESOURCE_ROWS: GuideResource[] = [
     limitation: "No daily limit",
     notes: "[&BAkLAAA=] [&BEMLAAA=] Volatile Magic Collector vendors",
     acquisition: [
-      "Buy from Volatile Magic Collector vendors with Volatile Magic and coin.",
-      "Use after checking current T5/T6 trophy material prices.",
+      "Buy from Volatile Magic Collector vendors with Volatile Magic and coin; this is a conversion purchase, not a meta drop.",
+      "Farm Volatile Magic from Dragonfall, Palawadan, Thunderhead Peaks, Oil Floes, or other Season 4 routes before buying.",
+      "Open Trophy Shipments when current T5/T6 trophy material prices justify the conversion.",
       "Treat as a conversion output, not a resource you gather directly.",
     ],
     purchases: [
       "Open for a spread of T5/T6 trophy materials.",
       "Compare against Leather, Metal, Wood, and Cloth Shipments before converting large stacks.",
+    ],
+    vendors: [
+      {
+        name: "Volatile Magic Collector",
+        url: "https://wiki.guildwars2.com/wiki/Volatile_Magic_Collector",
+        location: "Living World Season 4 maps",
+        locationUrl: "https://wiki.guildwars2.com/wiki/Living_World_Season_4",
+        note: "Primary vendor category for Trophy Shipments and other Volatile Magic conversion purchases.",
+      },
+    ],
+    metaLinks: [
+      { label: "Volatile Magic conversion", detail: "Farm Volatile Magic through Season 4 metas, then buy Trophy Shipments when the trophy basket value is favorable." },
     ],
   },
 ];
@@ -1825,6 +2064,369 @@ const LWS4_SOURCE_LINKS: GuideSourceLink[] = [
     owner: "r/Guildwars2 community",
     url: "https://www.reddit.com/r/Guildwars2/comments/1mpgh52/the_oil_floes/",
     note: "Linked as a community troubleshooting/discussion source rather than copied into the app.",
+  },
+];
+
+const SEASON_4_SHIPMENT_STORE_ITEMS: GuideStoreItem[] = [
+  { name: "Cloth Shipment", price: "250 Volatile Magic + 1 gold" },
+  { name: "Wood Shipment", price: "250 Volatile Magic + 1 gold" },
+  { name: "Leather Shipment", price: "250 Volatile Magic + 1 gold" },
+  { name: "Metal Shipment", price: "250 Volatile Magic + 1 gold" },
+  { name: "Trophy Shipment", price: "250 Volatile Magic + 1 gold" },
+  { name: "Obsidian Shard", price: "100 Volatile Magic + 96 copper" },
+];
+
+const BLOSSOMING_MIST_SHARD_ARMOR_STORE_ITEMS: GuideStoreItem[] = [
+  { name: "Vision of Equipment: Dragon Champion Armor", price: "5 gold", requirement: "Mist Shard armor" },
+  { name: "Blossoming Mist Shard Greaves Skin", price: "5 Spirit Shard + 50 Mistborn Mote + 10 Glob of Ectoplasm", requirement: "Mist Shard Greaves" },
+  { name: "Blossoming Mist Shard Plate Skin", price: "10 Spirit Shard + 100 Mistborn Mote + 20 Glob of Ectoplasm", requirement: "Mist Shard Plate" },
+  { name: "Blossoming Mist Shard Gauntlets Skin", price: "5 Spirit Shard + 50 Mistborn Mote + 10 Glob of Ectoplasm", requirement: "Mist Shard Gauntlets" },
+  { name: "Blossoming Mist Shard Helm Skin", price: "5 Spirit Shard + 50 Mistborn Mote + 10 Glob of Ectoplasm", requirement: "Mist Shard Helm" },
+  { name: "Blossoming Mist Shard Tassets Skin", price: "8 Spirit Shard + 75 Mistborn Mote + 15 Glob of Ectoplasm", requirement: "Mist Shard Tassets" },
+  { name: "Blossoming Mist Shard Pauldrons Skin", price: "5 Spirit Shard + 50 Mistborn Mote + 10 Glob of Ectoplasm", requirement: "Mist Shard Pauldrons" },
+  { name: "Blossoming Mist Shard Walkers Skin", price: "5 Spirit Shard + 50 Mistborn Mote + 10 Glob of Ectoplasm", requirement: "Mist Shard Walkers" },
+  { name: "Blossoming Mist Shard Gambeson Skin", price: "10 Spirit Shard + 100 Mistborn Mote + 20 Glob of Ectoplasm", requirement: "Mist Shard Gambeson" },
+  { name: "Blossoming Mist Shard Gloves Skin", price: "5 Spirit Shard + 50 Mistborn Mote + 10 Glob of Ectoplasm", requirement: "Mist Shard Gloves" },
+  { name: "Blossoming Mist Shard Coronet Skin", price: "5 Spirit Shard + 50 Mistborn Mote + 10 Glob of Ectoplasm", requirement: "Mist Shard Coronet" },
+  { name: "Blossoming Mist Shard Breeches Skin", price: "8 Spirit Shard + 75 Mistborn Mote + 15 Glob of Ectoplasm", requirement: "Mist Shard Breeches" },
+  { name: "Blossoming Mist Shard Epaulets Skin", price: "5 Spirit Shard + 50 Mistborn Mote + 10 Glob of Ectoplasm", requirement: "Mist Shard Epaulets" },
+  { name: "Blossoming Mist Shard Boots Skin", price: "5 Spirit Shard + 50 Mistborn Mote + 10 Glob of Ectoplasm", requirement: "Mist Shard Boots" },
+  { name: "Blossoming Mist Shard Chestguard Skin", price: "10 Spirit Shard + 100 Mistborn Mote + 20 Glob of Ectoplasm", requirement: "Mist Shard Chestguard" },
+  { name: "Blossoming Mist Shard Bracers Skin", price: "5 Spirit Shard + 50 Mistborn Mote + 10 Glob of Ectoplasm", requirement: "Mist Shard Bracers" },
+  { name: "Blossoming Mist Shard Visage Skin", price: "5 Spirit Shard + 50 Mistborn Mote + 10 Glob of Ectoplasm", requirement: "Mist Shard Visage" },
+  { name: "Blossoming Mist Shard Leggings Skin", price: "8 Spirit Shard + 75 Mistborn Mote + 15 Glob of Ectoplasm", requirement: "Mist Shard Leggings" },
+  { name: "Blossoming Mist Shard Shoulders Skin", price: "5 Spirit Shard + 50 Mistborn Mote + 10 Glob of Ectoplasm", requirement: "Mist Shard Shoulders" },
+];
+
+const DRIZZLEWOOD_DONATION_STORE_ITEMS: GuideStoreItem[] = [
+  { name: "Charr Commendation", quantity: "125", price: "100 Elder Wood Log", limit: "Daily rotation" },
+  { name: "Charr Commendation", quantity: "125", price: "100 Mithril Ore", limit: "Daily rotation" },
+  { name: "Charr Commendation", quantity: "125", price: "100 Thick Leather Section", limit: "Daily rotation" },
+  { name: "Charr Commendation", quantity: "125", price: "200 Silk Scrap", limit: "Daily rotation" },
+  { name: "Charr Commendation", quantity: "250", price: "100 Ancient Wood Log", limit: "Daily rotation" },
+  { name: "Charr Commendation", quantity: "250", price: "100 Orichalcum Ore", limit: "Daily rotation" },
+  { name: "Charr Commendation", quantity: "250", price: "100 Thick Leather Section", limit: "Daily rotation" },
+  { name: "Charr Commendation", quantity: "250", price: "200 Gossamer Scrap", limit: "Daily rotation" },
+  { name: "Ash Legion Commendation", quantity: "250", price: "50 Ancient Wood Log", limit: "Daily rotation" },
+  { name: "Ash Legion Commendation", quantity: "250", price: "50 Orichalcum Ore", limit: "Daily rotation" },
+  { name: "Ash Legion Commendation", quantity: "250", price: "50 Thick Leather Section", limit: "Daily rotation" },
+  { name: "Ash Legion Commendation", quantity: "250", price: "100 Gossamer Scrap", limit: "Daily rotation" },
+  { name: "Blood Legion Commendation", quantity: "250", price: "50 Ancient Wood Log", limit: "Daily rotation" },
+  { name: "Blood Legion Commendation", quantity: "250", price: "50 Orichalcum Ore", limit: "Daily rotation" },
+  { name: "Blood Legion Commendation", quantity: "250", price: "50 Thick Leather Section", limit: "Daily rotation" },
+  { name: "Blood Legion Commendation", quantity: "250", price: "100 Gossamer Scrap", limit: "Daily rotation" },
+  { name: "Dominion Commendation", quantity: "250", price: "50 Ancient Wood Log", limit: "Daily rotation" },
+  { name: "Dominion Commendation", quantity: "250", price: "50 Orichalcum Ore", limit: "Daily rotation" },
+  { name: "Dominion Commendation", quantity: "250", price: "50 Thick Leather Section", limit: "Daily rotation" },
+  { name: "Dominion Commendation", quantity: "250", price: "100 Gossamer Scrap", limit: "Daily rotation" },
+  { name: "Flame Legion Commendation", quantity: "250", price: "50 Ancient Wood Log", limit: "Daily rotation" },
+  { name: "Flame Legion Commendation", quantity: "250", price: "50 Orichalcum Ore", limit: "Daily rotation" },
+  { name: "Flame Legion Commendation", quantity: "250", price: "50 Thick Leather Section", limit: "Daily rotation" },
+  { name: "Flame Legion Commendation", quantity: "250", price: "100 Gossamer Scrap", limit: "Daily rotation" },
+  { name: "Frost Legion Commendation", quantity: "250", price: "50 Ancient Wood Log", limit: "Daily rotation" },
+  { name: "Frost Legion Commendation", quantity: "250", price: "50 Orichalcum Ore", limit: "Daily rotation" },
+  { name: "Frost Legion Commendation", quantity: "250", price: "50 Thick Leather Section", limit: "Daily rotation" },
+  { name: "Frost Legion Commendation", quantity: "250", price: "100 Gossamer Scrap", limit: "Daily rotation" },
+  { name: "Iron Legion Commendation", quantity: "250", price: "50 Ancient Wood Log", limit: "Daily rotation" },
+  { name: "Iron Legion Commendation", quantity: "250", price: "50 Orichalcum Ore", limit: "Daily rotation" },
+  { name: "Iron Legion Commendation", quantity: "250", price: "50 Thick Leather Section", limit: "Daily rotation" },
+  { name: "Iron Legion Commendation", quantity: "250", price: "100 Gossamer Scrap", limit: "Daily rotation" },
+];
+
+const ISTAN_STORES: GuideStore[] = [
+  {
+    name: "Alaleh",
+    location: "Chalon Docks, Domain of Istan",
+    url: "https://wiki.guildwars2.com/wiki/Alaleh",
+    map: "Domain of Istan",
+    wikiPointName: "Chalon Docks",
+    wikiPointType: "sectors",
+    note: "Main Istan Volatile Magic and Kralkatite Ore vendor.",
+    items: [
+      { name: "Trance Stone", price: "100 Volatile Magic + 96 copper", limit: "1 total" },
+      { name: "Istan Portal Scroll", price: "1,000 Volatile Magic + 50 silver" },
+      { name: "Season 4 Portal Tome", price: "1,000 Volatile Magic + 1 gold" },
+      { name: "Karmic Retribution (Domain of Istan)", price: "1,000 Volatile Magic + 5 gold", limit: "Tier 1" },
+      { name: "Karmic Retribution (Domain of Istan)", price: "5,000 Volatile Magic + 10 gold", limit: "Tier 2" },
+      { name: "Karmic Retribution (Domain of Istan)", price: "10,000 Volatile Magic + 15 gold", limit: "Tier 3" },
+      { name: "Istani Empowerment", price: "1,000 Volatile Magic + 5 gold", limit: "Tier 1" },
+      { name: "Istani Empowerment", price: "5,000 Volatile Magic + 10 gold", limit: "Tier 2" },
+      { name: "Istani Empowerment", price: "10,000 Volatile Magic + 15 gold", limit: "Tier 3" },
+      { name: "Brandstone Node", price: "10,000 Volatile Magic + 50 gold", limit: "1 total" },
+      { name: "Mini Adolescent Aurene", price: "5,000 Volatile Magic + 125 Kralkatite Ore", requirement: "The First City" },
+      { name: "Mini Branded Wyvern", price: "5,000 Volatile Magic + 125 Kralkatite Ore" },
+      ...SEASON_4_SHIPMENT_STORE_ITEMS,
+      { name: "Corsair Sailcloth", price: "250 Volatile Magic + 5 gold + 250 Kralkatite Ore", limit: "1 total", requirement: "Skyscale Saddle" },
+    ],
+  },
+  {
+    name: "Quartermaster Zineb",
+    location: "The Astralarium, Domain of Istan",
+    url: "https://wiki.guildwars2.com/wiki/Quartermaster_Zineb",
+    map: "Domain of Istan",
+    wikiPointName: "The Astralarium",
+    wikiPointType: "sectors",
+    note: "Sunspear vendor tied to Kralkatite Ore and Palawadan/Great Hall reward cleanup.",
+    items: [
+      { name: "Sunspear Paragon Support", price: "25 Kralkatite Ore" },
+      { name: "Cloth Shipment", price: "1 gold + 60 Kralkatite Ore" },
+      { name: "Wood Shipment", price: "1 gold + 60 Kralkatite Ore" },
+      { name: "Leather Shipment", price: "1 gold + 60 Kralkatite Ore" },
+      { name: "Metal Shipment", price: "1 gold + 60 Kralkatite Ore" },
+      { name: "Trophy Shipment", price: "1 gold + 60 Kralkatite Ore" },
+      { name: "Cloth Shipment", price: "1 gold + 100 Powdered Rose Quartz" },
+      { name: "Wood Shipment", price: "1 gold + 100 Powdered Rose Quartz" },
+      { name: "Leather Shipment", price: "1 gold + 100 Powdered Rose Quartz" },
+      { name: "Metal Shipment", price: "1 gold + 100 Powdered Rose Quartz" },
+      { name: "Trophy Shipment", price: "1 gold + 100 Powdered Rose Quartz" },
+    ],
+  },
+  {
+    name: "Domain of Istan heart vendors",
+    location: "Domain of Istan repeatable hearts",
+    url: "https://wiki.guildwars2.com/wiki/Bundle_of_Kralkatite",
+    note: "Each of the three repeatable heart vendors can sell a daily Bundle of Kralkatite after that heart is completed.",
+    items: [
+      { name: "Bundle of Kralkatite", quantity: "25 Kralkatite Ore", price: "Heart-vendor daily bundle", limit: "1 per heart vendor per character per day" },
+    ],
+  },
+];
+
+const THUNDERHEAD_STORES: GuideStore[] = [
+  {
+    name: "Kynon",
+    location: "The Forge, Thunderhead Peaks",
+    url: "https://wiki.guildwars2.com/wiki/Kynon",
+    map: "Thunderhead Peaks",
+    wikiPointName: "The Forge",
+    wikiPointType: "sectors",
+    note: "Main Thunderhead Peaks Volatile Magic and Branded Mass vendor.",
+    items: [
+      { name: "Thunderhead Peaks Teleportation Scroll", price: "1,000 Volatile Magic + 50 silver" },
+      { name: "Season 4 Portal Tome", price: "1,000 Volatile Magic + 1 gold" },
+      { name: "Karmic Retribution (Thunderhead Peaks)", price: "1,000 Volatile Magic + 5 gold", limit: "Tier 1" },
+      { name: "Karmic Retribution (Thunderhead Peaks)", price: "5,000 Volatile Magic + 10 gold", limit: "Tier 2" },
+      { name: "Karmic Retribution (Thunderhead Peaks)", price: "10,000 Volatile Magic + 15 gold", limit: "Tier 3" },
+      { name: "Thunderhead Peaks Empowerment", price: "1,000 Volatile Magic + 5 gold", limit: "Tier 1" },
+      { name: "Thunderhead Peaks Empowerment", price: "5,000 Volatile Magic + 10 gold", limit: "Tier 2" },
+      { name: "Thunderhead Peaks Empowerment", price: "10,000 Volatile Magic + 15 gold", limit: "Tier 3" },
+      { name: "Dragon Crystal Home Instance Node", price: "10,000 Volatile Magic + 50 gold", limit: "1 total" },
+      ...SEASON_4_SHIPMENT_STORE_ITEMS,
+      { name: "Deldrimor Rivets", price: "250 Volatile Magic + 5 gold + 250 Branded Mass", limit: "1 total", requirement: "Skyscale Saddle" },
+      { name: "Diviner's Armor Recipe Book", price: "500 Volatile Magic + 3 Laurel" },
+      { name: "Diviner's Ascended Armor Recipe Book", price: "500 Volatile Magic + 5 Laurel" },
+      { name: "Diviner's Jewelry Recipe Book", price: "500 Volatile Magic + 3 Laurel" },
+      { name: "Diviner's Weapon Recipe Book", price: "500 Volatile Magic + 3 Laurel" },
+      { name: "Diviner's Ascended Weapon Recipe Book", price: "500 Volatile Magic + 5 Laurel" },
+      { name: "Recipe: Diviner's Orichalcum-Imbued Inscription", price: "500 Volatile Magic + 3 Laurel" },
+      { name: "Recipe: Steelstar's Inscription", price: "500 Volatile Magic + 5 Laurel" },
+      { name: "Dragonsblood Weapon Recipe Book", price: "500 Volatile Magic + 5 Laurel", requirement: "Dragonsblood" },
+      { name: "Jalis's Signet Ring", price: "35 Laurel" },
+      { name: "Frodak's Steel Star", price: "30 Laurel" },
+      { name: "Dagnar's Badge", price: "40 Laurel + 50 Glob of Ectoplasm" },
+    ],
+  },
+  {
+    name: "Dredge Supplier Yuliya",
+    location: "Refiner's Joy, Thunderhead Peaks",
+    url: "https://wiki.guildwars2.com/wiki/Dredge_Supplier_Yuliya",
+    map: "Thunderhead Peaks",
+    wikiPointName: "Refiner's Joy",
+    wikiPointType: "landmark",
+    note: "Repeatable-heart vendor for Branded Mass and utility tools.",
+    items: [
+      { name: "Mini Branded Dredge", price: "105,000 Karma + 25 Branded Mass" },
+      { name: "Branded Mass", price: "455 Karma", limit: "5 per day" },
+      { name: "Volatile Harvesting Sickle", price: "4,900 Karma" },
+      { name: "Volatile Mining Pick", price: "4,900 Karma" },
+      { name: "Volatile Logging Axe", price: "4,900 Karma" },
+    ],
+  },
+];
+
+const DRAGONFALL_STORES: GuideStore[] = [
+  {
+    name: "Mist Warden Quartermaster",
+    location: "Pact Command, Dragonfall",
+    url: "https://wiki.guildwars2.com/wiki/Mist_Warden_Quartermaster",
+    map: "Dragonfall",
+    waypoint: "[&BN4LAAA=]",
+    wikiPointName: "Pact Command",
+    wikiPointType: "sectors",
+    note: "Mist Warden camp vendor; requires Cutting Weeds for the full service.",
+    items: [
+      { name: "Mashed Echinacea", price: "100 Volatile Magic + 5 Mistborn Mote" },
+      { name: "Karmic Retribution (Dragonfall)", price: "1,000 Volatile Magic + 5 gold", limit: "Tier 1" },
+      { name: "Karmic Retribution (Dragonfall)", price: "5,000 Volatile Magic + 10 gold", limit: "Tier 2" },
+      { name: "Karmic Retribution (Dragonfall)", price: "10,000 Volatile Magic + 15 gold", limit: "Tier 3" },
+      { name: "Dragonfall Empowerment", price: "1,000 Volatile Magic + 5 gold", limit: "Tier 1" },
+      { name: "Dragonfall Empowerment", price: "5,000 Volatile Magic + 10 gold", limit: "Tier 2" },
+      { name: "Dragonfall Empowerment", price: "10,000 Volatile Magic + 15 gold", limit: "Tier 3" },
+      { name: "Mini Ghostly Gwen", price: "105,000 Karma + 25 Mistborn Mote" },
+      { name: "Scion-Spike Amulet", price: "3,000 Volatile Magic + 125 Mistborn Mote" },
+      { name: "Effervescent Pod", price: "100 Volatile Magic + 1 gold" },
+      ...SEASON_4_SHIPMENT_STORE_ITEMS,
+      { name: "Volatile Harvesting Sickle", price: "4,900 Karma" },
+      { name: "Volatile Mining Pick", price: "4,900 Karma" },
+      { name: "Volatile Logging Axe", price: "4,900 Karma" },
+    ],
+  },
+  {
+    name: "Crystal Bloom Quartermaster",
+    location: "Pact Command, Dragonfall",
+    url: "https://wiki.guildwars2.com/wiki/Crystal_Bloom_Quartermaster",
+    map: "Dragonfall",
+    waypoint: "[&BN4LAAA=]",
+    wikiPointName: "Pact Command",
+    wikiPointType: "sectors",
+    note: "Crystal Bloom camp vendor; requires Putting Out Fires for the full service.",
+    items: [
+      { name: "Activated-Charcoal Paste", price: "4,900 Karma", limit: "1 total", requirement: "Skyscale Medicine" },
+      { name: "Mistborn Mote Home Instance Node", price: "10,000 Volatile Magic + 50 gold", limit: "1 total" },
+      { name: "Endless Shadow Warrior Tonic", price: "175,000 Karma + 50 Mistborn Mote" },
+      { name: "Mini Shadow Warrior", price: "105,000 Karma + 25 Mistborn Mote" },
+      { name: "Mistborn Band", price: "2,000 Volatile Magic + 100 Mistborn Mote" },
+      { name: "Obsidian Shard", price: "100 Volatile Magic + 96 copper" },
+      { name: "Mistborn Mote", price: "2,688 Karma", limit: "5 per day" },
+      { name: "Infernal Facade", price: "650 Volatile Magic + 5 gold" },
+      { name: "Volatile Harvesting Sickle", price: "4,900 Karma" },
+      { name: "Volatile Mining Pick", price: "4,900 Karma" },
+      { name: "Volatile Logging Axe", price: "4,900 Karma" },
+    ],
+  },
+  {
+    name: "Olmakhan Quartermaster",
+    location: "Pact Command, Dragonfall",
+    url: "https://wiki.guildwars2.com/wiki/Olmakhan_Quartermaster",
+    map: "Dragonfall",
+    waypoint: "[&BN4LAAA=]",
+    wikiPointName: "Pact Command",
+    wikiPointType: "sectors",
+    note: "Olmakhan camp vendor; requires Life in the Underworld for the full service.",
+    items: [
+      { name: "Gravewort Paste", price: "100 Volatile Magic + 5 Mistborn Mote" },
+      { name: "Dragonfall Portal Scroll", price: "1,000 Volatile Magic + 50 silver" },
+      { name: "Season 4 Portal Tome", price: "1,000 Volatile Magic + 1 gold" },
+      { name: "Endless Skyscale Youngling Tonic", price: "175,000 Karma + 50 Mistborn Mote" },
+      { name: "Mini Bone Soldier", price: "105,000 Karma + 25 Mistborn Mote" },
+      { name: "Shadow Mender", price: "4,900 Karma + 1 Mistborn Mote" },
+      { name: "Mists-Charged Treasure", price: "4,000 Volatile Magic + 150 Mistborn Mote" },
+      { name: "Grenth's Palm", price: "100 Volatile Magic + 1 gold" },
+      { name: "Olmakhan Latigo Strap", price: "300 Volatile Magic" },
+      { name: "Volatile Harvesting Sickle", price: "4,900 Karma" },
+      { name: "Volatile Mining Pick", price: "4,900 Karma" },
+      { name: "Volatile Logging Axe", price: "4,900 Karma" },
+    ],
+  },
+  {
+    name: "Traveling Elonian Trader",
+    location: "Pact Command, Dragonfall",
+    url: "https://wiki.guildwars2.com/wiki/Traveling_Elonian_Trader",
+    map: "Dragonfall",
+    waypoint: "[&BN4LAAA=]",
+    wikiPointName: "Pact Command",
+    wikiPointType: "sectors",
+    note: "Season 4 currency exchange and Dragonfall collection vendor.",
+    items: [
+      { name: "Kralkatite Ore", price: "4 Volatile Magic", limit: "5 per day" },
+      { name: "Difluorite Crystal", price: "20 Volatile Magic", limit: "5 per day" },
+      { name: "Inscribed Shard", price: "20 Volatile Magic", limit: "5 per day" },
+      { name: "Lump of Mistonium", price: "20 Volatile Magic", limit: "5 per day" },
+      { name: "Branded Mass", price: "20 Volatile Magic", limit: "5 per day" },
+      { name: "Mist-Infused Saddle Oil", price: "250 Volatile Magic + 250 Mistborn Mote + 5 gold", limit: "1 total", requirement: "Skyscale Saddle" },
+      { name: "Trader's Key", price: "245 Karma + 10 Trade Contract" },
+      { name: "Stabilized Brandstorm Flux", price: "245 Karma + 10 Trade Contract", limit: "1 total", requirement: "Skyscale Medicine" },
+      { name: "Tincture of Volatile Magic", price: "245 Karma + 10 Trade Contract", limit: "1 total", requirement: "Skyscale Medicine" },
+      { name: "Memory Essence Encapsulator", price: "50 Glob of Ectoplasm + 10 Orichalcum Filigree + 1 Lesser Vision Crystal + 3 Xunlai Electrum Ingot" },
+      { name: "Trance Stone", price: "700 Karma", limit: "1 total" },
+      ...BLOSSOMING_MIST_SHARD_ARMOR_STORE_ITEMS,
+    ],
+  },
+];
+
+const DRIZZLEWOOD_STORES: GuideStore[] = [
+  {
+    name: "United Legions Quaestor",
+    location: "Captured south Drizzlewood bases",
+    url: "https://wiki.guildwars2.com/wiki/United_Legions_Quaestor",
+    map: "Drizzlewood Coast",
+    wikiPointName: "Fort Defiance",
+    wikiPointType: "sectors",
+    note: "Area-control vendor. Daily material donations rotate and can be bought five times per day per account.",
+    items: [
+      { name: "Raise Morale", price: "100 War Supplies" },
+      { name: "Drizzlewood Coast Portal Scroll", price: "24,500 Karma" },
+      { name: "Icebrood Saga Portal Tome", price: "175,000 Karma + 2 gold" },
+      { name: "Salvage Empowerment", price: "5 gold + 5 Spirit Shard", limit: "Tier 1" },
+      { name: "Salvage Empowerment", price: "10 gold + 10 Spirit Shard", limit: "Tier 2" },
+      { name: "Salvage Empowerment", price: "15 gold + 20 Spirit Shard", limit: "Tier 3" },
+      { name: "Common Charr Salvage", price: "2,688 Karma", limit: "10 per day" },
+      { name: "Salvage Pile Home Instance Node", price: "50 gold + 245,000 Karma" },
+      { name: "Cache Key", price: "25 War Supplies", limit: "First 5 per day" },
+      { name: "Cache Key", price: "50 War Supplies", limit: "Next 5 per day" },
+      { name: "Cache Key", price: "100 War Supplies", limit: "Next 5 per day" },
+      { name: "Cache Key", price: "250 War Supplies", limit: "Next 5 per day" },
+      { name: "Cache Key", price: "500 War Supplies", limit: "Next 5 per day" },
+      { name: "Cache Key", price: "1,000 War Supplies", limit: "After daily price tiers" },
+      { name: "Thick Drizzlewood Coast Tree Token", price: "100 War Supplies" },
+      { name: "Typical Drizzlewood Coast Tree Token", price: "100 War Supplies" },
+      { name: "Sparse Drizzlewood Coast Tree Token", price: "100 War Supplies" },
+      { name: "United Legions Flame Ram Blueprint", price: "50 War Supplies" },
+      { name: "United Legions Arrow Cart Blueprint", price: "100 War Supplies" },
+      { name: "United Legions Ballista Blueprint", price: "150 War Supplies" },
+      { name: "United Legions Catapult Blueprint", price: "200 War Supplies" },
+      ...DRIZZLEWOOD_DONATION_STORE_ITEMS,
+      { name: "Charr Intel Document", price: "20 Special Mission Document + 100 War Supplies", limit: "Tier 1, 1 per day" },
+      { name: "Charr Intel Document", price: "40 Special Mission Document + 100 War Supplies", limit: "Tier 2, 1 per day" },
+      { name: "Charr Intel Document", price: "100 Special Mission Document + 500 War Supplies", limit: "Tier 3, 1 per day" },
+      { name: "Charr Intel Document", price: "200 Special Mission Document + 1,000 War Supplies", limit: "Tier 4, 1 per day" },
+      { name: "Dominion Intel Document", price: "20 Special Mission Document + 100 War Supplies", limit: "Tier 1, 1 per day" },
+      { name: "Dominion Intel Document", price: "40 Special Mission Document + 100 War Supplies", limit: "Tier 2, 1 per day" },
+      { name: "Dominion Intel Document", price: "100 Special Mission Document + 500 War Supplies", limit: "Tier 3, 1 per day" },
+      { name: "Dominion Intel Document", price: "200 Special Mission Document + 1,000 War Supplies", limit: "Tier 4, 1 per day" },
+      { name: "Corrupted Intel Document", price: "20 Special Mission Document + 100 War Supplies", limit: "Tier 1, 1 per day" },
+      { name: "Corrupted Intel Document", price: "40 Special Mission Document + 100 War Supplies", limit: "Tier 2, 1 per day" },
+      { name: "Corrupted Intel Document", price: "100 Special Mission Document + 500 War Supplies", limit: "Tier 3, 1 per day" },
+      { name: "Corrupted Intel Document", price: "200 Special Mission Document + 1,000 War Supplies", limit: "Tier 4, 1 per day" },
+      { name: "Special Mission Document", price: "1 Ash Legion Special Mission Document" },
+      { name: "Special Mission Document", price: "1 Blood Legion Special Mission Document" },
+      { name: "Special Mission Document", price: "1 Flame Legion Special Mission Document" },
+      { name: "Special Mission Document", price: "1 Iron Legion Special Mission Document" },
+    ],
+  },
+  {
+    name: "Quartermaster",
+    location: "United Legions Forward Camp and Iron Lookout",
+    url: "https://wiki.guildwars2.com/wiki/Quartermaster_(Drizzlewood_Coast)",
+    map: "Drizzlewood Coast",
+    wikiPointName: "United Legions Forward Camp",
+    wikiPointType: "landmark",
+    note: "Northern Drizzlewood War Supplies vendor using the same United Legions Quaestor inventory.",
+    items: [
+      { name: "Raise Morale", price: "100 War Supplies" },
+      { name: "Cache Key", price: "25 War Supplies", limit: "First 5 per day" },
+      { name: "Cache Key", price: "50 War Supplies", limit: "Next 5 per day" },
+      { name: "Common Charr Salvage", price: "2,688 Karma", limit: "10 per day" },
+      { name: "Thick Drizzlewood Coast Tree Token", price: "100 War Supplies" },
+      { name: "Typical Drizzlewood Coast Tree Token", price: "100 War Supplies" },
+      { name: "Sparse Drizzlewood Coast Tree Token", price: "100 War Supplies" },
+      { name: "United Legions Flame Ram Blueprint", price: "50 War Supplies" },
+      { name: "United Legions Arrow Cart Blueprint", price: "100 War Supplies" },
+      { name: "United Legions Ballista Blueprint", price: "150 War Supplies" },
+      { name: "United Legions Catapult Blueprint", price: "200 War Supplies" },
+    ],
+  },
+  {
+    name: "Annona Vinedrummer",
+    location: "Umbral Grotto, Drizzlewood Coast",
+    url: "https://wiki.guildwars2.com/wiki/Annona_Vinedrummer",
+    map: "Drizzlewood Coast",
+    wikiPointName: "Umbral Grotto",
+    wikiPointType: "sectors",
+    note: "Quaestor vendor with the same material donation table and pledge controls.",
+    items: [
+      ...DRIZZLEWOOD_DONATION_STORE_ITEMS,
+    ],
   },
 ];
 
@@ -1894,7 +2496,6 @@ const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
         note: "Mistborn Motes and Volatile Magic are a major reason Dragonfall remains a strong continuous farm.",
         wikiUrl: "https://wiki.guildwars2.com/wiki/Dragonfall",
         continentCoord: [46687.5, 50864.8],
-        floor: 49,
         zoom: 7,
       },
     ],
@@ -1906,7 +2507,6 @@ const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
       wikiUrl: resource.wikiUrl,
     })),
     resources: LWS4_RESOURCE_ROWS,
-    sourceLinks: LWS4_SOURCE_LINKS,
     hideRelatedNotes: true,
   },
   "dragonfall-volatile-magic": {
@@ -1928,19 +2528,17 @@ const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
       {
         label: "Dragonfall meta map",
         map: "Dragonfall",
+        waypoint: "[&BN4LAAA=]",
         note: "Use squad markers and camp status to stay with the active event chain.",
         wikiUrl: "https://wiki.guildwars2.com/wiki/Dragonfall",
-        continentCoord: [46687.5, 50864.8],
-        floor: 49,
         zoom: 7,
       },
       {
         label: "Mistborn Mote source",
         map: "Dragonfall",
+        waypoint: "[&BNELAAA=]",
         note: "Dragonfall is the main source for Mistborn Motes, which can be traded or consumed for Volatile Magic.",
         wikiUrl: "https://wiki.guildwars2.com/wiki/Mistborn_Mote",
-        continentCoord: [44928.4, 50424],
-        floor: 49,
         zoom: 7,
       },
     ],
@@ -1975,6 +2573,7 @@ const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
       { name: "Mistborn Mote", detail: "Main Dragonfall currency; trade with camp vendors or consume for Volatile Magic after account needs.", itemId: 90783, icon: "https://render.guildwars2.com/file/E76806D6DF4E27C70EA70A9FAC1F0D036C18659E/2140686.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Mistborn_Mote" },
       { name: "Trophy Shipment", detail: "Primary Volatile Magic conversion target when trophy prices are favorable.", itemId: 85725, icon: "https://render.guildwars2.com/file/12280A76B8BF2B15ADFE092A0B9FF6EE442851EE/1894768.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Trophy_Shipment" },
     ],
+    stores: DRAGONFALL_STORES,
     sourceLinks: [
       LWS4_SOURCE_LINKS[1],
       {
@@ -1991,6 +2590,7 @@ const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
       },
     ],
     hideRelatedNotes: true,
+    metaEventGuideId: "Dragonfall",
   },
   "palawadan-volatile-magic": {
     title: "Palawadan Daily Route",
@@ -2055,6 +2655,7 @@ const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
       { name: "Kralkatite Ore", detail: "Istan currency from Palawadan rewards, local vendors, and related event routes.", itemId: 86069, icon: "https://render.guildwars2.com/file/380A7E3B250B050C2C39B1106CA39AED65C8396B/1894933.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Kralkatite_Ore" },
       { name: "Trophy Shipment", detail: "Use Volatile Magic for shipments only after account currency needs are covered.", itemId: 85725, icon: "https://render.guildwars2.com/file/12280A76B8BF2B15ADFE092A0B9FF6EE442851EE/1894768.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Trophy_Shipment" },
     ],
+    stores: ISTAN_STORES,
     sourceLinks: [
       {
         label: "Palawadan, Jewel of Istan",
@@ -2070,10 +2671,12 @@ const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
       },
     ],
     hideRelatedNotes: true,
+    metaEventGuideId: "Domain of Istan Palawadan",
   },
   "great-hall-volatile-magic": {
     title: "Great Hall Daily Route",
     summary: "A short Istan event route around the Mordant Crescent Great Hall, useful as a daily add-on beside Palawadan.",
+    activityValueId: null,
     timing: "Short event-chain add-on in Domain of Istan; do it when the Great Hall/Sunspear Uprising state is active.",
     preparation: [
       "Use this as a daily supplement, not a full-session farm.",
@@ -2125,6 +2728,7 @@ const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
     rewards: [
       { name: "Kralkatite Ore", detail: "Local Istan currency that may be needed before conversion.", itemId: 86069, icon: "https://render.guildwars2.com/file/380A7E3B250B050C2C39B1106CA39AED65C8396B/1894933.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Kralkatite_Ore" },
     ],
+    stores: ISTAN_STORES,
     sourceLinks: [
       {
         label: "Break through the main gate of the Mordant Crescent Great Hall",
@@ -2207,6 +2811,7 @@ const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
       { name: "Branded Mass", detail: "Thunderhead Peaks currency from events, rewards, and local resource loops.", itemId: 89537, icon: "https://render.guildwars2.com/file/0C2FD403DACFABF74B9E3824914FB60B3C285804/2083245.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Branded_Mass" },
       { name: "Trophy Shipment", detail: "Possible Volatile Magic conversion after account needs and material prices are checked.", itemId: 85725, icon: "https://render.guildwars2.com/file/12280A76B8BF2B15ADFE092A0B9FF6EE442851EE/1894768.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Trophy_Shipment" },
     ],
+    stores: THUNDERHEAD_STORES,
     sourceLinks: [
       {
         label: "Thunderhead Keep",
@@ -2223,6 +2828,7 @@ const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
       LWS4_SOURCE_LINKS[2],
     ],
     hideRelatedNotes: true,
+    metaEventGuideId: "Thunderhead Peaks oil meta",
   },
   "oil-floes-volatile-magic": {
     title: "Oil Floes Completion Notes",
@@ -2278,6 +2884,7 @@ const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
     rewards: [
       { name: "Branded Mass", detail: "Thunderhead Peaks account currency tied to the wider map reward loop.", itemId: 89537, icon: "https://render.guildwars2.com/file/0C2FD403DACFABF74B9E3824914FB60B3C285804/2083245.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Branded_Mass" },
     ],
+    stores: THUNDERHEAD_STORES,
     sourceLinks: [
       {
         label: "The Oil Floes",
@@ -2288,6 +2895,7 @@ const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
       LWS4_SOURCE_LINKS[3],
     ],
     hideRelatedNotes: true,
+    metaEventGuideId: "Thunderhead Peaks oil meta",
   },
   "meta-events": {
     title: "Meta Event Farming",
@@ -2317,6 +2925,7 @@ const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
   "drizzlewood-donation": {
     title: "Drizzlewood Material Donation",
     summary: "A targeted material conversion route built around Drizzlewood Coast reward flow.",
+    activityValueId: null,
     steps: [
       "Stage at Base Camp and run the south or north meta chain.",
       "Track material inputs before donating; do not convert scarce legendary materials blindly.",
@@ -2338,6 +2947,8 @@ const GUIDE_DEFINITIONS: Record<string, GuideDefinition> = {
         wikiUrl: "https://wiki.guildwars2.com/wiki/Drizzlewood_Coast",
       },
     ],
+    stores: DRIZZLEWOOD_STORES,
+    hideRelatedNotes: true,
   },
   fishing: {
     title: "Fishing",
@@ -2661,6 +3272,46 @@ const GW2_TILE_SIZE = 256;
 const MAX_MAP_PREVIEW_TILES = 24;
 const MAP_PREVIEW_GRID_SIZE = 3;
 const GUIDE_MAP_GRID_SIZE = 7;
+const GUIDE_MAP_WHEEL_ZOOM_DELTA = 240;
+
+const GUIDE_MAP_FLOOR_OVERRIDES: Record<string, number> = {
+  Dragonfall: 1,
+};
+
+const GUIDE_WAYPOINT_COORDINATES: Record<string, GuideWaypointCoordinate> = {
+  "[&BN4LAAA=]": {
+    name: "Pact Command Waypoint",
+    map: "Dragonfall",
+    waypoint: "[&BN4LAAA=]",
+    continentCoord: [46814, 48720],
+    floor: 1,
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Pact_Command_Waypoint",
+  },
+  "[&BNELAAA=]": {
+    name: "The Underworld Waypoint",
+    map: "Dragonfall",
+    waypoint: "[&BNELAAA=]",
+    continentCoord: [44863.7, 50382],
+    floor: 1,
+    wikiUrl: "https://wiki.guildwars2.com/wiki/The_Underworld_Waypoint",
+  },
+  "[&BNILAAA=]": {
+    name: "Melandru's Lost Domain Waypoint",
+    map: "Dragonfall",
+    waypoint: "[&BNILAAA=]",
+    continentCoord: [46579, 50768.9],
+    floor: 1,
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Melandru%27s_Lost_Domain_Waypoint",
+  },
+  "[&BOYLAAA=]": {
+    name: "Burning Forest Waypoint",
+    map: "Dragonfall",
+    waypoint: "[&BOYLAAA=]",
+    continentCoord: [44341.9, 48961.8],
+    floor: 1,
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Burning_Forest_Waypoint",
+  },
+};
 
 const ACTIVITY_VALUE_DEFINITIONS: Record<string, ActivityValueDefinition> = {
   "open-world": {
@@ -3216,6 +3867,572 @@ const META_FARM_ESTIMATES: MetaFarmEstimate[] = [
   },
 ];
 
+const META_MAP_CENTER_COORDS: Record<string, [number, number]> = {
+  "Drizzlewood Coast": [51216, 20049],
+  Dragonfall: [45696, 49792],
+  "The Silverwastes": [37632, 31360],
+  "Auric Basin": [34304, 33920],
+  "Dragon's End": [34214, 103694],
+  "Dragon's Stand": [35584, 37440],
+  "Gyala Delve": [37765, 102335],
+  "Tangled Depths": [36992, 34944],
+  "Verdant Brink": [35744, 32194],
+  "The Echovald Wilds": [31105, 102170],
+  "New Kaineng City": [26920, 99380],
+  "Seitung Province": [23079, 101801],
+  "Domain of Istan": [57238, 61836],
+  "Thunderhead Peaks": [57484, 36792],
+  "Bjora Marches": [57151, 18060],
+  "Sandswept Isles": [53594, 57578],
+  "Domain of Vabbi": [66048, 53952],
+  Amnytas: [24086, 20410],
+  "Skywatch Archipelago": [25446, 23738],
+  "Inner Nayos": [21291, 22988],
+  "Lowland Shore": [42039, 22798],
+  "Janthir Syntri": [39894, 15618],
+  "Crystal Oasis": [59816, 43584],
+  "Elon Riverlands": [60032, 46464],
+  "The Desolation": [60032, 50752],
+  "Bloodstone Fen": [35584, 30658],
+  "Ember Bay": [39294, 45438],
+  "Draconis Mons": [36638, 41204],
+  "Lake Doric": [45568, 26752],
+  "Bloodtide Coast": [49216, 33856],
+  "Sparkfly Fen": [49280, 37120],
+  "Kessex Hills": [44160, 31488],
+  "Harathi Hinterlands": [47808, 27264],
+  "Mount Maelstrom": [52480, 38976],
+};
+
+const META_EVENT_GUIDE_OVERRIDES: Record<string, Partial<MetaEventGuide>> = {
+  "Drizzlewood Coast north/south": {
+    summary: "A long-form Icebrood Saga warfront route built around south base captures, north assault progress, commendations, cache keys, and material containers.",
+    timing: "Repeatable loop; best when you can stay for both the south push and the north assault.",
+    preparation: [
+      "Join a commander map at Base Camp before the south map starts moving.",
+      "Carry salvage kits and leave bag space for charr caches, commendation rewards, unidentified gear, and materials.",
+      "Pick a Legion reward track only after checking which materials or collections you care about.",
+    ],
+    phases: [
+      {
+        title: "South Push",
+        objective: "Capture Dominion-controlled objectives and keep the squad moving between bases.",
+        details: [
+          "Tag events broadly across the south half of the map instead of overcommitting to one objective.",
+          "Open charr caches after the commander pauses so you do not fall behind the train.",
+          "Use waystations, siege, and crowd control to speed up champions and defense events.",
+        ],
+      },
+      {
+        title: "North Assault",
+        objective: "Push into the northern Frost Legion route and complete the assault chain.",
+        details: [
+          "Stay close to the commander through escorts, boss phases, and cache-key pickup opportunities.",
+          "Use EMP/CC when breakbars appear; failed or slow burns are the main time loss.",
+          "Loot north rewards before the map resets or the squad cycles back south.",
+        ],
+      },
+      {
+        title: "Reward Conversion",
+        objective: "Turn commendations and caches into material value after the route ends.",
+        details: [
+          "Spend or save commendations based on account goals before liquidating materials.",
+          "Process unidentified gear and caches in batches so the farm does not stall mid-route.",
+        ],
+      },
+    ],
+    locations: [
+      {
+        label: "Base Camp staging",
+        map: "Drizzlewood Coast",
+        waypoint: "[&BGQMAAA=]",
+        note: "Start here for south meta organization and cache-key preparation.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Drizzlewood_Coast",
+        continentCoord: [51216, 21720],
+        zoom: 7,
+      },
+      {
+        label: "North assault route",
+        map: "Drizzlewood Coast",
+        waypoint: "[&BHIMAAA=]",
+        note: "Forward Camp is useful when the squad has moved into the north half of the map.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Drizzlewood_Coast",
+        continentCoord: [50490, 18360],
+        zoom: 7,
+      },
+    ],
+    rewards: [
+      { name: "Charr commendations", detail: "Choose a Legion reward track and convert through cache/material rewards.", wikiUrl: "https://wiki.guildwars2.com/wiki/Charr_Commendation" },
+      { name: "Cache keys", detail: "Used to open Drizzlewood reward chests during the route.", wikiUrl: "https://wiki.guildwars2.com/wiki/Cache_Key" },
+    ],
+  },
+  Dragonfall: {
+    summary: "A continuous Living World Season 4 meta route focused on camp progress, Mistborn Coffers, champion cleanup, final Kralkatorrik rewards, and Volatile Magic conversion.",
+    timing: "Repeatable and commander-driven; best on a map actively cycling camp events into the final meta.",
+    preparation: [
+      "Join an LFG commander map with all three camps progressing.",
+      "Bring mobility, cleave, breakbar pressure, salvage kits, and enough bag space for coffers and unidentified gear.",
+      "Check Dragonfall vendor needs before consuming Mistborn Motes or converting Volatile Magic.",
+    ],
+    phases: [
+      {
+        title: "Camp Rotation",
+        objective: "Keep Pact, Olmakhan, and Mist Warden camps progressing.",
+        details: [
+          "Follow the commander between camp events instead of camping one lane.",
+          "Tag escort, defense, bridge, and collection events quickly; the goal is broad participation and camp upgrade progress.",
+          "Open Mistborn Coffers after the train pauses, not while the group is moving.",
+        ],
+      },
+      {
+        title: "Meta Push",
+        objective: "Move from upgraded camps into the final Kralkatorrik chain.",
+        details: [
+          "Stay with the squad for pre-events and champion cleanup so you do not miss chest and participation credit.",
+          "During bonus bosses, prioritize tagging each boss and staying alive over chasing one target too long.",
+        ],
+      },
+      {
+        title: "Conversion Check",
+        objective: "Turn rewards into value without burning account-needed currency.",
+        details: [
+          "Mistborn Motes are useful with Dragonfall vendors and can also be consumed for Volatile Magic.",
+          "Use Trophy Shipments only when the material basket is favorable and you do not need the Volatile Magic elsewhere.",
+        ],
+      },
+    ],
+    locations: [
+      {
+        label: "Dragonfall meta route",
+        map: "Dragonfall",
+        waypoint: "[&BN4LAAA=]",
+        note: "Use squad markers and camp status to stay with the active event chain.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Dragonfall",
+        zoom: 7,
+      },
+      {
+        label: "Mistborn Mote source",
+        map: "Dragonfall",
+        waypoint: "[&BNELAAA=]",
+        note: "Mistborn Motes feed Dragonfall vendors and Volatile Magic conversion decisions.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Mistborn_Mote",
+        zoom: 7,
+      },
+    ],
+    rewards: [
+      { name: "Mistborn Mote", detail: "Main Dragonfall currency; spend with camp vendors or consume for Volatile Magic after account needs.", itemId: 90783, icon: "https://render.guildwars2.com/file/E76806D6DF4E27C70EA70A9FAC1F0D036C18659E/2140686.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Mistborn_Mote" },
+      { name: "Trophy Shipment", detail: "Primary Volatile Magic conversion target when trophy prices justify the currency and coin spend.", itemId: 85725, icon: "https://render.guildwars2.com/file/12280A76B8BF2B15ADFE092A0B9FF6EE442851EE/1894768.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Trophy_Shipment" },
+    ],
+    relatedPageIds: ["dragonfall-volatile-magic", "lws4-resources"],
+  },
+  "The Silverwastes RIBA": {
+    summary: "A rotating Red-Indigo-Blue-Amber fort train that builds map progress, completes Breach and Vinewrath, then cashes out through bandit chests and bags.",
+    timing: "Repeatable; strongest when a commander keeps the RIBA rotation moving and the map reaches Breach/Vinewrath quickly.",
+    preparation: [
+      "Bring Bandit Skeleton Keys or plan to buy keys before opening the chest train.",
+      "Join a commander map and learn the fort order: Red, Indigo, Blue, Amber.",
+      "Save inventory space for champion bags, bandit bags, crests, and chest-train loot.",
+    ],
+    phases: [
+      {
+        title: "RIBA Fort Rotation",
+        objective: "Capture and defend the four forts while map progress rises.",
+        details: [
+          "Move with the squad from fort to fort, tagging events and helping rebuild defenses.",
+          "Do not wander into chest routes until the commander calls the farm phase.",
+        ],
+      },
+      {
+        title: "Breach And Vinewrath",
+        objective: "Complete the large map events once fort progress reaches the threshold.",
+        details: [
+          "Split to the assigned breach boss, then regroup for Vinewrath lanes.",
+          "Follow lane mechanics instead of tunneling damage; failed lane mechanics waste the whole cycle.",
+        ],
+      },
+      {
+        title: "Chest Train",
+        objective: "Use keys and crests to convert the completed map into material bags.",
+        details: [
+          "Follow the chest train tightly so you do not miss buried chest markers.",
+          "Open and salvage after the chest loop, then restock keys before repeating.",
+        ],
+      },
+    ],
+    locations: [
+      {
+        label: "RIBA fort loop",
+        map: "The Silverwastes",
+        note: "Central map route connecting Red, Indigo, Blue, and Amber fort events.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/The_Silverwastes",
+        continentCoord: [37632, 31360],
+        zoom: 7,
+      },
+    ],
+    rewards: [
+      { name: "Bandit Crest", detail: "Used for keys and Silverwastes vendor purchases.", wikiUrl: "https://wiki.guildwars2.com/wiki/Bandit_Crest" },
+      { name: "Champion bags", detail: "Material bags are a core part of the RIBA payout.", wikiUrl: "https://wiki.guildwars2.com/wiki/Champion_loot_bag" },
+    ],
+  },
+  "Auric Basin Octovine": {
+    summary: "The Battle in Tarir meta: prepare the city, split to four gates, remove Octovine shields, kill all four Octovines close together, then open Exalted chests.",
+    timing: "Every two hours; arrive before Battle in Tarir so commanders can assign gates.",
+    preparation: [
+      "Bring Exalted Markings and Nuhoch mobility masteries if available.",
+      "Buy or save Exalted Keys before the meta if you intend to open post-meta chests.",
+      "Join a squad and move to your assigned north, east, south, or west gate early.",
+    ],
+    phases: [
+      {
+        title: "Outpost And Pylon Prep",
+        objective: "Use the pre-meta window to restore outposts and prepare Tarir.",
+        details: [
+          "Complete nearby outpost chains while the map organizes.",
+          "Move to your assigned gate before the attack starts instead of waiting at the center.",
+        ],
+      },
+      {
+        title: "Four-Gate Octovine",
+        objective: "Break the shield mechanic and burn each Octovine within the sync window.",
+        details: [
+          "Each gate removes shields differently; follow the local commander call for your lane.",
+          "All four Octovines must die close together, so stop damage if your lane is far ahead.",
+          "Use crowd control and enchanted armor support when your lane calls for it.",
+        ],
+      },
+      {
+        title: "Chest Room",
+        objective: "Convert the completion into Exalted chest rewards.",
+        details: [
+          "Open Grand, Greater, and Lesser Exalted Chests based on your key stock.",
+          "Process aurillium and gear after leaving the chest room so the next event chain is not delayed.",
+        ],
+      },
+    ],
+    locations: [
+      {
+        label: "Tarir center",
+        map: "Auric Basin",
+        waypoint: "[&BMYHAAA=]",
+        note: "Forgotten City Waypoint is the usual staging point for Octovine organization.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Battle_in_Tarir",
+        continentCoord: [34304, 33920],
+        zoom: 8,
+      },
+    ],
+    rewards: [
+      { name: "Lump of Aurillium", detail: "Auric Basin account currency from events and chests.", icon: "https://render.guildwars2.com/file/7F57C1E3AD551CD4B2F7131698570A2D38A1E45D/1202328.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Lump_of_Aurillium" },
+      { name: "Exalted chests", detail: "Keyed chest room rewards after a successful Octovine.", wikiUrl: "https://wiki.guildwars2.com/wiki/Exalted_Chest" },
+    ],
+  },
+  "Dragon's End": {
+    summary: "A high-variance End of Dragons meta ending at Soo-Won in the Harvest Temple; organization and preparation matter more than raw tagging.",
+    timing: "Every two hours; join early because map readiness and squad composition strongly affect success.",
+    preparation: [
+      "Join a commander map well before the final chain and pick up map-wide contribution stacks.",
+      "Bring a real open-world build with boons, breakbar pressure, and survival tools.",
+      "Use jade bot protocols, food, utility, and any squad instructions before the final encounter.",
+    ],
+    phases: [
+      {
+        title: "Map Preparation",
+        objective: "Build map contribution and get the squad organized before the final push.",
+        details: [
+          "Complete pre-events instead of waiting at the temple.",
+          "Listen for subgroup or role calls; this meta is less forgiving than most farm trains.",
+        ],
+      },
+      {
+        title: "Escort And Split Events",
+        objective: "Move through the chain cleanly and keep event timers healthy.",
+        details: [
+          "Stay with the group through escorts, crystals, and split objectives.",
+          "Revive, CC, and rotate quickly rather than chasing extra tags.",
+        ],
+      },
+      {
+        title: "Soo-Won",
+        objective: "Finish the boss encounter with mechanics discipline.",
+        details: [
+          "Prioritize breakbars, tail calls, greens, and survival over greed damage.",
+          "If the map fails, use the run as account progress and do not value it like a guaranteed farm.",
+        ],
+      },
+    ],
+    locations: [
+      {
+        label: "Harvest Temple finale",
+        map: "Dragon's End",
+        note: "Final meta location; arrive after completing preparation and escort phases.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Dragon%27s_End",
+        continentCoord: [34214, 103694],
+        zoom: 7,
+      },
+    ],
+    rewards: [
+      { name: "Imperial Favor", detail: "End of Dragons account currency from Cantha events.", wikiUrl: "https://wiki.guildwars2.com/wiki/Imperial_Favor" },
+      { name: "Dragon's End rewards", detail: "High-value completion rewards depend on a successful map.", wikiUrl: "https://wiki.guildwars2.com/wiki/Dragon%27s_End" },
+    ],
+  },
+  "Dragon's Stand": {
+    summary: "A three-lane Heart of Thorns lane meta that pushes through the jungle, kills tower bosses, then fights the Mouth of Mordremoth.",
+    timing: "Every two hours; join early so lanes are balanced before the push begins.",
+    preparation: [
+      "Join a squad and move to your assigned north, middle, or south lane.",
+      "Bring mobility, cleave, CC, and enough keys for Noxious Pods if you are farming the full map.",
+      "Stay on the lane commander; lane desyncs are the usual failure point.",
+    ],
+    phases: [
+      {
+        title: "Lane Push",
+        objective: "Advance north, middle, and south lanes at a similar pace.",
+        details: [
+          "Do escort and defense mechanics rather than rushing ahead.",
+          "Use mushrooms, gliding, and waypoints to recover quickly if you fall behind.",
+        ],
+      },
+      {
+        title: "Tower Bosses",
+        objective: "Complete lane boss phases and open the route to the finale.",
+        details: [
+          "Follow lane-specific mechanics and use crowd control during breakbars.",
+          "Wait for lane calls if another lane is behind.",
+        ],
+      },
+      {
+        title: "Mouth Of Mordremoth",
+        objective: "Finish the final boss and then collect pods.",
+        details: [
+          "Stay alive during platform mechanics; missed revives slow the burn.",
+          "After success, follow the commander or known routes for Noxious Pods.",
+        ],
+      },
+    ],
+    locations: [
+      {
+        label: "Lane staging",
+        map: "Dragon's Stand",
+        note: "Start by joining a lane squad before the map push begins.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Dragon%27s_Stand",
+        continentCoord: [35584, 37440],
+        zoom: 7,
+      },
+    ],
+    rewards: [
+      { name: "Crystalline Ore", detail: "Dragon's Stand currency used for HoT rewards and account goals.", wikiUrl: "https://wiki.guildwars2.com/wiki/Crystalline_Ore" },
+      { name: "Noxious Pods", detail: "Post-meta keyed containers spread around the completed map.", wikiUrl: "https://wiki.guildwars2.com/wiki/Noxious_Pod" },
+    ],
+  },
+  "Tangled Depths Chak Gerent": {
+    summary: "A short, high-value Heart of Thorns meta where four lanes must break and burn Chak Gerents within the event window.",
+    timing: "Every two hours; arrive early to choose a lane and avoid underfilled maps.",
+    preparation: [
+      "Join LFG before the meta and move to your assigned lane.",
+      "Bring strong burst damage and crowd control.",
+      "Have map movement masteries ready; Tangled Depths is slow if you are late.",
+    ],
+    phases: [
+      {
+        title: "Lane Assignment",
+        objective: "Balance players across lanes before the Gerents spawn.",
+        details: [
+          "Use commander or map chat calls to pick a lane.",
+          "Do not stack one lane while another is empty; all lanes matter.",
+        ],
+      },
+      {
+        title: "Gerent Burn",
+        objective: "Break defiance bars and kill lane Gerents on schedule.",
+        details: [
+          "Use crowd control immediately when the lane calls for it.",
+          "Follow lane mechanics and stay alive; dead players lose the short burn window.",
+        ],
+      },
+      {
+        title: "Chak Cache Route",
+        objective: "Open post-meta rewards efficiently.",
+        details: [
+          "Loot lane rewards and follow commander calls for cache routes.",
+          "Track Chak Eggs/Crystalline Ore separately from liquid gold.",
+        ],
+      },
+    ],
+    locations: [
+      {
+        label: "Chak Gerent lanes",
+        map: "Tangled Depths",
+        note: "Lane assignment matters; use squad instructions before the meta starts.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Chak_Gerent",
+        continentCoord: [36992, 34944],
+        zoom: 7,
+      },
+    ],
+    rewards: [
+      { name: "Crystalline Ore", detail: "HoT account currency from meta rewards and caches.", wikiUrl: "https://wiki.guildwars2.com/wiki/Crystalline_Ore" },
+      { name: "Chak Egg", detail: "Rare account/reward item tied to Tangled Depths rewards.", wikiUrl: "https://wiki.guildwars2.com/wiki/Chak_Egg" },
+    ],
+  },
+  "Verdant Brink night bosses": {
+    summary: "A day/night Heart of Thorns map route where organized daytime outposts unlock stronger night tiers and boss rewards.",
+    timing: "Runs on the Verdant Brink day/night cycle; best when the map is pushing for higher night tiers.",
+    preparation: [
+      "Join a map before night if possible so outposts and choppers are ready.",
+      "Bring gliding and updraft masteries; canopy movement is core to the route.",
+      "Follow commander boss splits instead of chasing random events.",
+    ],
+    phases: [
+      {
+        title: "Daytime Outposts",
+        objective: "Build map readiness and unlock night infrastructure.",
+        details: [
+          "Complete outpost chains and rally points during the day.",
+          "Do not ignore map tier progress if the goal is boss rewards.",
+        ],
+      },
+      {
+        title: "Night Defense",
+        objective: "Defend rally points and keep the map tier climbing.",
+        details: [
+          "Move where the commander sends players; empty defense points collapse quickly.",
+          "Use gliding and updrafts to move between canopy objectives.",
+        ],
+      },
+      {
+        title: "Canopy Bosses",
+        objective: "Split to night bosses and collect final rewards.",
+        details: [
+          "Take choppers/updrafts to assigned bosses and tag quickly.",
+          "Process airship parts and gear after the night cycle ends.",
+        ],
+      },
+    ],
+    locations: [
+      {
+        label: "Night boss staging",
+        map: "Verdant Brink",
+        waypoint: "[&BMAHAAA=]",
+        note: "Shipwreck Peak is a common staging point before moving into canopy objectives.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Verdant_Brink",
+        continentCoord: [35744, 32194],
+        floor: 46,
+        zoom: 7,
+      },
+    ],
+    rewards: [
+      { name: "Airship Part", detail: "Verdant Brink account currency from events and containers.", wikiUrl: "https://wiki.guildwars2.com/wiki/Airship_Part" },
+      { name: "Airship Cargo", detail: "Map chests opened with crowbars during Verdant Brink farming.", wikiUrl: "https://wiki.guildwars2.com/wiki/Airship_Cargo" },
+    ],
+  },
+  "Domain of Istan Palawadan": {
+    summary: "A Living World Season 4 Istan meta route centered on the Palawadan invasion, chest rewards, Kralkatite Ore, and Volatile Magic value.",
+    timing: "Every two hours; strongest when paired with Great Hall and other Istan daily pickups.",
+    preparation: [
+      "Arrive in Domain of Istan before the invasion starts and join an organized map.",
+      "Bring cleave, mobility, and bag space for champion bags and unidentified gear.",
+      "Track Kralkatite Ore as account currency before converting or spending it.",
+    ],
+    phases: [
+      {
+        title: "Pre-Event Setup",
+        objective: "Get into the organized map and follow the commander to the invasion start.",
+        details: [
+          "Use the event timer and LFG to avoid arriving after the reward-heavy parts start.",
+          "Tag broadly and keep up with the group rather than chasing every enemy.",
+        ],
+      },
+      {
+        title: "Palawadan Assault",
+        objective: "Advance through the city event chain and major reward phases.",
+        details: [
+          "Stay with the commander through gates, champions, and objective phases.",
+          "Use crowd control on breakbars and prioritize event objectives over side kills.",
+        ],
+      },
+      {
+        title: "Istan Cleanup",
+        objective: "Convert the route into LWS4 resource value.",
+        details: [
+          "Loot chests, process unidentified gear, and update Kralkatite Ore needs.",
+          "Pair with Great Hall or heart/vendor routes when the timing lines up.",
+        ],
+      },
+    ],
+    locations: [
+      {
+        label: "Palawadan assault",
+        map: "Domain of Istan",
+        note: "Primary Istan meta route for Kralkatite Ore and daily chest rewards.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Palawadan,_Jewel_of_Istan_(meta_event)",
+        continentCoord: [56307.2, 62959.9],
+        zoom: 7,
+      },
+    ],
+    rewards: [
+      { name: "Kralkatite Ore", detail: "Istan local currency used for account goals and LWS4 conversion decisions.", itemId: 86069, icon: "https://render.guildwars2.com/file/380A7E3B250B050C2C39B1106CA39AED65C8396B/1894933.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Kralkatite_Ore" },
+      { name: "Volatile Magic", detail: "Season 4 currency from events and local resource conversion.", icon: GW2_CURRENCY_ICONS["Volatile Magic"], wikiUrl: "https://wiki.guildwars2.com/wiki/Volatile_Magic" },
+    ],
+    relatedPageIds: ["palawadan-volatile-magic", "lws4-resources"],
+  },
+  "Thunderhead Peaks oil meta": {
+    summary: "A Living World Season 4 Thunderhead route combining Thunderhead Keep, The Oil Floes, Branded Mass, and Volatile Magic conversion decisions.",
+    timing: "Timed meta windows; combine Thunderhead Keep with Oil Floes when the map state and player count support it.",
+    preparation: [
+      "Arrive before Thunderhead Keep begins and join an organized map if available.",
+      "Bring cleave, breakbar pressure, survivability, and inventory space.",
+      "Treat Branded Mass as account currency first; only consume spare currency after checking vendor goals.",
+    ],
+    phases: [
+      {
+        title: "Thunderhead Keep",
+        objective: "Complete the keep meta with the organized map.",
+        details: [
+          "Arrive early for pre-event credit and commander organization.",
+          "Stay with assigned groups, protect event NPCs and objectives, and help with breakbars.",
+        ],
+      },
+      {
+        title: "The Oil Floes",
+        objective: "Move into the Ice Floe event when the map state is favorable.",
+        details: [
+          "Follow event mechanics and stay with the group; spread-out players slow completion.",
+          "Use the event as part of the broader Branded Mass and Volatile Magic loop.",
+        ],
+      },
+      {
+        title: "Branded Mass Check",
+        objective: "Use the local currency before converting leftovers.",
+        details: [
+          "Check Thunderhead vendors, collections, and account goals before consuming Branded Mass.",
+          "Only use Volatile Magic conversion when shipment and material values are favorable.",
+        ],
+      },
+    ],
+    locations: [
+      {
+        label: "Thunderhead Keep",
+        map: "Thunderhead Peaks",
+        note: "Northeastern Thunderhead Peaks meta; best with an organized map and pre-event timing.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/Thunderhead_Keep_(meta_event)",
+        continentCoord: [58661.2, 35366.7],
+        zoom: 7,
+      },
+      {
+        label: "The Oil Floes",
+        map: "Thunderhead Peaks",
+        note: "Ice Floe meta event and a useful add-on to the Thunderhead route.",
+        wikiUrl: "https://wiki.guildwars2.com/wiki/The_Oil_Floes",
+        continentCoord: [57331.6, 38151.7],
+        zoom: 7,
+      },
+    ],
+    rewards: [
+      { name: "Branded Mass", detail: "Thunderhead Peaks local currency for vendors and Volatile Magic fallback.", itemId: 89537, icon: "https://render.guildwars2.com/file/0C2FD403DACFABF74B9E3824914FB60B3C285804/2083245.png", wikiUrl: "https://wiki.guildwars2.com/wiki/Branded_Mass" },
+      { name: "Volatile Magic", detail: "Season 4 currency from events and local resource conversion.", icon: GW2_CURRENCY_ICONS["Volatile Magic"], wikiUrl: "https://wiki.guildwars2.com/wiki/Volatile_Magic" },
+    ],
+    relatedPageIds: ["thunderhead-peaks-volatile-magic", "oil-floes-volatile-magic", "lws4-resources"],
+  },
+};
+
 const SPEED_ORDER: Record<SpeedLabel, number> = {
   Quickest: 0,
   Fast: 1,
@@ -3341,10 +4558,10 @@ const ACTIVITY_GUIDES: Record<string, ActivityGuideDefinition> = {
       {
         label: "Dragonfall meta",
         map: "Dragonfall",
+        waypoint: "[&BN4LAAA=]",
         note: "Use a commander map to rotate camp events, champ trains, and the final meta cleanup.",
         wikiUrl: "https://wiki.guildwars2.com/wiki/Dragonfall",
-        continentCoord: [45696, 49880],
-        zoom: 8,
+        zoom: 7,
       },
       {
         label: "The Silverwastes RIBA",
@@ -3760,6 +4977,9 @@ function App() {
   const [pageHistoryIndex, setPageHistoryIndex] = useState(0);
   const [catalog, setCatalog] = useState<MarketItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<MarketItem | null>(null);
+  const [selectedGuideResource, setSelectedGuideResource] = useState<GuideResource | null>(null);
+  const [selectedGuideCurrency, setSelectedGuideCurrency] = useState<GuideCurrencyDefinition | null>(null);
+  const [inlineGuideDetailPage, setInlineGuideDetailPage] = useState<ActivePage | null>(null);
   const [detailHistory, setDetailHistory] = useState<MarketItem[]>([]);
   const [detailHistoryIndex, setDetailHistoryIndex] = useState(-1);
   const [query, setQuery] = useState(DEFAULT_QUERY);
@@ -4259,12 +5479,12 @@ function App() {
   ]);
 
   const resetDetailData = useCallback((nextItem: MarketItem | null) => {
-    setDetailState(nextItem ? "loading" : "idle");
+    setDetailState(nextItem ? "ready" : "idle");
     setListings(null);
     setItemTransactions(null);
     setRecipes([]);
     setUsedInRecipes([]);
-    setRecipeUsageState(nextItem ? "loading" : "idle");
+    setRecipeUsageState(nextItem && shouldLoadRecipeSections(nextItem) ? "loading" : "ready");
     setWikiGuide(null);
     setContainerAnalysis(null);
     setContainerState(nextItem && isLikelyContainer(nextItem) ? "loading" : "idle");
@@ -4273,6 +5493,8 @@ function App() {
   const applySelectedDetailItem = useCallback((item: MarketItem | null) => {
     resetDetailData(item);
     setSelectedItem(item);
+    setSelectedGuideResource(null);
+    setSelectedGuideCurrency(null);
   }, [resetDetailData]);
 
   const clearSelectedDetailItem = useCallback(() => {
@@ -4281,13 +5503,17 @@ function App() {
     setDetailHistoryIndex(-1);
   }, [applySelectedDetailItem]);
 
-  const selectDetailItem = useCallback((item: MarketItem | null, options: { recordHistory?: boolean } = {}) => {
+  const selectDetailItem = useCallback((item: MarketItem | null, options: { recordHistory?: boolean; guideResource?: GuideResource | null; inlineGuidePage?: ActivePage | null } = {}) => {
     if (!item) {
       clearSelectedDetailItem();
+      setSelectedGuideCurrency(null);
+      setInlineGuideDetailPage(null);
       return;
     }
 
     applySelectedDetailItem(item);
+    setSelectedGuideResource(options.guideResource ?? null);
+    setInlineGuideDetailPage(options.inlineGuidePage ?? null);
 
     if (options.recordHistory === false) {
       return;
@@ -4306,6 +5532,19 @@ function App() {
     });
   }, [applySelectedDetailItem, clearSelectedDetailItem, detailHistoryIndex]);
 
+  const selectGuideCurrency = useCallback((
+    currency: GuideCurrencyDefinition,
+    options: { inlineGuidePage?: ActivePage | null } = {},
+  ) => {
+    resetDetailData(null);
+    setSelectedItem(null);
+    setSelectedGuideResource(null);
+    setSelectedGuideCurrency(currency);
+    setInlineGuideDetailPage(options.inlineGuidePage ?? null);
+    setDetailHistory([]);
+    setDetailHistoryIndex(-1);
+  }, [resetDetailData]);
+
   useEffect(() => {
     if (!selectedItem) {
       resetDetailData(null);
@@ -4316,55 +5555,78 @@ function App() {
     const transactionKey = accountSnapshot ? apiKey.trim() : "";
     const hasMarketPrice =
       selectedItem.price.buys.unit_price > 0 || selectedItem.price.sells.unit_price > 0;
+    const loadRecipes = shouldLoadRecipeSections(selectedItem);
+    const isGuideStoreItem = isGuideStoreContextItem(selectedItem);
 
-    Promise.allSettled([
-      hasMarketPrice ? loadListings(selectedItem.id) : Promise.resolve(null),
-      loadRecipesForOutput(selectedItem.id, accountSnapshot?.holdings),
-      loadRecipesUsingItem(selectedItem.id, accountSnapshot?.holdings),
-      loadWikiGuide(selectedItem.name, { level: selectedItem.level, itemId: selectedItem.id }),
-      transactionKey && hasMarketPrice
-        ? loadTransactionsForItem(transactionKey, selectedItem.id)
-        : Promise.resolve(null),
-      isLikelyContainer(selectedItem)
-        ? loadContainerAnalysis(selectedItem.name)
-        : Promise.resolve(null),
-    ]).then((results) => {
-      if (ignore) {
-        return;
-      }
+    const immediateWikiGuide = buildImmediateWikiGuideForItem(selectedItem);
+    if (immediateWikiGuide) {
+      setWikiGuide(immediateWikiGuide);
+    }
 
-      if (results[0].status === "fulfilled") {
-        setListings(results[0].value);
-      }
+    if (isGuideStoreItem) {
+      return () => {
+        ignore = true;
+      };
+    }
 
-      if (results[1].status === "fulfilled") {
-        setRecipes(results[1].value);
-      }
+    if (hasMarketPrice) {
+      loadListings(selectedItem.id)
+        .then((value) => {
+          if (!ignore) setListings(value);
+        })
+        .catch(() => undefined);
+    }
 
-      if (results[2].status === "fulfilled") {
-        setUsedInRecipes(results[2].value);
-        setRecipeUsageState("ready");
-      } else {
-        setRecipeUsageState("error");
-      }
+    if (loadRecipes) {
+      Promise.allSettled([
+        loadRecipesForOutput(selectedItem.id, accountSnapshot?.holdings),
+        loadRecipesUsingItem(selectedItem.id, accountSnapshot?.holdings),
+      ]).then((results) => {
+        if (ignore) {
+          return;
+        }
 
-      if (results[3].status === "fulfilled") {
-        setWikiGuide(results[3].value);
-      }
+        if (results[0].status === "fulfilled") {
+          setRecipes(results[0].value);
+        }
 
-      if (results[4].status === "fulfilled") {
-        setItemTransactions(results[4].value);
-      }
+        if (results[1].status === "fulfilled") {
+          setUsedInRecipes(results[1].value);
+          setRecipeUsageState("ready");
+        } else {
+          setRecipeUsageState("error");
+        }
+      });
+    }
 
-      if (results[5].status === "fulfilled") {
-        setContainerAnalysis(results[5].value);
-        setContainerState(results[5].value ? "ready" : "error");
-      } else if (isLikelyContainer(selectedItem)) {
-        setContainerState("error");
-      }
+    if (shouldFetchRemoteWikiGuide(selectedItem)) {
+      loadWikiGuide(selectedItem.name, { level: selectedItem.level, itemId: selectedItem.id })
+        .then((value) => {
+          if (!ignore && value) setWikiGuide(value);
+        })
+        .catch(() => undefined);
+    }
 
-      setDetailState("ready");
-    });
+    if (transactionKey && hasMarketPrice) {
+      loadTransactionsForItem(transactionKey, selectedItem.id)
+        .then((value) => {
+          if (!ignore) setItemTransactions(value);
+        })
+        .catch(() => undefined);
+    }
+
+    if (isLikelyContainer(selectedItem)) {
+      loadContainerAnalysis(selectedItem.name)
+        .then((value) => {
+          if (!ignore) {
+            setContainerAnalysis(value);
+            setContainerState(value ? "ready" : "error");
+          }
+        })
+        .catch(() => {
+          if (!ignore) setContainerState("error");
+        });
+    }
 
     return () => {
       ignore = true;
@@ -5288,6 +6550,7 @@ function App() {
           usedInRecipes={usedInRecipes}
           recipeUsageState={recipeUsageState}
           wikiGuide={wikiGuide}
+          guideResource={selectedGuideResource}
           detailState={detailState}
           containerAnalysis={containerAnalysis}
           containerState={containerState}
@@ -5299,6 +6562,7 @@ function App() {
           onCloseDetail={() => selectDetailItem(null)}
           onSelectItem={selectDetailItem}
           onLoadMarket={loadCatalog}
+          onOpenPage={navigateToPage}
         />
       );
     }
@@ -5573,11 +6837,35 @@ function App() {
         activePage={activePage}
         catalog={catalog}
         maps={maps}
+        selectedItem={inlineGuideDetailPage === activePage ? selectedItem : null}
+        selectedGuideResource={inlineGuideDetailPage === activePage ? selectedGuideResource : null}
+        selectedGuideCurrency={inlineGuideDetailPage === activePage ? selectedGuideCurrency : null}
+        listings={listings}
+        itemTransactions={itemTransactions}
+        recipes={recipes}
+        usedInRecipes={usedInRecipes}
+        recipeUsageState={recipeUsageState}
+        wikiGuide={wikiGuide}
+        detailState={detailState}
+        containerAnalysis={containerAnalysis}
+        containerState={containerState}
+        accountSnapshot={accountSnapshot}
+        marketHistoryRevision={marketHistoryRevision}
         onLoadMarket={loadCatalog}
         onOpenActivity={openActivityGuide}
         onOpenItem={(item) => {
           selectDetailItem(buildMarketItemForDetail(item));
           navigateToPage("market", { preserveSelectedItem: true });
+        }}
+        onOpenGuideResource={(item, resource) => {
+          selectDetailItem(buildMarketItemForDetail(item), { guideResource: resource, inlineGuidePage: activePage });
+        }}
+        onOpenGuideCurrency={(currency) => {
+          selectGuideCurrency(currency, { inlineGuidePage: activePage });
+        }}
+        onCloseDetail={() => selectDetailItem(null)}
+        onSelectInlineDetail={(item) => {
+          selectDetailItem(buildMarketItemForDetail(item), { inlineGuidePage: activePage });
         }}
         onOpenPage={navigateToPage}
       />
@@ -8240,6 +9528,90 @@ function getActivityIdForSuggestion(suggestion: GoldSuggestion): string {
   );
 }
 
+function getMetaEventGuideId(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+}
+
+function getMetaEstimateByName(name?: string): MetaFarmEstimate | null {
+  if (!name) {
+    return null;
+  }
+
+  return META_FARM_ESTIMATES.find((estimate) => estimate.name === name) ?? null;
+}
+
+function getMetaEventGuide(estimate: MetaFarmEstimate): MetaEventGuide {
+  const override = META_EVENT_GUIDE_OVERRIDES[estimate.name] ?? {};
+  const defaultLocation: GuideLocation = {
+    label: estimate.name,
+    map: estimate.map,
+    note: estimate.access,
+    wikiUrl: estimate.wikiUrl,
+    continentCoord: META_MAP_CENTER_COORDS[estimate.map],
+    zoom: 7,
+  };
+
+  return {
+    id: getMetaEventGuideId(estimate.name),
+    title: estimate.name,
+    map: estimate.map,
+    expansion: estimate.expansion,
+    summary: override.summary ?? `${estimate.name} is a ${estimate.cadence.toLowerCase()} ${estimate.expansion} route on ${estimate.map}. Use it when the map is active and the rewards match your current account goals.`,
+    timing: override.timing ?? `${estimate.cadence}; plan for about ${estimate.duration}.`,
+    preparation: override.preparation ?? [
+      "Check the event timer or LFG before travelling so you do not arrive after the valuable phase starts.",
+      "Bring a build with good cleave, mobility, and crowd control; meta failures usually cost more than small market-price differences.",
+      "Leave bag space, carry salvage kits, and process rewards after the event chain reaches a natural break.",
+    ],
+    phases: override.phases ?? [
+      {
+        title: "Arrive And Organize",
+        objective: "Get into the right map before the reward-heavy phase begins.",
+        details: [
+          "Join a commander or active map when possible.",
+          "Move to the staging waypoint or event area early and read map chat for lane or objective assignments.",
+        ],
+      },
+      {
+        title: "Complete Event Objectives",
+        objective: "Prioritize the mechanics that advance the event chain.",
+        details: [
+          "Tag broadly, revive players, use crowd control on breakbars, and follow commander movement.",
+          "Do not stop to open containers or sell items while the group is moving.",
+        ],
+      },
+      {
+        title: "Loot And Convert",
+        objective: "Turn the completion into usable account or market value.",
+        details: [
+          "Open map chests and containers after the event finishes.",
+          "Separate account-bound currency decisions from liquid gold before selling or converting materials.",
+        ],
+      },
+    ],
+    locations: override.locations ?? [defaultLocation],
+    rewards: override.rewards ?? [
+      { name: `${estimate.map} rewards`, detail: estimate.access, wikiUrl: estimate.wikiUrl },
+    ],
+    sources: [
+      ...(override.sources ?? []),
+      {
+        label: estimate.name,
+        owner: "Guild Wars 2 Wiki contributors",
+        url: estimate.wikiUrl,
+        note: "Used for official map, event, access, and reward context.",
+      },
+      {
+        label: "Event timers",
+        owner: "Guild Wars 2 Wiki contributors",
+        url: "https://wiki.guildwars2.com/wiki/Event_timers",
+        note: "Used for timed meta cadence and event scheduling context.",
+      },
+    ],
+    relatedPageIds: override.relatedPageIds,
+  };
+}
+
 function getOpportunitySpeed(opportunity: CraftOpportunity): SpeedLabel {
   if (opportunity.ownedCoverage >= 0.85 || opportunity.personalCost <= 10_000) {
     return "Quickest";
@@ -8267,9 +9639,68 @@ function ActivityGuidePage({
 }) {
   const activityId = activePage.replace(/^activity:/, "");
   const guide = ACTIVITY_GUIDES[activityId] ?? ACTIVITY_GUIDES["open-world-meta-event-trains"];
+  const [selectedMetaName, setSelectedMetaName] = useState(META_FARM_ESTIMATES[0]?.name ?? "");
+  const selectedMetaEstimate = getMetaEstimateByName(selectedMetaName) ?? META_FARM_ESTIMATES[0] ?? null;
+  const selectedMetaGuide = selectedMetaEstimate ? getMetaEventGuide(selectedMetaEstimate) : null;
   const relatedOptions = REPEATABLE_EARNING_OPTIONS.filter((option) => {
     return option.title !== guide.title && getActivityIdForSuggestion(option) !== guide.id;
   }).slice(0, 6);
+
+  if (guide.id === "open-world-meta-event-trains") {
+    return (
+      <div className={`market-workspace meta-event-workspace ${selectedMetaGuide ? "" : "detail-closed"}`}>
+        <aside className="market-panel meta-event-list-panel">
+          <section className="page-header">
+            <div>
+              <span className="eyebrow">{guide.category}</span>
+              <h2>{guide.title}</h2>
+              <p>{guide.summary}</p>
+            </div>
+            <span className={`speed-badge speed-${guide.speed.toLowerCase()}`}>{guide.speed}</span>
+          </section>
+
+          <MetaFarmTable
+            selectedMetaName={selectedMetaEstimate?.name ?? ""}
+            onSelectMeta={(estimate) => setSelectedMetaName(estimate.name)}
+          />
+
+          <section className="surface activity-support-grid meta-event-support">
+            <div>
+              <div className="section-title">
+                <BookOpen />
+                <h3>How To Use This Page</h3>
+              </div>
+              <ol className="guide-step-list">
+                {guide.steps.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+            </div>
+            <div>
+              <div className="section-title">
+                <CheckCircle2 />
+                <h3>Practical Notes</h3>
+              </div>
+              <div className="activity-tip-list">
+                {guide.tips.map((tip) => (
+                  <div key={tip} className="activity-tip">
+                    <CheckCircle2 />
+                    <span>{tip}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        </aside>
+
+        <MarketSplitHandle />
+
+        {selectedMetaGuide ? (
+          <MetaEventDetailPane guide={selectedMetaGuide} maps={maps} />
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className="activity-page">
@@ -8281,8 +9712,6 @@ function ActivityGuidePage({
         </div>
         <span className={`speed-badge speed-${guide.speed.toLowerCase()}`}>{guide.speed}</span>
       </section>
-
-      {guide.id === "open-world-meta-event-trains" ? <MetaFarmTable /> : null}
 
       <section className="guide-grid activity-guide-grid">
         <div className="surface guide-steps">
@@ -8359,7 +9788,13 @@ function ActivityGuidePage({
   );
 }
 
-function MetaFarmTable() {
+function MetaFarmTable({
+  selectedMetaName,
+  onSelectMeta,
+}: {
+  selectedMetaName?: string;
+  onSelectMeta?: (estimate: MetaFarmEstimate) => void;
+}) {
   const { sortedRows, renderHeader } = useSortableRows<
     MetaFarmEstimate,
     "meta" | "map" | "gold" | "time" | "access" | "source"
@@ -8398,11 +9833,26 @@ function MetaFarmTable() {
             </tr>
           </thead>
           <tbody>
-            {sortedRows.map((estimate) => (
-              <tr key={`${estimate.map}-${estimate.name}`}>
+            {sortedRows.map((estimate) => {
+              const selected = selectedMetaName === estimate.name;
+              return (
+              <tr
+                key={`${estimate.map}-${estimate.name}`}
+                className={selected ? "selected" : ""}
+                onClick={() => onSelectMeta?.(estimate)}
+              >
                 <td>
-                  <strong>{estimate.name}</strong>
-                  <span>{estimate.expansion}</span>
+                  <button
+                    type="button"
+                    className="meta-row-button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSelectMeta?.(estimate);
+                    }}
+                  >
+                    <strong>{estimate.name}</strong>
+                    <span>{estimate.expansion}</span>
+                  </button>
                 </td>
                 <td>
                   <span>{estimate.map}</span>
@@ -8423,7 +9873,8 @@ function MetaFarmTable() {
                   </a>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -8454,6 +9905,7 @@ function MarketPage({
   usedInRecipes,
   recipeUsageState,
   wikiGuide,
+  guideResource = null,
   detailState,
   containerAnalysis,
   containerState,
@@ -8465,6 +9917,7 @@ function MarketPage({
   onCloseDetail,
   onSelectItem,
   onLoadMarket,
+  onOpenPage,
   eyebrow = "Black Lion Trading Post",
   title = "Market Items",
   description = null,
@@ -8484,6 +9937,7 @@ function MarketPage({
   usedInRecipes: RecipeGuide[];
   recipeUsageState: LoadState;
   wikiGuide: WikiGuide | null;
+  guideResource?: GuideResource | null;
   detailState: LoadState;
   containerAnalysis: ContainerAnalysis | null;
   containerState: LoadState;
@@ -8495,6 +9949,7 @@ function MarketPage({
   onCloseDetail: () => void;
   onSelectItem: (item: MarketItem) => void;
   onLoadMarket: () => void;
+  onOpenPage?: (page: ActivePage) => void;
   eyebrow?: string;
   title?: string;
   description?: ReactNode;
@@ -8773,6 +10228,7 @@ function MarketPage({
         usedInRecipes={usedInRecipes}
         recipeUsageState={recipeUsageState}
         wikiGuide={wikiGuide}
+        guideResource={guideResource}
         detailState={detailState}
         containerAnalysis={containerAnalysis}
         containerState={containerState}
@@ -8780,6 +10236,7 @@ function MarketPage({
         marketHistoryRevision={marketHistoryRevision}
         onCloseDetail={onCloseDetail}
         onSelectItem={onSelectItem}
+        onOpenPage={onOpenPage}
       />
     </div>
   );
@@ -8794,6 +10251,7 @@ function MarketItemDetailPane({
   usedInRecipes,
   recipeUsageState,
   wikiGuide,
+  guideResource,
   detailState,
   containerAnalysis,
   containerState,
@@ -8801,6 +10259,8 @@ function MarketItemDetailPane({
   marketHistoryRevision,
   onCloseDetail,
   onSelectItem,
+  onOpenPage,
+  onOpenCurrency,
 }: {
   selectedItem: MarketItem | null;
   catalog: MarketItem[];
@@ -8810,6 +10270,7 @@ function MarketItemDetailPane({
   usedInRecipes: RecipeGuide[];
   recipeUsageState: LoadState;
   wikiGuide: WikiGuide | null;
+  guideResource: GuideResource | null;
   detailState: LoadState;
   containerAnalysis: ContainerAnalysis | null;
   containerState: LoadState;
@@ -8817,6 +10278,8 @@ function MarketItemDetailPane({
   marketHistoryRevision: number;
   onCloseDetail: () => void;
   onSelectItem: (item: MarketItem) => void;
+  onOpenPage?: (page: ActivePage) => void;
+  onOpenCurrency?: (currency: GuideCurrencyDefinition) => void;
 }) {
   if (!selectedItem) {
     return null;
@@ -8840,6 +10303,10 @@ function MarketItemDetailPane({
         marketHistoryRevision={marketHistoryRevision}
         onClose={onCloseDetail}
         onOpenDetail={(detailItem) => onSelectItem(buildMarketItemForDetail(detailItem))}
+        guideResource={guideResource}
+        extraInfo={guideResource ? <GuideResourceDetailInfo resource={guideResource} onOpenPage={onOpenPage} /> : null}
+        onOpenPage={onOpenPage}
+        onOpenCurrency={onOpenCurrency}
       />
     </section>
   );
@@ -8899,6 +10366,135 @@ function MarketAdvancedFilterPanel({
         Reset to default
       </button>
     </section>
+  );
+}
+
+function MetaEventDetailPane({
+  guide,
+  maps,
+}: {
+  guide: MetaEventGuide;
+  maps: Gw2Map[];
+}) {
+  return (
+    <section className="detail-panel">
+      <div className="item-detail meta-event-detail">
+        <section className="item-title-row meta-event-detail-header">
+          <span className="meta-event-detail-icon">
+            <ShieldCheck />
+          </span>
+          <div>
+            <span className="rarity rarity-basic">{guide.expansion}</span>
+            <h2>{guide.title}</h2>
+            <p>{guide.summary}</p>
+          </div>
+          <a
+            className="detail-wiki-button"
+            href={guide.sources[0]?.url ?? `https://wiki.guildwars2.com/wiki/${encodeURIComponent(guide.map.replaceAll(" ", "_"))}`}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`Open ${guide.title} wiki source`}
+            title={`Open ${guide.title} wiki source`}
+          >
+            <ExternalLink />
+          </a>
+        </section>
+
+        <MetaEventGuideSections guide={guide} maps={maps} showMap />
+      </div>
+    </section>
+  );
+}
+
+function MetaEventGuideSections({
+  guide,
+  maps,
+  showMap,
+}: {
+  guide: MetaEventGuide;
+  maps: Gw2Map[];
+  showMap: boolean;
+}) {
+  return (
+    <div className="meta-event-guide-sections">
+      <section className="surface guide-resource-detail-info">
+        <div className="section-title">
+          <BookOpen />
+          <h3>Meta Event Guide</h3>
+        </div>
+        <div className="guide-resource-detail-grid">
+          <section className="guide-detail-section guide-timing-section">
+            <span className="eyebrow">Timing</span>
+            <p>{guide.timing}</p>
+          </section>
+
+          <section className="guide-detail-section">
+            <h3>Before You Start</h3>
+            <ul className="guide-check-list">
+              {guide.preparation.map((item) => (
+                <li key={item}>
+                  <CheckCircle2 />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section className="guide-detail-section meta-event-phase-section">
+            <h3>How The Meta Is Done</h3>
+            <div className="guide-phase-list">
+              {guide.phases.map((phase, index) => (
+                <article key={phase.title} className="guide-phase-card">
+                  <span>{index + 1}</span>
+                  <div>
+                    <strong>{phase.title}</strong>
+                    <p>{phase.objective}</p>
+                    <ul>
+                      {phase.details.map((detail) => (
+                        <li key={detail}>{detail}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="guide-detail-section">
+            <h3>Rewards And Currency</h3>
+            <div className="meta-event-reward-list">
+              {guide.rewards.map((reward) => (
+                <a
+                  key={`${reward.name}-${reward.wikiUrl ?? ""}`}
+                  href={reward.wikiUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <ItemIcon item={{ name: reward.name, icon: reward.icon }} />
+                  <span>
+                    <strong>{reward.name}</strong>
+                    <small>{reward.detail}</small>
+                  </span>
+                  <ExternalLink />
+                </a>
+              ))}
+            </div>
+          </section>
+        </div>
+      </section>
+
+      {showMap ? (
+        <section className="surface guide-map-panel guide-map-large-panel meta-event-map-panel">
+          <div className="section-title">
+            <Database />
+            <h3>Interactive Map</h3>
+          </div>
+          <GuideInteractiveMap locations={guide.locations} maps={maps} />
+        </section>
+      ) : null}
+
+      <GuideSourcesPanel sources={guide.sources} />
+    </div>
   );
 }
 
@@ -16676,22 +18272,69 @@ function CategoryPage({
   activePage,
   catalog,
   maps,
+  selectedItem,
+  selectedGuideResource,
+  selectedGuideCurrency,
+  listings,
+  itemTransactions,
+  recipes,
+  usedInRecipes,
+  recipeUsageState,
+  wikiGuide,
+  detailState,
+  containerAnalysis,
+  containerState,
+  accountSnapshot,
+  marketHistoryRevision,
   onLoadMarket,
   onOpenActivity,
   onOpenItem,
+  onOpenGuideResource,
+  onOpenGuideCurrency,
+  onCloseDetail,
+  onSelectInlineDetail,
   onOpenPage,
 }: {
   activePage: ActivePage;
   catalog: MarketItem[];
   maps: Gw2Map[];
+  selectedItem: MarketItem | null;
+  selectedGuideResource: GuideResource | null;
+  selectedGuideCurrency: GuideCurrencyDefinition | null;
+  listings: CommerceListings | null;
+  itemTransactions: ItemTransactions | null;
+  recipes: RecipeGuide[];
+  usedInRecipes: RecipeGuide[];
+  recipeUsageState: LoadState;
+  wikiGuide: WikiGuide | null;
+  detailState: LoadState;
+  containerAnalysis: ContainerAnalysis | null;
+  containerState: LoadState;
+  accountSnapshot: AccountSnapshot | null;
+  marketHistoryRevision: number;
   onLoadMarket: () => void;
   onOpenActivity: (suggestion: GoldSuggestion) => void;
   onOpenItem: (item: Gw2Item) => void;
+  onOpenGuideResource: (item: Gw2Item, resource: GuideResource) => void;
+  onOpenGuideCurrency: (currency: GuideCurrencyDefinition) => void;
+  onCloseDetail: () => void;
+  onSelectInlineDetail: (item: Gw2Item) => void;
   onOpenPage: (page: ActivePage) => void;
 }) {
   const guide = getGuideDefinition(activePage);
   const activityValue = getActivityValueDefinition(activePage);
+  const sharedMetaEstimate = getMetaEstimateByName(guide.metaEventGuideId);
+  const sharedMetaGuide = sharedMetaEstimate ? getMetaEventGuide(sharedMetaEstimate) : null;
+  const guideMapLocations = sharedMetaGuide?.locations ?? guide.locations;
   const showRelatedNotes = !guide.hideRelatedNotes;
+  const guideInlineItems = useMemo(
+    () => buildGuideInlineItems(guide.rewards ?? sharedMetaGuide?.rewards ?? [], catalog),
+    [catalog, guide.rewards, sharedMetaGuide?.rewards],
+  );
+  const combinedSourceLinks = useMemo(
+    () => mergeGuideSourceLinks(guide.sourceLinks ?? [], sharedMetaGuide?.sources ?? []),
+    [guide.sourceLinks, sharedMetaGuide?.sources],
+  );
   const valueRows = useMemo(
     () => buildActivityValueRows(activityValue, catalog),
     [activityValue, catalog],
@@ -16735,6 +18378,34 @@ function CategoryPage({
     if (isGuideFamily(activePage, "competitive")) return /pvp|wvw|track/.test(text);
     return false;
   });
+  const detailPane = selectedGuideCurrency ? (
+    <GuideCurrencyDetailPane
+      currency={selectedGuideCurrency}
+      onClose={onCloseDetail}
+      onOpenPage={onOpenPage}
+    />
+  ) : selectedItem ? (
+    <MarketItemDetailPane
+      selectedItem={selectedItem}
+      catalog={catalog}
+      listings={listings}
+      itemTransactions={itemTransactions}
+      recipes={recipes}
+      usedInRecipes={usedInRecipes}
+      recipeUsageState={recipeUsageState}
+      wikiGuide={wikiGuide}
+      guideResource={selectedGuideResource}
+      detailState={detailState}
+      containerAnalysis={containerAnalysis}
+      containerState={containerState}
+      accountSnapshot={accountSnapshot}
+      marketHistoryRevision={marketHistoryRevision}
+      onCloseDetail={onCloseDetail}
+      onSelectItem={(item) => onSelectInlineDetail(item)}
+      onOpenPage={onOpenPage}
+      onOpenCurrency={onOpenGuideCurrency}
+    />
+  ) : null;
 
   if (guide.resourceHub && guide.resources?.length) {
     return (
@@ -16742,28 +18413,60 @@ function CategoryPage({
         guide={guide}
         catalog={catalog}
         resources={guide.resources}
-        onOpenItem={onOpenItem}
+        selectedItem={selectedItem}
+        selectedGuideResource={selectedGuideResource}
+        selectedGuideCurrency={selectedGuideCurrency}
+        listings={listings}
+        itemTransactions={itemTransactions}
+        recipes={recipes}
+        usedInRecipes={usedInRecipes}
+        recipeUsageState={recipeUsageState}
+        wikiGuide={wikiGuide}
+        detailState={detailState}
+        containerAnalysis={containerAnalysis}
+        containerState={containerState}
+        accountSnapshot={accountSnapshot}
+        marketHistoryRevision={marketHistoryRevision}
+        onOpenGuideResource={onOpenGuideResource}
+        onOpenGuideCurrency={onOpenGuideCurrency}
+        onCloseDetail={onCloseDetail}
+        onSelectInlineDetail={onSelectInlineDetail}
         onOpenPage={onOpenPage}
       />
     );
   }
 
-  return (
-    <div className="category-page">
-      <section className="page-header">
-        <div>
-          <span className="eyebrow">Guide</span>
-          <h2>{guide.title}</h2>
-          <p>{guide.summary}</p>
-        </div>
-      </section>
+  const guideHeader = (
+    <section className="page-header guide-page-header">
+      <div>
+        <span className="eyebrow">Guide</span>
+        <h2>{guide.title}</h2>
+        <p>
+          <GuideTextWithItemHighlights
+            text={guide.summary}
+            items={guideInlineItems}
+            onOpenItem={onSelectInlineDetail}
+          />
+        </p>
+      </div>
+    </section>
+  );
+  const guideBody = (
+    <Fragment>
+      {guideHeader}
 
       <section className="guide-detail-layout">
         <div className="surface guide-detail-panel">
           {guide.timing ? (
             <section className="guide-detail-section guide-timing-section">
               <span className="eyebrow">Timing</span>
-              <p>{guide.timing}</p>
+              <p>
+                <GuideTextWithItemHighlights
+                  text={guide.timing}
+                  items={guideInlineItems}
+                  onOpenItem={onSelectInlineDetail}
+                />
+              </p>
             </section>
           ) : null}
 
@@ -16774,7 +18477,13 @@ function CategoryPage({
                 {guide.preparation.map((item) => (
                   <li key={item}>
                     <CheckCircle2 />
-                    <span>{item}</span>
+                    <span>
+                      <GuideTextWithItemHighlights
+                        text={item}
+                        items={guideInlineItems}
+                        onOpenItem={onSelectInlineDetail}
+                      />
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -16785,7 +18494,13 @@ function CategoryPage({
             <h3>How To Do It</h3>
             <ol className="guide-step-list">
               {guide.steps.map((step) => (
-                <li key={step}>{step}</li>
+                <li key={step}>
+                  <GuideTextWithItemHighlights
+                    text={step}
+                    items={guideInlineItems}
+                    onOpenItem={onSelectInlineDetail}
+                  />
+                </li>
               ))}
             </ol>
           </section>
@@ -16799,10 +18514,22 @@ function CategoryPage({
                     <span>{index + 1}</span>
                     <div>
                       <strong>{phase.title}</strong>
-                      <p>{phase.objective}</p>
+                      <p>
+                        <GuideTextWithItemHighlights
+                          text={phase.objective}
+                          items={guideInlineItems}
+                          onOpenItem={onSelectInlineDetail}
+                        />
+                      </p>
                       <ul>
                         {phase.details.map((detail) => (
-                          <li key={detail}>{detail}</li>
+                          <li key={detail}>
+                            <GuideTextWithItemHighlights
+                              text={detail}
+                              items={guideInlineItems}
+                              onOpenItem={onSelectInlineDetail}
+                            />
+                          </li>
                         ))}
                       </ul>
                     </div>
@@ -16818,19 +18545,26 @@ function CategoryPage({
             <Database />
             <h3>Interactive Map</h3>
           </div>
-          <GuideInteractiveMap locations={guide.locations} maps={maps} />
+          <GuideInteractiveMap locations={guideMapLocations} maps={maps} />
         </div>
       </section>
 
-      {guide.rewards?.length ? (
-        <GuideRewardPanel rewards={guide.rewards} catalog={catalog} onOpenItem={onOpenItem} />
-      ) : null}
-
       {guide.resources?.length ? (
-        <GuideResourcePanel resources={guide.resources} catalog={catalog} onOpenItem={onOpenItem} />
+        <GuideResourcePanel resources={guide.resources} catalog={catalog} onOpenItem={onSelectInlineDetail} />
       ) : null}
 
-      {activityValue ? (
+      {guide.stores?.length ? (
+        <GuideStoresPanel
+          stores={guide.stores}
+          catalog={catalog}
+          maps={maps}
+          selectedItem={selectedItem}
+          onOpenItem={onSelectInlineDetail}
+          onOpenCurrency={onOpenGuideCurrency}
+        />
+      ) : null}
+
+      {activityValue && !guide.metaEventGuideId ? (
         <section className="surface activity-value-panel">
           <div className="section-title">
             <Coins />
@@ -16923,8 +18657,8 @@ function CategoryPage({
         </section>
       ) : null}
 
-      {guide.sourceLinks?.length ? (
-        <GuideSourcesPanel sources={guide.sourceLinks} />
+      {combinedSourceLinks.length ? (
+        <GuideSourcesPanel sources={combinedSourceLinks} />
       ) : null}
 
       {showRelatedNotes ? (
@@ -16953,6 +18687,22 @@ function CategoryPage({
         </div>
         </section>
       ) : null}
+    </Fragment>
+  );
+
+  return (
+    <div className="category-page">
+      {detailPane ? (
+        <section className="market-workspace guide-category-detail-workspace">
+          <aside className="market-panel guide-category-left-panel">
+            {guideBody}
+          </aside>
+          <MarketSplitHandle />
+          {detailPane}
+        </section>
+      ) : (
+        guideBody
+      )}
     </div>
   );
 }
@@ -16961,158 +18711,660 @@ function GuideResourceHubPage({
   guide,
   catalog,
   resources,
-  onOpenItem,
+  selectedItem,
+  selectedGuideResource,
+  selectedGuideCurrency,
+  listings,
+  itemTransactions,
+  recipes,
+  usedInRecipes,
+  recipeUsageState,
+  wikiGuide,
+  detailState,
+  containerAnalysis,
+  containerState,
+  accountSnapshot,
+  marketHistoryRevision,
+  onOpenGuideResource,
+  onOpenGuideCurrency,
+  onCloseDetail,
+  onSelectInlineDetail,
   onOpenPage,
 }: {
   guide: GuideDefinition;
   catalog: MarketItem[];
   resources: GuideResource[];
-  onOpenItem: (item: Gw2Item) => void;
+  selectedItem: MarketItem | null;
+  selectedGuideResource: GuideResource | null;
+  selectedGuideCurrency: GuideCurrencyDefinition | null;
+  listings: CommerceListings | null;
+  itemTransactions: ItemTransactions | null;
+  recipes: RecipeGuide[];
+  usedInRecipes: RecipeGuide[];
+  recipeUsageState: LoadState;
+  wikiGuide: WikiGuide | null;
+  detailState: LoadState;
+  containerAnalysis: ContainerAnalysis | null;
+  containerState: LoadState;
+  accountSnapshot: AccountSnapshot | null;
+  marketHistoryRevision: number;
+  onOpenGuideResource: (item: Gw2Item, resource: GuideResource) => void;
+  onOpenGuideCurrency: (currency: GuideCurrencyDefinition) => void;
+  onCloseDetail: () => void;
+  onSelectInlineDetail: (item: Gw2Item) => void;
   onOpenPage: (page: ActivePage) => void;
 }) {
-  const [selectedName, setSelectedName] = useState(resources[0]?.name ?? "");
-  const selectedResource = resources.find((resource) => resource.name === selectedName) ?? resources[0];
-  const selectedItem = useMemo(
-    () => buildGuideResourceItem(selectedResource, catalog),
-    [catalog, selectedResource],
-  );
+  const detailOpen = Boolean(selectedItem || selectedGuideCurrency);
 
   return (
-    <div className="category-page guide-resource-hub-page">
-      <section className="page-header">
-        <div>
-          <span className="eyebrow">Guide</span>
-          <h2>{guide.title}</h2>
-          <p>{guide.summary}</p>
-        </div>
-      </section>
-
-      <section className="surface guide-resource-table-panel">
-        <div className="section-title">
-          <Coins />
-          <h3>Resources and Purchases</h3>
-        </div>
-        <div className="craft-table-wrap guide-resource-table-wrap">
-          <table className="craft-profit-table guide-resource-table">
-            <thead>
-              <tr>
-                <th aria-label="Icon" />
-                <th>Name</th>
-                <th>Profit / VM</th>
-                <th>Profit</th>
-                <th>Price</th>
-                <th>Requires</th>
-                <th>Limitation</th>
-                <th>Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {resources.map((resource) => {
-                const item = buildGuideResourceItem(resource, catalog);
-                const selected = resource.name === selectedResource.name;
-                return (
-                  <tr
-                    key={resource.name}
-                    className={selected ? "selected" : ""}
-                    onClick={() => setSelectedName(resource.name)}
-                  >
-                    <td>
-                      <ItemIcon item={item} />
-                    </td>
-                    <td>
-                      <button type="button" className="guide-resource-row-button">
-                        <strong>{resource.name}</strong>
-                        <span>{resource.map}</span>
-                      </button>
-                    </td>
-                    <td>{resource.profitPerVm ?? "Check vendor"}</td>
-                    <td>{resource.profit ?? "Account value"}</td>
-                    <td>{resource.price ?? "Varies"}</td>
-                    <td>{resource.requires ?? "LWS4"}</td>
-                    <td>{resource.limitation ?? "Check vendor"}</td>
-                    <td>{resource.notes ?? resource.vendor}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="surface guide-resource-detail-panel">
-        <div className="guide-resource-detail-header">
-          <ItemIcon item={selectedItem} />
+    <div className={`market-workspace guide-resource-workspace ${detailOpen ? "" : "detail-closed"}`}>
+      <aside className="market-panel guide-resource-list-panel">
+        <div className="panel-heading">
           <div>
-            <span className="guide-resource-rarity">{selectedItem.rarity}</span>
-            <h3>{selectedResource.name}</h3>
-            <p>{selectedItem.type}{selectedItem.chat_link ? ` - ${selectedItem.chat_link}` : ""}</p>
-          </div>
-          <div className="guide-resource-detail-actions">
-            <button type="button" className="icon-button" onClick={() => onOpenItem(selectedItem)}>
-              <PackageSearch />
-              <span>Item Detail</span>
-            </button>
-            <a className="icon-button" href={selectedResource.wikiUrl} target="_blank" rel="noreferrer">
-              <ExternalLink />
-              <span>Wiki</span>
-            </a>
+            <span className="eyebrow">Guide</span>
+            <h2>{guide.title}</h2>
+            <p>{guide.summary}</p>
           </div>
         </div>
 
-        <div className="guide-resource-detail-grid">
-          <section className="guide-detail-section">
-            <h3>How To Obtain</h3>
-            <ul className="guide-check-list">
-              {(selectedResource.acquisition?.length ? selectedResource.acquisition : [selectedResource.route]).map((item) => (
-                <li key={item}>
-                  <CheckCircle2 />
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
+        <section className="guide-resource-table-panel">
+          <div className="section-title">
+            <Coins />
+            <h3>Resources and Purchases</h3>
+          </div>
+          <div className="craft-table-wrap guide-resource-table-wrap">
+            <table className="craft-profit-table guide-resource-table">
+              <thead>
+                <tr>
+                  <th aria-label="Icon" />
+                  <th>Name</th>
+                  <th>Profit / VM</th>
+                  <th>Profit</th>
+                  <th>Price</th>
+                  <th>Requires</th>
+                  <th>Limitation</th>
+                  <th>Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {resources.map((resource) => {
+                  const item = buildGuideResourceItem(resource, catalog);
+                  const selected = selectedGuideResource?.name === resource.name;
+                  return (
+                    <tr
+                      key={resource.name}
+                      className={selected ? "selected" : ""}
+                      onClick={() => onOpenGuideResource(item, resource)}
+                    >
+                      <td>
+                        <ItemIcon item={item} />
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="guide-resource-row-button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onOpenGuideResource(item, resource);
+                          }}
+                        >
+                          <strong>{resource.name}</strong>
+                          <span>{resource.map}</span>
+                        </button>
+                      </td>
+                      <td><GuideCurrencyValue value={resource.profitPerVm ?? "Check vendor"} onOpenCurrency={onOpenGuideCurrency} /></td>
+                      <td><GuideCurrencyValue value={resource.profit ?? "Account value"} onOpenCurrency={onOpenGuideCurrency} /></td>
+                      <td><GuideCurrencyValue value={resource.price ?? "Varies"} onOpenCurrency={onOpenGuideCurrency} /></td>
+                      <td>{resource.requires ?? "LWS4"}</td>
+                      <td>{resource.limitation ?? "Check vendor"}</td>
+                      <td><TextWithCopyableChatCodes text={resource.notes ?? resource.vendor} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-          <section className="guide-detail-section">
-            <h3>Purchases And Uses</h3>
-            <ul className="guide-step-list">
-              {(selectedResource.purchases?.length ? selectedResource.purchases : [selectedResource.value]).map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </section>
+      </aside>
 
-          <section className="guide-detail-section">
-            <h3>Vendor Context</h3>
-            <p>{selectedResource.vendor}</p>
-            <p>{selectedResource.value}</p>
-          </section>
+      <MarketSplitHandle />
 
-          <section className="guide-detail-section">
-            <h3>Related Meta Guides</h3>
-            {selectedResource.metaLinks?.length ? (
-              <div className="guide-meta-link-list">
-                {selectedResource.metaLinks.map((link) => (
-                  <button key={link.page} type="button" onClick={() => onOpenPage(link.page)}>
-                    <MapPin />
-                    <span>
-                      <strong>{link.label}</strong>
-                      <small>{link.detail}</small>
-                    </span>
-                    <ChevronRight />
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="guide-muted-copy">
-                No dedicated meta guide is wired for this resource yet. Use the wiki source and map notes for now.
-              </p>
-            )}
-          </section>
-        </div>
-      </section>
-
-      {guide.sourceLinks?.length ? <GuideSourcesPanel sources={guide.sourceLinks} /> : null}
+      {selectedGuideCurrency ? (
+        <GuideCurrencyDetailPane
+          currency={selectedGuideCurrency}
+          onClose={onCloseDetail}
+          onOpenPage={onOpenPage}
+        />
+      ) : (
+        <MarketItemDetailPane
+          selectedItem={selectedItem}
+          catalog={catalog}
+          listings={listings}
+          itemTransactions={itemTransactions}
+          recipes={recipes}
+          usedInRecipes={usedInRecipes}
+          recipeUsageState={recipeUsageState}
+          wikiGuide={wikiGuide}
+          guideResource={selectedGuideResource}
+          detailState={detailState}
+          containerAnalysis={containerAnalysis}
+          containerState={containerState}
+          accountSnapshot={accountSnapshot}
+          marketHistoryRevision={marketHistoryRevision}
+          onCloseDetail={onCloseDetail}
+          onSelectItem={(item) => onSelectInlineDetail(item)}
+          onOpenPage={onOpenPage}
+          onOpenCurrency={onOpenGuideCurrency}
+        />
+      )}
     </div>
+  );
+}
+
+function GuideCurrencyDetailPane({
+  currency,
+  onClose,
+  onOpenPage,
+}: {
+  currency: GuideCurrencyDefinition;
+  onClose: () => void;
+  onOpenPage?: (page: ActivePage) => void;
+}) {
+  return (
+    <section className="detail-panel">
+      <div className="item-detail guide-currency-detail">
+        <section className="item-title-row guide-currency-detail-header">
+          <span className="currency-detail-icon">
+            <img src={currency.icon} alt="" loading="lazy" />
+          </span>
+          <div>
+            <span className="rarity rarity-basic">Currency</span>
+            <h2>{currency.name}</h2>
+            <p>{currency.summary}</p>
+          </div>
+          <a
+            className="detail-wiki-button"
+            href={currency.wikiUrl}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`Open ${currency.name} wiki page`}
+            title={`Open ${currency.name} wiki page`}
+          >
+            <ExternalLink />
+          </a>
+          <button className="detail-close-button" onClick={onClose} aria-label="Close currency details" title="Close currency details">
+            <X />
+          </button>
+        </section>
+
+        <section className="surface guide-resource-detail-info">
+          <div className="section-title">
+            <BookOpen />
+            <h3>Currency Guide</h3>
+          </div>
+          <div className="guide-resource-detail-grid">
+            <section className="guide-detail-section">
+              <h3>How To Get</h3>
+              <ul className="guide-check-list">
+                {currency.acquisition.map((item) => (
+                  <li key={item}>
+                    <CheckCircle2 />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+
+            <section className="guide-detail-section">
+              <h3>Used For</h3>
+              <ul className="guide-step-list">
+                {currency.uses.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </section>
+
+            {currency.vendors?.length ? (
+              <section className="guide-detail-section">
+                <h3>Vendors And Locations</h3>
+                <div className="guide-vendor-link-list">
+                  {currency.vendors.map((vendor) => (
+                    <article key={`${vendor.name}-${vendor.location}`}>
+                      <a href={vendor.url} target="_blank" rel="noreferrer">
+                        {vendor.name}
+                        <ExternalLink />
+                      </a>
+                      <span>
+                        Location:{" "}
+                        <a href={vendor.locationUrl} target="_blank" rel="noreferrer">
+                          {vendor.location}
+                          <ExternalLink />
+                        </a>
+                      </span>
+                      <p>{vendor.note}</p>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {currency.relatedGuides?.length ? (
+              <section className="guide-detail-section">
+                <h3>Related Guides</h3>
+                <div className="guide-meta-link-list">
+                  {currency.relatedGuides.map((link) => (
+                    <button
+                      key={link.page}
+                      type="button"
+                      onClick={() => onOpenPage?.(link.page)}
+                      disabled={!onOpenPage}
+                    >
+                      <MapPin />
+                      <span>
+                        <strong>{link.label}</strong>
+                        <small>{link.detail}</small>
+                      </span>
+                      <ChevronRight />
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+          </div>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function GuideResourceDetailInfo({
+  resource,
+  onOpenPage,
+}: {
+  resource: GuideResource;
+  onOpenPage?: (page: ActivePage) => void;
+}) {
+  return (
+    <section className="surface guide-resource-detail-info">
+      <div className="section-title">
+        <BookOpen />
+        <h3>LWS4 Resource Guide</h3>
+      </div>
+      <div className="guide-resource-detail-grid">
+        <section className="guide-detail-section">
+          <h3>How To Obtain</h3>
+          <ul className="guide-check-list">
+            {(resource.acquisition?.length ? resource.acquisition : [resource.route]).map((item) => (
+              <li key={item}>
+                <CheckCircle2 />
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section className="guide-detail-section">
+          <h3>Purchases And Uses</h3>
+          <ul className="guide-step-list">
+            {(resource.purchases?.length ? resource.purchases : [resource.value]).map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </section>
+
+        <section className="guide-detail-section">
+          <h3>Vendors And Locations</h3>
+          {resource.vendors?.length ? (
+            <div className="guide-vendor-link-list">
+              {resource.vendors.map((vendor) => (
+                <article key={`${vendor.name}-${vendor.location}`}>
+                  <a href={vendor.url} target="_blank" rel="noreferrer">
+                    {vendor.name}
+                    <ExternalLink />
+                  </a>
+                  <span>
+                    Location:{" "}
+                    <a href={vendor.locationUrl} target="_blank" rel="noreferrer">
+                      {vendor.location}
+                      <ExternalLink />
+                    </a>
+                  </span>
+                  <p>{vendor.note}</p>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="guide-muted-copy">{resource.vendor}</p>
+          )}
+        </section>
+
+        <section className="guide-detail-section">
+          <h3>Related Meta Guides</h3>
+          {resource.metaLinks?.length ? (
+            <div className="guide-meta-link-list">
+              {resource.metaLinks.map((link) => (
+                <button
+                  key={`${link.label}-${link.page ?? "route"}`}
+                  type="button"
+                  onClick={() => {
+                    if (link.page) {
+                      onOpenPage?.(link.page);
+                    }
+                  }}
+                  disabled={!onOpenPage || !link.page}
+                >
+                  <MapPin />
+                  <span>
+                    <strong>{link.label}</strong>
+                    <small>{link.detail}</small>
+                  </span>
+                  <ChevronRight />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="guide-muted-copy">
+              No dedicated meta guide is wired for this resource yet. Use the wiki source and vendor links for the current route.
+            </p>
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+const GW2_CHAT_CODE_SPLIT_PATTERN = /(\[&[A-Za-z0-9+/=]+])/g;
+const GW2_CHAT_CODE_PATTERN = /^\[&[A-Za-z0-9+/=]+]$/;
+
+function TextWithCopyableChatCodes({ text }: { text: string }) {
+  const parts = text.split(GW2_CHAT_CODE_SPLIT_PATTERN).filter(Boolean);
+
+  return (
+    <span className="copyable-chat-text">
+      {parts.map((part, index) =>
+        GW2_CHAT_CODE_PATTERN.test(part) ? (
+          <CopyableChatCode key={`${part}-${index}`} code={part} />
+        ) : (
+          <span key={`${part}-${index}`}>{part}</span>
+        ),
+      )}
+    </span>
+  );
+}
+
+function CopyableChatCode({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => setCopied(false), 1400);
+    return () => window.clearTimeout(timeoutId);
+  }, [copied]);
+
+  const copyCode = async (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (await copyTextToClipboard(code)) {
+      setCopied(true);
+    } else {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className={`copyable-chat-code ${copied ? "copied" : ""}`}
+      onClick={(event) => void copyCode(event)}
+      title={copied ? "Copied" : "Copy chat code"}
+      aria-label={`${copied ? "Copied" : "Copy"} ${code}`}
+    >
+      {code}
+    </button>
+  );
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (window.gw2Desktop?.copyText) {
+    try {
+      return await window.gw2Desktop.copyText(text);
+    } catch {
+      // Fall back to browser copy paths below.
+    }
+  }
+
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fall back to the selection-based copy path below.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-1000px";
+  textarea.style.left = "-1000px";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+function GuideCurrencyValue({
+  value,
+  onOpenCurrency,
+}: {
+  value: string;
+  onOpenCurrency?: (currency: GuideCurrencyDefinition) => void;
+}) {
+  const parsed = parseGuideCurrencyText(value);
+  if (!parsed.coin && parsed.currencies.length === 0) {
+    return <span>{value}</span>;
+  }
+  const parts: ReactNode[] = [
+    ...parsed.currencies.map((currency) => (
+      <CurrencyAmount
+        key={`${currency.name}-${currency.amount}`}
+        name={currency.name}
+        amount={currency.amount}
+        onOpenCurrency={onOpenCurrency}
+      />
+    )),
+    ...(parsed.coin ? [<SignedMoney key="coin" value={parsed.coin} />] : []),
+  ];
+
+  return (
+    <span className="guide-currency-value" aria-label={value}>
+      {parts.map((part, index) => (
+        <Fragment key={index}>
+          {index > 0 ? <span className="guide-currency-plus">+</span> : null}
+          {part}
+        </Fragment>
+      ))}
+    </span>
+  );
+}
+
+function CurrencyAmount({
+  name,
+  amount,
+  onOpenCurrency,
+}: {
+  name: string;
+  amount: number;
+  onOpenCurrency?: (currency: GuideCurrencyDefinition) => void;
+}) {
+  const icon = GW2_CURRENCY_ICONS[name];
+  const definition = GUIDE_CURRENCY_DEFINITIONS[name];
+  const loss = amount < 0;
+  const content = (
+    <>
+      {loss ? "-" : null}
+      {Math.abs(amount).toLocaleString()}
+      {icon ? <img src={icon} alt={name} title={name} loading="lazy" /> : <span>{name}</span>}
+    </>
+  );
+
+  if (definition && onOpenCurrency) {
+    return (
+      <button
+        type="button"
+        className={`guide-currency-amount guide-currency-tab currency ${loss ? "loss" : ""}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenCurrency(definition);
+        }}
+        aria-label={`Open ${name} currency details`}
+        title={`Open ${name} currency details`}
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <span className={`guide-currency-amount currency ${loss ? "loss" : ""}`}>
+      {content}
+    </span>
+  );
+}
+
+function SignedMoney({ value }: { value: number }) {
+  const loss = value < 0;
+
+  return (
+    <span className={`guide-currency-amount ${loss ? "loss" : ""}`}>
+      {loss ? "-" : null}
+      <Money value={Math.abs(value)} />
+    </span>
+  );
+}
+
+function parseGuideCurrencyText(value: string): { coin: number; currencies: Array<{ name: string; amount: number }> } {
+  const text = value.trim();
+  const sign = text.startsWith("-") ? -1 : 1;
+  let coin = 0;
+  const currencies: Array<{ name: string; amount: number }> = [];
+  const coinUnitValues: Record<string, number> = {
+    gold: 10_000,
+    silver: 100,
+    copper: 1,
+    coin: 1,
+  };
+  const coinPattern = /(\d[\d,]*)\s*(gold|silver|copper|coin)\b/gi;
+  let coinMatch: RegExpExecArray | null;
+  while ((coinMatch = coinPattern.exec(text))) {
+    coin += Number(coinMatch[1].replace(/,/g, "")) * coinUnitValues[coinMatch[2].toLowerCase()];
+  }
+
+  for (const currencyName of Object.keys(GW2_CURRENCY_ICONS).sort((left, right) => right.length - left.length)) {
+    const currencyPattern = new RegExp(`([+-]?\\d[\\d,]*)\\s*${escapeRegExp(currencyName)}s?\\b`, "i");
+    const currencyMatch = text.match(currencyPattern);
+    if (currencyMatch) {
+      const amountText = currencyMatch[1];
+      const parsedAmount = Number(amountText.replace(/[+,]/g, ""));
+      const amount = /^[+-]/.test(amountText) ? parsedAmount : sign * parsedAmount;
+      currencies.push({ name: currencyName, amount });
+    }
+  }
+
+  return {
+    coin: sign * coin,
+    currencies,
+  };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildGuideInlineItems(rewards: GuideReward[], catalog: MarketItem[]): GuideInlineItem[] {
+  return rewards
+    .map((reward) => {
+      const item = buildGuideRewardItem(reward, catalog);
+      return item
+        ? {
+            name: reward.name,
+            detail: reward.detail,
+            item,
+          }
+        : null;
+    })
+    .filter((item): item is GuideInlineItem => Boolean(item));
+}
+
+function mergeGuideSourceLinks(...sourceGroups: GuideSourceLink[][]): GuideSourceLink[] {
+  const merged = new Map<string, GuideSourceLink>();
+
+  for (const source of sourceGroups.flat()) {
+    const key = `${source.url}|${source.label}`;
+    if (!merged.has(key)) {
+      merged.set(key, source);
+    }
+  }
+
+  return Array.from(merged.values());
+}
+
+function GuideTextWithItemHighlights({
+  text,
+  items,
+  onOpenItem,
+}: {
+  text: string;
+  items: GuideInlineItem[];
+  onOpenItem: (item: Gw2Item) => void;
+}) {
+  if (!items.length) {
+    return <>{text}</>;
+  }
+
+  const names = Array.from(new Set(items.map((item) => item.name))).sort((left, right) => right.length - left.length);
+  const pattern = new RegExp(`\\b(${names.map((name) => `${escapeRegExp(name)}${name.endsWith("s") ? "" : "s?"}`).join("|")})\\b`, "gi");
+  const parts = text.split(pattern).filter(Boolean);
+
+  return (
+    <>
+      {parts.map((part, index) => {
+        const normalizedPart = part.toLowerCase();
+        const match = items.find((item) => {
+          const normalizedName = item.name.toLowerCase();
+          return normalizedPart === normalizedName || normalizedPart === `${normalizedName}s`;
+        });
+
+        if (!match) {
+          return <Fragment key={`${part}-${index}`}>{part}</Fragment>;
+        }
+
+        return (
+          <button
+            key={`${part}-${index}`}
+            type="button"
+            className="guide-inline-item-link"
+            title={match.detail}
+            onClick={() => onOpenItem(match.item)}
+          >
+            <ItemIcon item={match.item} />
+            <span>{part}</span>
+          </button>
+        );
+      })}
+    </>
   );
 }
 
@@ -17214,6 +19466,344 @@ function GuideResourcePanel({
       </div>
     </section>
   );
+}
+
+function GuideStoresPanel({
+  stores,
+  catalog,
+  maps,
+  selectedItem,
+  onOpenItem,
+  onOpenCurrency,
+}: {
+  stores: GuideStore[];
+  catalog: MarketItem[];
+  maps: Gw2Map[];
+  selectedItem: MarketItem | null;
+  onOpenItem: (item: Gw2Item) => void;
+  onOpenCurrency?: (currency: GuideCurrencyDefinition) => void;
+}) {
+  const [wikiStoreItems, setWikiStoreItems] = useState<Record<string, Gw2Item | null>>({});
+  const [, setStoreItemDataRevision] = useState(0);
+  const storeOpenRunRef = useRef(0);
+
+  function getStoreItemKey(store: GuideStore, storeItem: GuideStoreItem): string {
+    return `${store.name}:${storeItem.name}`;
+  }
+
+  function getResolvedStoreItem(store: GuideStore, storeItem: GuideStoreItem): Gw2Item | null {
+    const itemKey = getStoreItemKey(store, storeItem);
+    const itemId = getGuideStoreItemId(storeItem);
+    return (
+      (itemId ? catalog.find((item) => item.id === itemId) ?? getStoredItem(itemId) : undefined) ??
+      findMarketItemByName(catalog, storeItem.name) ??
+      getStoredItemByName(storeItem.name) ??
+      wikiStoreItems[itemKey] ??
+      null
+    );
+  }
+
+  const storeItemIdsToLoad = useMemo(() => {
+    const ids = new Set<number>();
+    for (const store of stores) {
+      for (const storeItem of store.items) {
+        const itemId = getGuideStoreItemId(storeItem);
+        if (itemId && !catalog.some((item) => item.id === itemId) && !getStoredItem(itemId)) {
+          ids.add(itemId);
+        }
+      }
+    }
+    return [...ids];
+  }, [catalog, stores]);
+
+  useEffect(() => {
+    if (!storeItemIdsToLoad.length) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    void loadItems(storeItemIdsToLoad)
+      .then(() => {
+        if (!cancelled) {
+          setStoreItemDataRevision((revision) => revision + 1);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [storeItemIdsToLoad]);
+
+  function openStoreItem(store: GuideStore, storeItem: GuideStoreItem) {
+    const runId = storeOpenRunRef.current + 1;
+    storeOpenRunRef.current = runId;
+    const resolvedItem = getResolvedStoreItem(store, storeItem);
+    onOpenItem(buildGuideStoreDetailItem(store, storeItem, resolvedItem));
+
+    if (resolvedItem) {
+      return;
+    }
+
+    void fetchMissingStoreItem(store, storeItem).then((item) => {
+      if (!item || storeOpenRunRef.current !== runId) {
+        return;
+      }
+
+      onOpenItem(buildGuideStoreDetailItem(store, storeItem, item));
+    });
+  }
+
+  async function fetchMissingStoreItem(store: GuideStore, storeItem: GuideStoreItem): Promise<Gw2Item | null> {
+    const itemKey = getStoreItemKey(store, storeItem);
+    const itemId = getGuideStoreItemId(storeItem);
+    const item = itemId
+      ? (await loadItems([itemId]).catch(() => []))[0] ?? null
+      : await loadWikiItemFallback(storeItem.name).catch(() => null);
+
+    if (item) {
+      setWikiStoreItems((currentItems) => ({ ...currentItems, [itemKey]: item }));
+      setStoreItemDataRevision((revision) => revision + 1);
+    }
+
+    return item;
+  }
+
+  return (
+    <section className="surface activity-value-panel guide-store-panel">
+      <div className="section-title">
+        <ShoppingCart />
+        <h3>Stores and Prices</h3>
+      </div>
+      <div className="guide-store-list">
+        {stores.map((store) => (
+          <article key={store.name} className="guide-store-card">
+            <div className="guide-store-heading">
+              <div>
+                <h3>{store.name}</h3>
+                <span>{store.location}</span>
+                {store.note ? <p>{store.note}</p> : null}
+              </div>
+              <a href={store.url} target="_blank" rel="noreferrer" aria-label={`Open ${store.name} wiki page`}>
+                <ExternalLink />
+              </a>
+            </div>
+            <GuideStoreLocationPanel store={store} maps={maps} />
+            <div className="craft-table-wrap">
+              <table className="craft-profit-table guide-store-table">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>Price</th>
+                    <th>Limit / Requirement</th>
+                    <th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {store.items.map((storeItem, index) => {
+                    const storedItem = getResolvedStoreItem(store, storeItem);
+                    const displayItem = storedItem ?? buildGuideStoreFallbackItem(store, storeItem);
+                    const label = storeItem.quantity ? `${storeItem.quantity}x ${storeItem.name}` : storeItem.name;
+                    const selected =
+                      selectedItem?.id === displayItem.id ||
+                      normalizeSearchText(selectedItem?.name ?? "") === normalizeSearchText(storeItem.name);
+                    return (
+                      <tr
+                        key={`${store.name}-${storeItem.name}-${storeItem.price}-${index}`}
+                        className={selected ? "selected-row" : ""}
+                      >
+                        <td>
+                          <button
+                            type="button"
+                            className="table-item-button"
+                            onClick={() => openStoreItem(store, storeItem)}
+                            title={`Open ${storeItem.name} detail page`}
+                          >
+                            <span className="table-item-cell">
+                              <ItemIcon item={displayItem} />
+                              <span className="item-copy">
+                                <strong>{label}</strong>
+                                <span>
+                                  {storedItem ? `${storedItem.rarity} ${storedItem.type}` : "Local guide item"}
+                                </span>
+                              </span>
+                            </span>
+                          </button>
+                        </td>
+                        <td><GuideCurrencyValue value={storeItem.price} onOpenCurrency={onOpenCurrency} /></td>
+                        <td>
+                          {[storeItem.limit, storeItem.requirement].filter(Boolean).join(" · ") || <span className="muted-copy">-</span>}
+                        </td>
+                        <td>{storeItem.note ?? <span className="muted-copy">-</span>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function GuideStoreLocationPanel({ store, maps }: { store: GuideStore; maps: Gw2Map[] }) {
+  const [showMap, setShowMap] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const location = useMemo(() => buildGuideStoreLocation(store), [store]);
+  const resolvedLocation = useMemo(() => (location ? resolveGuideLocation(location) : null), [location]);
+  const chatLink = resolvedLocation ? getGuideLocationChatLink(resolvedLocation) : null;
+  const hasMapMarker = Boolean(resolvedLocation?.continentCoord && maps.length);
+  const copyLabel = copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : getGuideStoreLocationCopyLabel(resolvedLocation);
+
+  useEffect(() => {
+    if (copyState === "idle") {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => setCopyState("idle"), 1800);
+    return () => window.clearTimeout(timeoutId);
+  }, [copyState]);
+
+  if (!resolvedLocation) {
+    return null;
+  }
+
+  const copyLocationLink = async () => {
+    const value = chatLink ?? resolvedLocation.wikiUrl ?? store.url;
+    setCopyState(await copyTextToClipboard(value) ? "copied" : "failed");
+  };
+
+  return (
+    <div className="guide-store-location">
+      <div className="guide-store-location-copy">
+        <MapPin />
+        <div>
+          <strong>{resolvedLocation.label}</strong>
+          <span>
+            {resolvedLocation.map}
+            {chatLink ? ` · ${chatLink}` : ""}
+          </span>
+        </div>
+      </div>
+      <div className="guide-store-location-actions">
+        <button type="button" onClick={() => void copyLocationLink()}>
+          <Copy />
+          {copyLabel}
+        </button>
+        {hasMapMarker ? (
+          <button type="button" onClick={() => setShowMap((current) => !current)}>
+            <MapPinned />
+            {showMap ? "Hide map" : "Map"}
+          </button>
+        ) : null}
+      </div>
+      {showMap && hasMapMarker ? (
+        <div className="guide-store-map">
+          <GuideInteractiveMap locations={[resolvedLocation]} maps={maps} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function buildGuideStoreLocation(store: GuideStore): GuideLocation | null {
+  if (!store.map && !store.waypoint && !store.wikiPointName) {
+    return null;
+  }
+
+  return {
+    label: store.name,
+    map: store.map ?? store.location,
+    waypoint: store.waypoint,
+    wikiPointName: store.wikiPointName,
+    wikiPointType: store.wikiPointType,
+    note: store.location,
+    wikiUrl: store.url,
+    zoom: 7,
+  };
+}
+
+function getGuideStoreLocationCopyLabel(location: GuideLocation | null): string {
+  if (!location) {
+    return "Copy location";
+  }
+
+  if (normalizeWaypointCode(location.waypoint)) {
+    return location.wikiPointType === "landmark" ? "Copy point" : "Copy waypoint";
+  }
+
+  return "Copy nearest waypoint";
+}
+
+function buildGuideStoreFallbackItem(store: GuideStore, storeItem: GuideStoreItem): Gw2Item {
+  const itemId = getGuideStoreItemId(storeItem);
+  return {
+    id: itemId ?? guideWikiFallbackItemId(storeItem.name),
+    name: storeItem.name,
+    icon: GW2_CURRENCY_ICONS[storeItem.name],
+    description: [
+      `Vendor item listed by ${store.name}.`,
+      store.location ? `Location: ${store.location}.` : "",
+      storeItem.requirement ? `Requirement: ${storeItem.requirement}.` : "",
+      storeItem.limit ? `Limit: ${storeItem.limit}.` : "",
+      storeItem.note ?? "",
+    ].filter(Boolean).join(" "),
+    type: "Vendor",
+    rarity: "Basic",
+    level: 0,
+    vendor_value: 0,
+    flags: ["GuideStoreFallback"],
+    game_types: [],
+    restrictions: [],
+    details: getGuideStoreItemDetails(store, storeItem),
+  };
+}
+
+function buildGuideStoreDetailItem(store: GuideStore, storeItem: GuideStoreItem, resolvedItem: Gw2Item | null): Gw2Item {
+  if (!resolvedItem) {
+    return buildGuideStoreFallbackItem(store, storeItem);
+  }
+
+  return {
+    ...resolvedItem,
+    flags: Array.from(new Set([...(resolvedItem.flags ?? []), "GuideStoreItem"])),
+    details: {
+      ...(resolvedItem.details ?? {}),
+      ...getGuideStoreItemDetails(store, storeItem),
+    },
+  };
+}
+
+function getGuideStoreItemDetails(store: GuideStore, storeItem: GuideStoreItem): Record<string, unknown> {
+  return {
+    guideStoreItem: true,
+    store: store.name,
+    storeUrl: store.url,
+    storeLocation: store.location,
+    itemWikiUrl: storeItem.wikiUrl,
+    price: storeItem.price,
+    requirement: storeItem.requirement,
+    limit: storeItem.limit,
+    note: storeItem.note,
+  };
+}
+
+function getGuideStoreItemId(storeItem: GuideStoreItem): number | undefined {
+  return GUIDE_STORE_ITEM_IDS_BY_NAME[normalizeSearchText(storeItem.name)];
+}
+
+function guideWikiFallbackItemId(value: string): number {
+  let hash = 0;
+  for (const char of normalizeWikiLookupText(value)) {
+    hash = (Math.imul(hash, 31) + char.charCodeAt(0)) | 0;
+  }
+  return -1_000_000 - Math.abs(hash % 8_000_000);
+}
+
+function normalizeWikiLookupText(value: string): string {
+  return value.replace(/&amp;/g, "&").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function buildGuideRewardItem(reward: GuideReward, catalog: MarketItem[]): Gw2Item | null {
@@ -17816,6 +20406,17 @@ function findMarketItemByName(catalog: MarketItem[], name: string): MarketItem |
   return catalog.find((item) => normalizeSearchText(item.name) === normalized);
 }
 
+function findGuideResourceForItem(item: Gw2Item, explicitResource?: GuideResource | null): GuideResource | null {
+  if (explicitResource) {
+    return explicitResource;
+  }
+
+  const normalizedName = normalizeSearchText(item.name);
+  return (
+    LWS4_RESOURCE_ROWS.find((resource) => resource.itemId === item.id || normalizeSearchText(resource.name) === normalizedName) ?? null
+  );
+}
+
 function normalizeSearchText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
@@ -17829,23 +20430,179 @@ function isGuideFamily(activePage: ActivePage, familyId: ActivePage): boolean {
   return group?.items[0]?.id === familyId;
 }
 
+function getRenderableMapFloor(map: Gw2Map, requestedFloor?: number): number {
+  const floors = map.floors ?? [];
+
+  if (requestedFloor !== undefined && floors.includes(requestedFloor)) {
+    return requestedFloor;
+  }
+
+  if (floors.includes(map.default_floor)) {
+    return map.default_floor;
+  }
+
+  return floors[0] ?? map.default_floor ?? 1;
+}
+
+function getGw2MapProjectionMaxZoom(continentId: number): number {
+  return GW2_TILE_RENDER_MAX_ZOOM[continentId] ?? GW2_CONTINENT_MAX_ZOOM[continentId] ?? 8;
+}
+
+function normalizeWaypointCode(value?: string): string | null {
+  return value?.match(/\[&[A-Za-z0-9+/=]+]/)?.[0] ?? null;
+}
+
+function getGuideWaypointCoordinate(value?: string): GuideWaypointCoordinate | null {
+  const waypointCode = normalizeWaypointCode(value);
+  const wikiPoint = findGw2WikiMapPointByChatLink(waypointCode ?? undefined);
+  if (wikiPoint) {
+    return {
+      name: wikiPoint.name,
+      map: wikiPoint.mapName,
+      waypoint: wikiPoint.chatLink ?? waypointCode ?? "",
+      continentCoord: wikiPoint.coord,
+      floor: getWikiPointRenderableFloor(wikiPoint.defaultFloor, wikiPoint.floors ?? wikiPoint.mapFloors),
+      wikiUrl: buildGw2WikiUrl(wikiPoint.name),
+    };
+  }
+
+  return waypointCode ? GUIDE_WAYPOINT_COORDINATES[waypointCode] ?? null : null;
+}
+
+function getGuideNamedMapCoordinate(location: GuideLocation): GuideWaypointCoordinate | null {
+  if (!location.wikiPointName) {
+    return null;
+  }
+
+  const wikiPoint = findGw2WikiMapPointByName(location.map, location.wikiPointName, location.wikiPointType);
+  if (!wikiPoint) {
+    return null;
+  }
+
+  return {
+    name: wikiPoint.name,
+    map: wikiPoint.mapName,
+    waypoint: wikiPoint.chatLink ?? location.waypoint ?? "",
+    continentCoord: wikiPoint.coord,
+    floor: getWikiPointRenderableFloor(wikiPoint.defaultFloor, wikiPoint.floors ?? wikiPoint.mapFloors),
+    wikiUrl: buildGw2WikiUrl(wikiPoint.name),
+  };
+}
+
+function getWikiPointRenderableFloor(defaultFloor: number, floors: number[] = []): number {
+  if (floors.includes(defaultFloor)) {
+    return defaultFloor;
+  }
+
+  return floors[0] ?? defaultFloor;
+}
+
+function buildGw2WikiUrl(title: string): string {
+  return `https://wiki.guildwars2.com/wiki/${encodeURIComponent(title.replaceAll(" ", "_"))}`;
+}
+
+function getGuideLocationChatLink(location: GuideLocation): string | null {
+  const waypointCode = normalizeWaypointCode(location.waypoint);
+  if (waypointCode) {
+    return waypointCode;
+  }
+
+  return findNearestGw2WikiWaypoint(location.map, location.continentCoord)?.chatLink ?? null;
+}
+
+function resolveGuideLocation(location: GuideLocation): GuideLocation {
+  const waypoint = getGuideWaypointCoordinate(location.waypoint) ?? getGuideNamedMapCoordinate(location);
+  const mapFloor = GUIDE_MAP_FLOOR_OVERRIDES[location.map];
+  if (!waypoint && mapFloor === undefined) {
+    return location;
+  }
+
+  return {
+    ...location,
+    map: location.map || waypoint?.map || location.map,
+    continentCoord: location.continentCoord ?? waypoint?.continentCoord,
+    floor: location.floor ?? waypoint?.floor ?? mapFloor,
+    wikiUrl: location.wikiUrl ?? waypoint?.wikiUrl,
+  };
+}
+
+function chooseGuideMapInitialZoom(
+  map: Gw2Map,
+  maxZoom: number,
+  markerCoords: Array<[number, number]>,
+  mapSize: { width: number; height: number },
+  fallbackZoom: number,
+): number {
+  if (markerCoords.length < 2) {
+    return Math.max(0, Math.min(fallbackZoom, maxZoom));
+  }
+
+  const minX = Math.min(...markerCoords.map((coord) => coord[0]));
+  const maxX = Math.max(...markerCoords.map((coord) => coord[0]));
+  const minY = Math.min(...markerCoords.map((coord) => coord[1]));
+  const maxY = Math.max(...markerCoords.map((coord) => coord[1]));
+  const pointWidth = maxX - minX;
+  const pointHeight = maxY - minY;
+
+  if (pointWidth <= 0 && pointHeight <= 0) {
+    return Math.max(0, Math.min(fallbackZoom, maxZoom));
+  }
+
+  const [[mapLeft, mapTop], [mapRight, mapBottom]] = map.continent_rect;
+  const mapWidth = mapRight - mapLeft;
+  const mapHeight = mapBottom - mapTop;
+  const viewportWidth = mapSize.width || 900;
+  const viewportHeight = mapSize.height || 520;
+  const usableWidth = Math.max(140, viewportWidth - 300);
+  const usableHeight = Math.max(140, viewportHeight - 190);
+
+  for (let zoom = maxZoom; zoom >= 0; zoom -= 1) {
+    const worldPerPixel = 2 ** (maxZoom - zoom);
+    const visiblePointWidth = Math.max(pointWidth, mapWidth * 0.04) / worldPerPixel;
+    const visiblePointHeight = Math.max(pointHeight, mapHeight * 0.04) / worldPerPixel;
+
+    if (visiblePointWidth <= usableWidth && visiblePointHeight <= usableHeight) {
+      return zoom;
+    }
+  }
+
+  return 0;
+}
+
 function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; maps: Gw2Map[] }) {
-  const primaryLocation = locations.find((location) => !ABSTRACT_LOCATION_MAPS.has(normalizeMapName(location.map))) ?? locations[0];
+  const resolvedLocations = useMemo(() => locations.map(resolveGuideLocation), [locations]);
+  const primaryLocation = resolvedLocations.find((location) => !ABSTRACT_LOCATION_MAPS.has(normalizeMapName(location.map))) ?? resolvedLocations[0];
   const primaryMap = primaryLocation ? findGw2MapByName(primaryLocation.map, maps) : undefined;
   const primaryMapLocation = primaryMap
-    ? locations.find((location) => findGw2MapByName(location.map, maps)?.id === primaryMap.id)
+    ? resolvedLocations.find((location) => findGw2MapByName(location.map, maps)?.id === primaryMap.id)
     : undefined;
-  const maxZoom = primaryMap ? GW2_CONTINENT_MAX_ZOOM[primaryMap.continent_id] ?? 8 : 8;
-  const maxTileZoom = primaryMap ? GW2_TILE_RENDER_MAX_ZOOM[primaryMap.continent_id] ?? maxZoom : maxZoom;
+  const projectionMaxZoom = primaryMap ? getGw2MapProjectionMaxZoom(primaryMap.continent_id) : 8;
+  const maxZoom = projectionMaxZoom;
+  const mapRef = useRef<HTMLDivElement | null>(null);
+  const wheelZoomDeltaRef = useRef(0);
+  const [mapSize, setMapSize] = useState({ width: 0, height: 0 });
+  const mapLocations = useMemo(
+    () =>
+      resolvedLocations
+        .map((location) => ({
+          location,
+          map: findGw2MapByName(location.map, maps),
+        }))
+        .filter((entry) => entry.map?.id === primaryMap?.id),
+    [maps, primaryMap?.id, resolvedLocations],
+  );
+  const markerCoords = useMemo(
+    () =>
+      mapLocations
+        .map(({ location }) => location.continentCoord)
+        .filter((coord): coord is [number, number] => Boolean(coord)),
+    [mapLocations],
+  );
   const defaultCenter = useMemo<[number, number]>(() => {
     if (!primaryMap) {
       return [0, 0];
     }
 
-    const markerCoords = locations
-      .filter((location) => findGw2MapByName(location.map, maps)?.id === primaryMap.id)
-      .map((location) => location.continentCoord)
-      .filter((coord): coord is [number, number] => Boolean(coord));
     if (markerCoords.length) {
       return [
         markerCoords.reduce((sum, coord) => sum + coord[0], 0) / markerCoords.length,
@@ -17855,19 +20612,25 @@ function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; 
 
     const [[left, top], [right, bottom]] = primaryMap.continent_rect;
     return primaryLocation?.continentCoord ?? [left + (right - left) / 2, top + (bottom - top) / 2];
-  }, [locations, maps, primaryLocation, primaryMap]);
+  }, [markerCoords, primaryLocation, primaryMap]);
   const defaultZoom = primaryMap
     ? Math.max(
         0,
         Math.min(
-          (locations.length > 1 ? (primaryLocation?.zoom ?? chooseMapPreviewZoom(primaryMap, maxZoom)) - 2 : primaryLocation?.zoom ?? chooseMapPreviewZoom(primaryMap, maxZoom)),
+          chooseGuideMapInitialZoom(
+            primaryMap,
+            maxZoom,
+            markerCoords,
+            mapSize,
+            primaryLocation?.zoom ?? chooseMapPreviewZoom(primaryMap, maxZoom),
+          ),
           maxZoom,
-          maxTileZoom,
         ),
       )
     : 0;
   const [center, setCenter] = useState<[number, number]>(defaultCenter);
   const [zoom, setZoom] = useState(defaultZoom);
+  const [markerChatLinkFeedback, setMarkerChatLinkFeedback] = useState<{ code: string; copied: boolean } | null>(null);
   const dragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -17875,9 +20638,38 @@ function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; 
     center: [number, number];
   } | null>(null);
 
+  useLayoutEffect(() => {
+    const element = mapRef.current;
+    if (!element) {
+      return undefined;
+    }
+
+    const updateSize = () => {
+      setMapSize({
+        width: element.clientWidth,
+        height: element.clientHeight,
+      });
+    };
+
+    updateSize();
+    const resizeObserver = new ResizeObserver(updateSize);
+    resizeObserver.observe(element);
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!markerChatLinkFeedback) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => setMarkerChatLinkFeedback(null), 1800);
+    return () => window.clearTimeout(timeoutId);
+  }, [markerChatLinkFeedback]);
+
   useEffect(() => {
     setCenter(defaultCenter);
     setZoom(defaultZoom);
+    wheelZoomDeltaRef.current = 0;
   }, [defaultCenter, defaultZoom, primaryMap?.id]);
 
   if (!primaryMap) {
@@ -17889,8 +20681,8 @@ function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; 
     );
   }
 
-  const floor = primaryMapLocation?.floor ?? primaryMap.default_floor ?? primaryMap.floors?.[0] ?? 1;
-  const tileWorldSize = GW2_TILE_SIZE * 2 ** (maxZoom - zoom);
+  const floor = getRenderableMapFloor(primaryMap, primaryMapLocation?.floor);
+  const tileWorldSize = GW2_TILE_SIZE * 2 ** (projectionMaxZoom - zoom);
   const worldPerPixel = tileWorldSize / GW2_TILE_SIZE;
   const centerTileX = Math.max(0, Math.floor(center[0] / tileWorldSize));
   const centerTileY = Math.max(0, Math.floor(center[1] / tileWorldSize));
@@ -17909,18 +20701,15 @@ function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; 
     }
   }
 
-  const mapLocations = locations
-    .map((location) => ({
-      location,
-      map: findGw2MapByName(location.map, maps),
-    }))
-    .filter((entry) => entry.map?.id === primaryMap.id);
-
   const adjustZoom = (delta: number) => {
-    setZoom((current) => Math.max(0, Math.min(current + delta, maxZoom, maxTileZoom)));
+    setZoom((current) => Math.max(0, Math.min(current + delta, maxZoom)));
   };
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("button, a")) {
+      return;
+    }
+
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = {
       pointerId: event.pointerId,
@@ -17952,12 +20741,31 @@ function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; 
 
   const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
     event.preventDefault();
-    adjustZoom(event.deltaY < 0 ? 1 : -1);
+    wheelZoomDeltaRef.current += event.deltaY;
+
+    if (Math.abs(wheelZoomDeltaRef.current) < GUIDE_MAP_WHEEL_ZOOM_DELTA) {
+      return;
+    }
+
+    const step = wheelZoomDeltaRef.current < 0 ? 1 : -1;
+    wheelZoomDeltaRef.current -= Math.sign(wheelZoomDeltaRef.current) * GUIDE_MAP_WHEEL_ZOOM_DELTA;
+    adjustZoom(step);
+  };
+
+  const copyMarkerChatLink = async (event: ReactMouseEvent<HTMLButtonElement>, chatLink: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    setMarkerChatLinkFeedback({
+      code: chatLink,
+      copied: await copyTextToClipboard(chatLink),
+    });
   };
 
   return (
     <div className="guide-map-shell">
       <div
+        ref={mapRef}
         className="guide-interactive-map"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -17998,6 +20806,27 @@ function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; 
 
           const left = 50 + ((markerCoord[0] - center[0]) / worldPerPixel);
           const top = 50 + ((markerCoord[1] - center[1]) / worldPerPixel);
+          const chatLink = getGuideLocationChatLink(location);
+          const chatLinkFeedback = markerChatLinkFeedback?.code === chatLink ? markerChatLinkFeedback : null;
+          const feedbackLabel = chatLinkFeedback?.copied ? `Copied ${chatLink}` : chatLinkFeedback ? chatLink : location.label;
+
+          if (chatLink) {
+            return (
+              <button
+                key={`${location.label}-${index}`}
+                type="button"
+                className={`guide-map-marker ${chatLinkFeedback ? "copied" : ""}`}
+                onClick={(event) => void copyMarkerChatLink(event, chatLink)}
+                style={{ left: `calc(50% + ${left - 50}px)`, top: `calc(50% + ${top - 50}px)` }}
+                title={chatLinkFeedback?.copied ? `Copied ${chatLink}` : `Copy ${chatLink}`}
+                aria-label={`${chatLinkFeedback?.copied ? "Copied" : "Copy"} ${chatLink} for ${location.label}`}
+              >
+                <MapPin />
+                <span>{feedbackLabel}</span>
+              </button>
+            );
+          }
+
           return (
             <a
               key={`${location.label}-${index}`}
@@ -18013,7 +20842,15 @@ function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; 
             </a>
           );
         })}
-        <div className="guide-map-toolbar" aria-label="Map controls">
+        <div
+          className="guide-map-toolbar"
+          aria-label="Map controls"
+          onPointerDown={(event) => event.stopPropagation()}
+          onWheel={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
           <button type="button" onClick={() => adjustZoom(1)} aria-label="Zoom in">
             <Plus />
           </button>
@@ -18027,7 +20864,7 @@ function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; 
         <span className="guide-map-name">{primaryMap.name}</span>
       </div>
       <div className="guide-map-location-list">
-        {locations.map((location) => (
+        {resolvedLocations.map((location) => (
           <article key={`${location.map}-${location.label}`}>
             <strong>{location.label}</strong>
             <span>{location.note}</span>
@@ -18046,14 +20883,15 @@ function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; 
 }
 
 function LocationCard({ location, maps }: { location: GuideLocation; maps: Gw2Map[] }) {
-  const preview = getMapPreview(location, maps);
+  const resolvedLocation = resolveGuideLocation(location);
+  const preview = getMapPreview(resolvedLocation, maps);
 
   return (
     <article className="location-card">
       <div
         className={`mini-map ${preview ? "gw2-map" : "fallback-map"}`}
         role="img"
-        aria-label={`${location.map} map preview`}
+        aria-label={`${resolvedLocation.map} map preview`}
         style={preview?.mapStyle}
       >
         {preview ? (
@@ -18071,17 +20909,17 @@ function LocationCard({ location, maps }: { location: GuideLocation; maps: Gw2Ma
             ))}
           </div>
         ) : null}
-        <span>{preview?.map.name ?? location.map}</span>
+        <span>{preview?.map.name ?? resolvedLocation.map}</span>
         <i />
       </div>
       <div className="location-copy">
-        <strong>{location.label}</strong>
-        <span>{location.note}</span>
-        {location.waypoint ? (
-          <code title="Copy this code into GW2 chat, then click it in game.">{location.waypoint}</code>
+        <strong>{resolvedLocation.label}</strong>
+        <span>{resolvedLocation.note}</span>
+        {resolvedLocation.waypoint ? (
+          <code title="Copy this code into GW2 chat, then click it in game.">{resolvedLocation.waypoint}</code>
         ) : null}
-        {location.wikiUrl ? (
-          <a href={location.wikiUrl} target="_blank" rel="noreferrer">
+        {resolvedLocation.wikiUrl ? (
+          <a href={resolvedLocation.wikiUrl} target="_blank" rel="noreferrer">
             Open wiki map
             <ExternalLink />
           </a>
@@ -18116,10 +20954,9 @@ function getMapPreview(location: GuideLocation, maps: Gw2Map[]): MapPreviewData 
   }
 
   const [[left, top], [right, bottom]] = map.continent_rect;
-  const maxZoom = GW2_CONTINENT_MAX_ZOOM[map.continent_id] ?? 8;
-  const maxTileZoom = GW2_TILE_RENDER_MAX_ZOOM[map.continent_id] ?? maxZoom;
+  const maxZoom = getGw2MapProjectionMaxZoom(map.continent_id);
   const requestedZoom = location.zoom ?? chooseMapPreviewZoom(map, maxZoom);
-  const zoom = Math.max(0, Math.min(requestedZoom, maxZoom, maxTileZoom));
+  const zoom = Math.max(0, Math.min(requestedZoom, maxZoom));
   const scale = 2 ** (maxZoom - zoom);
   const tileWorldSize = GW2_TILE_SIZE * scale;
   const target = location.continentCoord ?? [
@@ -18134,7 +20971,7 @@ function getMapPreview(location: GuideLocation, maps: Gw2Map[]): MapPreviewData 
   const tileBottom = tileTop + MAP_PREVIEW_GRID_SIZE - 1;
   const targetPixelX = (target[0] / tileWorldSize - tileLeft) * GW2_TILE_SIZE;
   const targetPixelY = (target[1] / tileWorldSize - tileTop) * GW2_TILE_SIZE;
-  const floor = map.default_floor ?? map.floors?.[0] ?? 1;
+  const floor = getRenderableMapFloor(map, location.floor);
   const tiles: MapPreviewTile[] = [];
 
   for (let y = tileTop; y <= tileBottom; y += 1) {
@@ -18258,7 +21095,10 @@ function ItemDetail({
   marketHistoryRevision,
   onClose,
   onOpenDetail,
+  guideResource,
   extraInfo,
+  onOpenPage,
+  onOpenCurrency,
 }: {
   item: MarketItem;
   catalog: MarketItem[];
@@ -18275,10 +21115,12 @@ function ItemDetail({
   marketHistoryRevision: number;
   onClose: () => void;
   onOpenDetail?: (item: Gw2Item) => void;
+  guideResource?: GuideResource | null;
   extraInfo?: ReactNode;
+  onOpenPage?: (page: ActivePage) => void;
+  onOpenCurrency?: (currency: GuideCurrencyDefinition) => void;
 }) {
   const { isFavoriteItem, toggleFavoriteItem } = useFavoriteItems();
-  const refreshAccountData = useAccountRefresh();
   const topBuy = listings?.buys?.[0];
   const topSell = listings?.sells?.[0];
   const isTradable = hasTradingPostPrice(item);
@@ -18287,30 +21129,25 @@ function ItemDetail({
   const isSalvageableNonContainer = isKnownSalvageableNonContainer(item);
   const showSalvageProfile = salvageProfile.outputs.length > 0 || salvageProfile.confidence !== "Unmodeled";
   const showSalvageSimulator = isSalvageableNonContainer;
+  const localGuideStoreDetails = getLocalGuideStoreDetails(item);
   const [wikiAcquisition, setWikiAcquisition] = useState<WikiItemAcquisition | null>(null);
   const [wikiAcquisitionState, setWikiAcquisitionState] = useState<LoadState>("idle");
-  const [isRefreshingOwnedItems, setIsRefreshingOwnedItems] = useState(false);
   const [selectedRecipeIndex, setSelectedRecipeIndex] = useState(0);
   const isFavorite = isFavoriteItem(item);
+  const resolvedGuideResource = findGuideResourceForItem(item, guideResource);
   const netSpread = getMarketNetSpread(item);
-  const canRefreshOwnedItems = Boolean(accountSnapshot && refreshAccountData);
-
-  async function refreshOwnedItems() {
-    if (!refreshAccountData || isRefreshingOwnedItems) {
-      return;
-    }
-
-    setIsRefreshingOwnedItems(true);
-    try {
-      await refreshAccountData();
-    } finally {
-      setIsRefreshingOwnedItems(false);
-    }
-  }
 
   useEffect(() => {
     let ignore = false;
     setWikiAcquisition(null);
+
+    if (isGuideStoreContextItem(item) || isLocalGuideOnlyItem(item)) {
+      setWikiAcquisitionState("idle");
+      return () => {
+        ignore = true;
+      };
+    }
+
     setWikiAcquisitionState("loading");
 
     loadWikiItemAcquisition(item.name)
@@ -18333,7 +21170,7 @@ function ItemDetail({
     return () => {
       ignore = true;
     };
-  }, [item.name]);
+  }, [item.id, item.name, item.flags]);
 
   useEffect(() => {
     setSelectedRecipeIndex(0);
@@ -18347,7 +21184,7 @@ function ItemDetail({
 
   return (
     <div className="item-detail">
-      <section className="item-title-row">
+      <section className={`item-title-row ${isTradable ? "" : "no-favorite"}`}>
         <ItemIcon item={item} />
         <div>
           <span className={`rarity rarity-${item.rarity.toLowerCase()}`}>{item.rarity}</span>
@@ -18356,35 +21193,23 @@ function ItemDetail({
             {item.type} - Level {item.level || "Any"}
           </p>
         </div>
-        {canRefreshOwnedItems ? (
+        {isTradable ? (
           <button
-            className="detail-account-refresh-button"
+            className={`detail-favorite-button ${isFavorite ? "active" : ""}`}
             type="button"
-            onClick={() => void refreshOwnedItems()}
-            disabled={isRefreshingOwnedItems}
-            aria-label="Refresh owned item counts"
-            title="Refresh owned item counts from your GW2 API key"
+            onClick={() => toggleFavoriteItem(item)}
+            aria-label={isFavorite ? "Remove from favourites" : "Add to favourites"}
+            title={isFavorite ? "Remove from favourites" : "Add to favourites"}
           >
-            {isRefreshingOwnedItems ? <Loader2 className="spin" /> : <RefreshCcw />}
+            <Star />
           </button>
         ) : null}
-        <button
-          className={`detail-favorite-button ${isFavorite ? "active" : ""}`}
-          type="button"
-          onClick={() => toggleFavoriteItem(item)}
-          aria-label={isFavorite ? "Remove from favourites" : "Add to favourites"}
-          title={isFavorite ? "Remove from favourites" : "Add to favourites"}
-        >
-          <Star />
-        </button>
         <button className="detail-close-button" onClick={onClose} aria-label="Close item details" title="Close item details">
           <X />
         </button>
       </section>
 
       <WikiGuidePanel wikiGuide={wikiGuide} detailState={detailState} />
-
-      {extraInfo}
 
       {!isTradable ? (
         <section className="surface tradeability-note">
@@ -18396,8 +21221,13 @@ function ItemDetail({
         </section>
       ) : null}
 
+      {extraInfo ??
+        (resolvedGuideResource ? <GuideResourceDetailInfo resource={resolvedGuideResource} onOpenPage={onOpenPage} /> : null)}
+
       {wikiAcquisition?.vendorOffers.length ? (
-        <VendorAcquisitionPanel acquisition={wikiAcquisition} />
+        <VendorAcquisitionPanel acquisition={wikiAcquisition} guideResource={resolvedGuideResource} onOpenCurrency={onOpenCurrency} />
+      ) : localGuideStoreDetails ? (
+        <LocalGuideStoreSourcePanel details={localGuideStoreDetails} onOpenCurrency={onOpenCurrency} />
       ) : wikiAcquisitionState === "loading" ? (
         <section className="surface vendor-source-section">
           <div className="section-title">
@@ -18617,12 +21447,21 @@ function TeachesRecipePanel({
   );
 }
 
-function VendorAcquisitionPanel({ acquisition }: { acquisition: WikiItemAcquisition }) {
+function VendorAcquisitionPanel({
+  acquisition,
+  guideResource,
+  onOpenCurrency,
+}: {
+  acquisition: WikiItemAcquisition;
+  guideResource?: GuideResource | null;
+  onOpenCurrency?: (currency: GuideCurrencyDefinition) => void;
+}) {
   if (!acquisition.vendorOffers.length) {
     return null;
   }
 
   const offers = acquisition.vendorOffers.slice(0, 6);
+  const guidePrice = guideResource?.price;
 
   return (
     <section className="surface vendor-source-section">
@@ -18635,7 +21474,7 @@ function VendorAcquisitionPanel({ acquisition }: { acquisition: WikiItemAcquisit
           <div key={`${offer.vendor}-${offer.area ?? ""}-${offer.zone ?? ""}-${offer.cost}`}>
             <VendorWikiLink offer={offer} />
             <span>
-              <Money value={getVendorTotalCost(offer, 1)} />
+              <VendorOfferCost offer={offer} fallbackPrice={guidePrice} onOpenCurrency={onOpenCurrency} />
               {offer.quantity > 1 ? ` per ${offer.quantity.toLocaleString()}` : ""}
             </span>
           </div>
@@ -18646,6 +21485,143 @@ function VendorAcquisitionPanel({ acquisition }: { acquisition: WikiItemAcquisit
         <ExternalLink />
       </a>
     </section>
+  );
+}
+
+function LocalGuideStoreSourcePanel({
+  details,
+  onOpenCurrency,
+}: {
+  details: LocalGuideStoreDetails;
+  onOpenCurrency?: (currency: GuideCurrencyDefinition) => void;
+}) {
+  return (
+    <section className="surface vendor-source-section">
+      <div className="section-title">
+        <Coins />
+        <h3>Vendor Sources</h3>
+      </div>
+      <div className="vendor-offer-list">
+        <div>
+          <a href={details.storeUrl} target="_blank" rel="noreferrer">
+            {details.store}
+            <ExternalLink />
+          </a>
+          <span><GuideCurrencyValue value={details.price} onOpenCurrency={onOpenCurrency} /></span>
+        </div>
+      </div>
+      {[details.location, details.requirement, details.limit, details.note].filter(Boolean).length ? (
+        <p className="muted-copy">
+          {[details.location, details.requirement, details.limit, details.note].filter(Boolean).join(" · ")}
+        </p>
+      ) : null}
+      {details.itemWikiUrl ? (
+        <a className="inline-link" href={details.itemWikiUrl} target="_blank" rel="noreferrer">
+          Open item wiki
+          <ExternalLink />
+        </a>
+      ) : null}
+    </section>
+  );
+}
+
+interface LocalGuideStoreDetails {
+  store: string;
+  storeUrl: string;
+  price: string;
+  location?: string;
+  requirement?: string;
+  limit?: string;
+  note?: string;
+  itemWikiUrl?: string;
+}
+
+function getLocalGuideStoreDetails(item: MarketItem | Gw2Item): LocalGuideStoreDetails | null {
+  if (!item.flags?.includes("GuideStoreFallback")) {
+    return null;
+  }
+
+  const details = item.details as Record<string, unknown> | undefined;
+  const store = details?.store;
+  const storeUrl = details?.storeUrl;
+  const price = details?.price;
+  if (typeof store !== "string" || typeof storeUrl !== "string" || typeof price !== "string") {
+    return null;
+  }
+
+  return {
+    store,
+    storeUrl,
+    price,
+    location: typeof details?.storeLocation === "string" ? details.storeLocation : undefined,
+    requirement: typeof details?.requirement === "string" ? details.requirement : undefined,
+    limit: typeof details?.limit === "string" ? details.limit : undefined,
+    note: typeof details?.note === "string" ? details.note : undefined,
+    itemWikiUrl: typeof details?.itemWikiUrl === "string" ? details.itemWikiUrl : undefined,
+  };
+}
+
+function VendorOfferCost({
+  offer,
+  fallbackPrice,
+  onOpenCurrency,
+}: {
+  offer: WikiVendorOffer;
+  fallbackPrice?: string;
+  onOpenCurrency?: (currency: GuideCurrencyDefinition) => void;
+}) {
+  if ((offer.costCurrencies?.length ?? 0) > 0) {
+    return (
+      <VendorStructuredCost
+        currencies={offer.costCurrencies ?? []}
+        coin={offer.cost}
+        onOpenCurrency={onOpenCurrency}
+      />
+    );
+  }
+
+  const parsedOfferText = parseGuideCurrencyText(offer.costText);
+  if (parsedOfferText.currencies.length > 0 || parsedOfferText.coin > 0) {
+    return <GuideCurrencyValue value={offer.costText} onOpenCurrency={onOpenCurrency} />;
+  }
+
+  if (fallbackPrice) {
+    return <GuideCurrencyValue value={fallbackPrice} onOpenCurrency={onOpenCurrency} />;
+  }
+
+  return <Money value={getVendorTotalCost(offer, 1)} />;
+}
+
+function VendorStructuredCost({
+  currencies,
+  coin,
+  onOpenCurrency,
+}: {
+  currencies: Array<{ name: string; amount: number }>;
+  coin: number;
+  onOpenCurrency?: (currency: GuideCurrencyDefinition) => void;
+}) {
+  const parts: ReactNode[] = [
+    ...currencies.map((currency) => (
+      <CurrencyAmount
+        key={`${currency.name}-${currency.amount}`}
+        name={currency.name}
+        amount={currency.amount}
+        onOpenCurrency={onOpenCurrency}
+      />
+    )),
+    ...(coin > 0 ? [<SignedMoney key="coin" value={coin} />] : []),
+  ];
+
+  return (
+    <span className="guide-currency-value">
+      {parts.map((part, index) => (
+        <Fragment key={index}>
+          {index > 0 ? <span className="guide-currency-plus">+</span> : null}
+          {part}
+        </Fragment>
+      ))}
+    </span>
   );
 }
 
@@ -20620,6 +23596,61 @@ function isLikelyContainer(item: Gw2Item): boolean {
   );
 }
 
+function shouldLoadRecipeSections(item: MarketItem | Gw2Item): boolean {
+  if (item.id <= 0 || isGuideStoreContextItem(item) || item.flags?.includes("WikiOnly")) {
+    return false;
+  }
+
+  return !new Set(["Service", "Gizmo", "MiniPet", "Vendor"]).has(item.type);
+}
+
+function shouldFetchRemoteWikiGuide(item: MarketItem | Gw2Item): boolean {
+  return item.id > 0 && !isGuideStoreContextItem(item) && !item.flags?.includes("WikiOnly");
+}
+
+function isLocalGuideOnlyItem(item: MarketItem | Gw2Item): boolean {
+  return Boolean(item.flags?.includes("WikiOnly") || item.flags?.includes("GuideStoreFallback"));
+}
+
+function isGuideStoreContextItem(item: MarketItem | Gw2Item): boolean {
+  const details = item.details as Record<string, unknown> | undefined;
+  return Boolean(
+    item.flags?.includes("GuideStoreItem") ||
+    item.flags?.includes("GuideStoreFallback") ||
+    details?.guideStoreItem,
+  );
+}
+
+function buildImmediateWikiGuideForItem(item: MarketItem | Gw2Item): WikiGuide | null {
+  const extract = cleanItemDescription(item.description);
+  if (!extract) {
+    return null;
+  }
+
+  return {
+    title: item.name,
+    extract,
+    url: getItemWikiUrl(item),
+  };
+}
+
+function getItemWikiUrl(item: MarketItem | Gw2Item): string {
+  const details = item.details as Record<string, unknown> | undefined;
+  const directUrl = details?.itemWikiUrl ?? details?.wikiUrl;
+  if (typeof directUrl === "string" && directUrl) {
+    return directUrl;
+  }
+
+  return `https://wiki.guildwars2.com/wiki/${encodeURIComponent(item.name).replace(/%20/g, "_")}`;
+}
+
+function cleanItemDescription(value: unknown): string {
+  return String(value ?? "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function isKnownSalvageableNonContainer(item: MarketItem | Gw2Item): boolean {
   if (item.flags?.includes("NoSalvage") || isLikelyContainer(item)) {
     return false;
@@ -20727,6 +23758,14 @@ function isEstimatedSalvageDrop(drop: ContainerDrop): boolean {
   return drop.note === "Estimated salvage output";
 }
 
+function isEstimatedContainerAverageDrop(drop: ContainerDrop): boolean {
+  return drop.note?.startsWith("Estimated average amount per opened") ?? false;
+}
+
+function isModeledAverageDrop(drop: ContainerDrop): boolean {
+  return isEstimatedSalvageDrop(drop) || isEstimatedContainerAverageDrop(drop);
+}
+
 function hasTradingPostPrice(item: MarketItem): boolean {
   return item.price.sells.unit_price > 0 || item.price.buys.unit_price > 0;
 }
@@ -20796,10 +23835,10 @@ function summarizeDropValues(
   }
 
   const hasAnyChance = values.some((row) => row.chancePct !== undefined);
-  const usesEstimatedSalvageAverages =
-    values.length > 0 && rows.every((row) => isEstimatedSalvageDrop(row.drop));
+  const usesModeledAverages =
+    values.length > 0 && rows.every((row) => isModeledAverageDrop(row.drop));
 
-  if (usesEstimatedSalvageAverages) {
+  if (usesModeledAverages) {
     const averageValue = values.reduce((sum, row) => sum + row.avg, 0) * openingCount;
     return {
       min: 0,
@@ -20861,6 +23900,17 @@ function summarizeDropFees(
   }
 
   const hasAnyChance = values.some((row) => row.chancePct !== undefined);
+  const usesModeledAverages =
+    values.length > 0 && rows.every((row) => isModeledAverageDrop(row.drop));
+  if (usesModeledAverages) {
+    const averageFee = values.reduce((sum, row) => sum + row.avg, 0) * openingCount;
+    return {
+      min: 0,
+      avg: averageFee,
+      max: averageFee,
+    };
+  }
+
   if (hasAnyChance) {
     return {
       min: 0,
@@ -20920,8 +23970,10 @@ function ContainerSimulator({
       };
     });
   }, [effectiveAnalysis, catalog]);
-  const usesAverageDropColumn =
+  const usesSalvageAverageColumn =
     valuedDrops.length > 0 && valuedDrops.every((row) => isEstimatedSalvageDrop(row.drop));
+  const usesAverageDropColumn =
+    valuedDrops.length > 0 && valuedDrops.every((row) => isModeledAverageDrop(row.drop));
   const directStats = summarizeDropValues(valuedDrops, openingCount, "direct");
   const salvageStats = summarizeDropValues(valuedDrops, openingCount, "salvage");
   const pricedRows = valuedDrops.filter((row) => row.directUnitValue > 0).length;
@@ -20943,7 +23995,9 @@ function ContainerSimulator({
               <strong>{effectiveAnalysis.title}</strong>
               <span>
                 {usesAverageDropColumn
-                  ? "Estimated salvage outputs use the modeled average amount per opened item."
+                  ? usesSalvageAverageColumn
+                    ? "Estimated salvage outputs use the modeled average amount per opened item."
+                    : "Estimated container outputs use the average amount per opened container from the wiki sample."
                   : effectiveAnalysis.exactChancesAvailable
                   ? "Some drop chances were parsed from the wiki."
                   : "Exact chances were not available; averages use listed market-matched drops."}

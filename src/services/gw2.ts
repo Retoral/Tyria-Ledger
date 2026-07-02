@@ -193,6 +193,14 @@ const GENERIC_WIKI_TITLES = new Set([
   "PvE",
   "Rarity",
 ]);
+const NON_ITEM_CONTAINER_DROP_TITLES = new Set([
+  "Crafting material",
+  "Crafting materials",
+  "Container",
+  "Containers",
+]);
+const TROPHY_SHIPMENT_AVERAGE_DROP_NOTE =
+  "Estimated average amount per opened Trophy Shipment from the GW2 Wiki community drop-rate sample.";
 const DISCONTINUED_ITEMS_CATEGORY = "Category:Discontinued items";
 const SLOT_BAG_CACHE_KEY = "wiki:slot-bag-items:v2";
 const OPENABLE_BAG_CACHE_KEY = "wiki:openable-bag-items:v2";
@@ -5492,6 +5500,10 @@ export async function loadRecipesForOutput(
   itemId: number,
   holdings = new Map<number, number>(),
 ): Promise<RecipeGuide[]> {
+  if (itemId <= 0) {
+    return [];
+  }
+
   const cachedRecipes = recipeCache
     ? recipeCache.filter((recipe) => recipe.output_item_id === itemId)
     : [];
@@ -5534,6 +5546,10 @@ export async function loadRecipesUsingItem(
   itemId: number,
   holdings = new Map<number, number>(),
 ): Promise<RecipeGuide[]> {
+  if (itemId <= 0) {
+    return [];
+  }
+
   const cachedRecipes = recipeCache
     ? recipeCache.filter((recipe) =>
         recipe.ingredients.some((ingredient) => ingredient.item_id === itemId),
@@ -5709,6 +5725,169 @@ export async function loadWikiGuide(
   return guide;
 }
 
+export async function loadWikiItemFallback(itemName: string): Promise<Gw2Item | null> {
+  const normalizedName = normalizeWikiLookupName(itemName);
+  const cacheKey = getNamedCacheKey("wiki:item-fallback:v2", normalizedName);
+  const cached = await loadSqlCache(cacheKey, SQL_CACHE_TTL.wikiDerived, isGw2Item);
+  if (cached) {
+    return cached;
+  }
+
+  const params = new URLSearchParams({
+    action: "query",
+    titles: itemName,
+    prop: "extracts|info|pageimages",
+    exintro: "1",
+    explaintext: "1",
+    inprop: "url",
+    piprop: "thumbnail|original",
+    pithumbsize: "96",
+    redirects: "1",
+    origin: "*",
+    format: "json",
+  });
+  const payload = await fetchJson<{
+    query?: {
+      pages?: Record<
+        string,
+        {
+          title: string;
+          extract?: string;
+          missing?: string;
+          thumbnail?: { source?: string };
+          original?: { source?: string };
+        }
+      >;
+    };
+  }>(`${WIKI_API}?${params.toString()}`);
+
+  const page = Object.values(payload.query?.pages ?? {}).find((candidate) => !candidate.missing);
+  if (!page) {
+    return null;
+  }
+
+  const infobox = await loadWikiItemInfobox(page.title).catch(() => null);
+  const infoboxIcon = infobox?.icon ? await loadWikiFileImageUrl(infobox.icon).catch(() => null) : null;
+  const parsedItemId = infobox?.id ? Number.parseInt(infobox.id, 10) : NaN;
+  const item: Gw2Item = {
+    id: Number.isFinite(parsedItemId) && parsedItemId > 0 ? parsedItemId : wikiFallbackItemId(page.title),
+    name: page.title,
+    icon: page.thumbnail?.source ?? page.original?.source ?? infoboxIcon ?? undefined,
+    description: page.extract || infobox?.description || "",
+    type: infobox?.type ?? "Wiki",
+    rarity: infobox?.rarity ?? "Basic",
+    level: 0,
+    vendor_value: 0,
+    flags: ["WikiOnly"],
+    game_types: [],
+    restrictions: [],
+    details: {
+      source: "Guild Wars 2 Wiki",
+      lookupName: itemName,
+    },
+  };
+
+  void saveSqlCache(cacheKey, item);
+  return item;
+}
+
+async function loadWikiItemInfobox(title: string): Promise<{
+  icon?: string;
+  id?: string;
+  type?: string;
+  rarity?: string;
+  description?: string;
+} | null> {
+  const cacheKey = getNamedCacheKey("wiki:item-infobox:v1", normalizeWikiLookupName(title));
+  const cached = await loadSqlCache(cacheKey, SQL_CACHE_TTL.wikiDerived, isPlainRecord);
+  if (cached) {
+    return cached;
+  }
+
+  const params = new URLSearchParams({
+    action: "parse",
+    page: title,
+    prop: "wikitext",
+    redirects: "1",
+    origin: "*",
+    format: "json",
+  });
+  const payload = await fetchJson<{ parse?: { wikitext?: { "*": string } } }>(`${WIKI_API}?${params.toString()}`);
+  const wikitext = payload.parse?.wikitext?.["*"] ?? "";
+  const result = {
+    icon: getWikiTemplateField(wikitext, "icon"),
+    id: getWikiTemplateField(wikitext, "id"),
+    type: getWikiTemplateField(wikitext, "type"),
+    rarity: getWikiTemplateField(wikitext, "rarity"),
+    description: stripWikiMarkup(getWikiTemplateField(wikitext, "description") ?? ""),
+  };
+  const infobox = Object.values(result).some(Boolean) ? result : null;
+  if (infobox) {
+    void saveSqlCache(cacheKey, infobox);
+  }
+  return infobox;
+}
+
+async function loadWikiFileImageUrl(fileName: string): Promise<string | null> {
+  const cleanFileName = fileName.replace(/^File:/i, "").trim();
+  if (!cleanFileName) {
+    return null;
+  }
+
+  const cacheKey = getNamedCacheKey("wiki:file-image:v1", normalizeWikiLookupName(cleanFileName));
+  const cached = await loadSqlCache(cacheKey, SQL_CACHE_TTL.wikiDerived, (value): value is string => typeof value === "string");
+  if (cached) {
+    return cached;
+  }
+
+  const params = new URLSearchParams({
+    action: "query",
+    titles: `File:${cleanFileName}`,
+    prop: "imageinfo",
+    iiprop: "url",
+    iiurlwidth: "96",
+    origin: "*",
+    format: "json",
+  });
+  const payload = await fetchJson<{
+    query?: {
+      pages?: Record<string, { imageinfo?: Array<{ thumburl?: string; url?: string }> }>;
+    };
+  }>(`${WIKI_API}?${params.toString()}`);
+  const imageUrl =
+    Object.values(payload.query?.pages ?? {})
+      .flatMap((page) => page.imageinfo ?? [])
+      .map((image) => image.thumburl ?? image.url)
+      .find(Boolean) ?? null;
+
+  if (imageUrl) {
+    void saveSqlCache(cacheKey, imageUrl);
+  }
+  return imageUrl;
+}
+
+function getWikiTemplateField(wikitext: string, fieldName: string): string | undefined {
+  const pattern = new RegExp(`^\\s*\\|\\s*${escapeRegExp(fieldName)}\\s*=\\s*([^\\n]+)`, "im");
+  const value = pattern.exec(wikitext)?.[1]?.trim();
+  return value ? value.replace(/<!--.*?-->/g, "").trim() : undefined;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isPlainRecord(value: unknown): value is Record<string, string | undefined> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function wikiFallbackItemId(itemName: string): number {
+  let hash = 0;
+  for (const char of normalizeWikiLookupName(itemName)) {
+    hash = (Math.imul(hash, 31) + char.charCodeAt(0)) | 0;
+  }
+  return -1_000_000 - Math.abs(hash % 8_000_000);
+}
+
 async function loadWikiGuidePage(title: string): Promise<WikiGuide | null> {
   const params = new URLSearchParams({
     action: "query",
@@ -5743,7 +5922,7 @@ export async function loadWikiItemAcquisition(itemName: string): Promise<WikiIte
     return wikiAcquisitionCache.get(cacheKey) ?? null;
   }
 
-  const persistentCacheKey = getNamedCacheKey("wiki:item-acquisition:v2", itemName);
+  const persistentCacheKey = getNamedCacheKey("wiki:item-acquisition:v3", itemName);
   const cached = await loadSqlCache(
     persistentCacheKey,
     SQL_CACHE_TTL.wikiDerived,
@@ -5810,9 +5989,13 @@ function parseRenderedVendorOffers(document: Document, sourceUrl: string): WikiV
       }
 
       const costCell = cells[costIndex];
-      const priceElement = costCell.querySelector<HTMLElement>(".price[data-sort-value]");
-      const cost = Number(priceElement?.dataset.sortValue);
-      if (!Number.isFinite(cost) || cost <= 0) {
+      const priceElements = Array.from(costCell.querySelectorAll<HTMLElement>(".price[data-sort-value]"));
+      const cost = priceElements.reduce((sum, element) => {
+        const value = Number(element.dataset.sortValue);
+        return Number.isFinite(value) ? sum + value : sum;
+      }, 0);
+      const costCurrencies = parseRenderedCurrencyCosts(costCell);
+      if (cost <= 0 && costCurrencies.length === 0) {
         continue;
       }
 
@@ -5825,14 +6008,89 @@ function parseRenderedVendorOffers(document: Document, sourceUrl: string): WikiV
         area: cells[1] ? normalizePlainText(cells[1].textContent ?? "") : undefined,
         zone: cells[2] ? normalizePlainText(cells[2].textContent ?? "") : undefined,
         cost,
+        costCurrencies,
         quantity: 1,
-        costText: normalizePlainText(costCell.textContent ?? ""),
+        costText: formatRenderedVendorCost(costCurrencies, cost, normalizePlainText(costCell.textContent ?? "")),
         sourceUrl,
       });
     }
   }
 
   return offers;
+}
+
+function parseRenderedCurrencyCosts(element: Element): Array<{ name: string; amount: number }> {
+  const currencies: Array<{ name: string; amount: number }> = [];
+  let pendingAmount: number | null = null;
+
+  const visit = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const matches = Array.from((node.textContent ?? "").matchAll(/(\d[\d,]*)/g));
+      if (matches.length) {
+        pendingAmount = Number(matches[matches.length - 1][1].replace(/,/g, ""));
+      }
+      return;
+    }
+
+    if (!(node instanceof Element)) {
+      return;
+    }
+
+    const title = node instanceof HTMLAnchorElement ? node.getAttribute("title") ?? "" : "";
+    const currencyName = normalizeRenderedCurrencyTitle(title);
+    if (currencyName && pendingAmount !== null) {
+      currencies.push({ name: currencyName, amount: pendingAmount });
+      pendingAmount = null;
+      return;
+    }
+
+    for (const child of Array.from(node.childNodes)) {
+      visit(child);
+    }
+  };
+
+  for (const child of Array.from(element.childNodes)) {
+    visit(child);
+  }
+
+  return currencies;
+}
+
+function normalizeRenderedCurrencyTitle(title: string): string | null {
+  const normalized = title.trim();
+  if (!normalized || /coin$/i.test(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function formatRenderedVendorCost(currencies: Array<{ name: string; amount: number }>, coin: number, fallback: string): string {
+  const parts = [
+    ...currencies.map((currency) => `${currency.amount.toLocaleString()} ${currency.name}`),
+    coin > 0 ? formatCoinCostText(coin) : null,
+  ].filter((part): part is string => Boolean(part));
+
+  return parts.length ? parts.join(" + ") : fallback;
+}
+
+function formatCoinCostText(value: number): string {
+  const gold = Math.floor(value / 10_000);
+  const silver = Math.floor((value % 10_000) / 100);
+  const copper = value % 100;
+  const parts = [];
+
+  if (gold) {
+    parts.push(`${gold.toLocaleString()} gold`);
+  }
+  if (silver) {
+    parts.push(`${silver} silver`);
+  }
+  if (copper || parts.length === 0) {
+    parts.push(`${copper} copper`);
+  }
+
+  return parts.join(" ");
 }
 
 function parseWikitextVendorOffers(wikitext: string, sourceUrl: string): WikiVendorOffer[] {
@@ -5954,6 +6212,7 @@ function dedupeWikiVendorOffers(offers: WikiVendorOffer[]): WikiVendorOffer[] {
       normalizeWikiLookupName(offer.area ?? ""),
       normalizeWikiLookupName(offer.zone ?? ""),
       offer.cost,
+      (offer.costCurrencies ?? []).map((currency) => `${normalizeWikiLookupName(currency.name)}:${currency.amount}`).join(","),
       offer.quantity,
     ].join("|");
     if (seen.has(key)) {
@@ -6945,7 +7204,13 @@ function extractDropsFromElements(elements: Element[]): ContainerDrop[] {
 
     const titles = Array.from(row.querySelectorAll<HTMLAnchorElement>("a[title]"))
       .map((link) => normalizeDropName(link.getAttribute("title") ?? link.textContent ?? ""))
-      .filter((title) => title && !title.startsWith("File:") && !GENERIC_WIKI_TITLES.has(title))
+      .filter(
+        (title) =>
+          title &&
+          !title.startsWith("File:") &&
+          !GENERIC_WIKI_TITLES.has(title) &&
+          !NON_ITEM_CONTAINER_DROP_TITLES.has(title),
+      )
       .filter((title) => !title.includes("#"));
 
     for (const title of titles) {
@@ -6991,6 +7256,54 @@ function mergeDropRates(baseDrops: ContainerDrop[], rateDrops: ContainerDrop[]):
   return Array.from(merged.values()).slice(0, MAX_PARSED_CONTAINER_DROPS);
 }
 
+function extractTrophyShipmentAverageDrops(document: Document): ContainerDrop[] {
+  const tables = Array.from(document.querySelectorAll("table.item.table"));
+  const table = tables.find((candidate) => {
+    const text = candidate.textContent?.replace(/\s+/g, " ").trim() ?? "";
+    return /Trophy Shipment/i.test(text) && /Per\s*container:/i.test(text);
+  });
+  if (!table) {
+    return [];
+  }
+
+  const rows = Array.from(table.querySelectorAll("tr"));
+  const headerRow = rows.find((row) => {
+    const firstCell = row.children[0];
+    return firstCell?.tagName.toLowerCase() === "th" && /Trophy Shipment/i.test(firstCell.textContent ?? "");
+  });
+  const averageRow = rows.find((row) => /Per\s*container:/i.test(row.textContent ?? ""));
+  if (!headerRow || !averageRow) {
+    return [];
+  }
+
+  const headerCells = Array.from(headerRow.children).filter(
+    (cell) => cell.tagName.toLowerCase() === "th",
+  );
+  const titles = headerCells
+    .slice(1)
+    .map((cell) => normalizeDropName(cell.querySelector<HTMLAnchorElement>("a[title]")?.getAttribute("title") ?? ""))
+    .filter((title) => title && !GENERIC_WIKI_TITLES.has(title) && !NON_ITEM_CONTAINER_DROP_TITLES.has(title));
+  const valueCells = Array.from(averageRow.children).slice(1);
+
+  return titles
+    .map((title, index): ContainerDrop | null => {
+      const rawValue = valueCells[index]?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+      const average = Number(rawValue.replace(/[^\d.]/g, ""));
+      if (!Number.isFinite(average) || average <= 0) {
+        return null;
+      }
+
+      return {
+        name: title,
+        quantityMin: average,
+        quantityMax: average,
+        note: TROPHY_SHIPMENT_AVERAGE_DROP_NOTE,
+      };
+    })
+    .filter((drop): drop is ContainerDrop => Boolean(drop))
+    .slice(0, MAX_PARSED_CONTAINER_DROPS);
+}
+
 function isContainerAnalysis(value: unknown): value is ContainerAnalysis {
   const analysis = value as Partial<ContainerAnalysis> | null;
   return Boolean(
@@ -7004,7 +7317,7 @@ function isContainerAnalysis(value: unknown): value is ContainerAnalysis {
 }
 
 function containerAnalysisCacheKey(itemName: string): string {
-  return `container:v2:${normalizeWikiLookupName(itemName)}`;
+  return `container:v3:${normalizeWikiLookupName(itemName)}`;
 }
 
 async function loadCachedContainerAnalysis(itemName: string): Promise<ContainerAnalysis | null> {
@@ -7106,21 +7419,36 @@ export async function loadContainerAnalysis(itemName: string): Promise<Container
   const contentsElements = sectionAfterHeadline(document, "Contents", { stopAtSubheading: true });
   const baseDrops = extractDropsFromElements(contentsElements);
   const dropRatePage = await loadWikiHtml(`${wikiPage.title}/Drop rate`);
-  const dropRateDrops = dropRatePage
-    ? extractDropsFromElements(
-        sectionAfterHeadline(
-          new DOMParser().parseFromString(dropRatePage.html, "text/html"),
-          "Drop_rates",
-        ),
-      )
+  const dropRateDocument = dropRatePage
+    ? new DOMParser().parseFromString(dropRatePage.html, "text/html")
+    : null;
+  const averageDropRateDrops = dropRateDocument
+    ? extractTrophyShipmentAverageDrops(dropRateDocument)
     : [];
-  const drops = await hydrateContainerDropsWithItems(mergeDropRates(baseDrops, dropRateDrops));
-  const exactChancesAvailable = drops.some((drop) => drop.chancePct !== undefined);
+  const dropRateElements = dropRateDocument
+    ? [
+        ...sectionAfterHeadline(dropRateDocument, "Drop_rates"),
+        ...sectionAfterHeadline(dropRateDocument, "Drop_rate"),
+      ]
+    : [];
+  const dropRateDrops = averageDropRateDrops.length
+    ? averageDropRateDrops
+    : extractDropsFromElements(dropRateElements);
+  const drops = await hydrateContainerDropsWithItems(
+    averageDropRateDrops.length ? dropRateDrops : mergeDropRates(baseDrops, dropRateDrops),
+  );
+  const hasAverageDropRates = drops.some((drop) => drop.note === TROPHY_SHIPMENT_AVERAGE_DROP_NOTE);
+  const exactChancesAvailable =
+    !hasAverageDropRates && drops.some((drop) => drop.chancePct !== undefined);
   const parserNotes = [
-    drops.length
+    hasAverageDropRates
+      ? "Average amounts were parsed from the GW2 Wiki Trophy Shipment/Drop rate community sample."
+      : drops.length
       ? "Loot rows were parsed from the GW2 Wiki contents section."
       : "No structured contents rows were found on the wiki page.",
-    exactChancesAvailable
+    hasAverageDropRates
+      ? "These are estimated average drops per opened Trophy Shipment, not guaranteed drops from a single container."
+      : exactChancesAvailable
       ? "At least one chance value was parsed; rows without chance values remain marked as unknown."
       : "Exact drop chances were not found in the parsed wiki data.",
     "Salvage values are estimates unless the item has direct market value only.",

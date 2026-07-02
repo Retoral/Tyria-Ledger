@@ -203,6 +203,10 @@ export interface WikiVendorOffer {
   area?: string;
   zone?: string;
   cost: Coin;
+  costCurrencies?: Array<{
+    name: string;
+    amount: number;
+  }>;
   quantity: number;
   costText: string;
   sourceUrl: string;
