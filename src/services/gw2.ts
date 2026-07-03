@@ -22,6 +22,7 @@ import type {
   GatheringLocationInfo,
   GatheringNodeYield,
   Gw2Achievement,
+  Gw2Currency,
   Gw2Item,
   Gw2Map,
   Gw2Recipe,
@@ -168,6 +169,7 @@ let achievementCatalogCache: AchievementCatalog | null = null;
 let achievementCatalogPromise: Promise<AchievementCatalog> | null = null;
 let worldCache: Gw2World[] | null = null;
 let mapCache: Gw2Map[] | null = null;
+let currencyCatalogCache: Gw2Currency[] | null = null;
 let allItemsCatalogCache: Gw2Item[] | null = null;
 let wizardVaultObjectiveCatalogCache: WizardVaultObjectiveDefinition[] | null = null;
 let gatherableItemsCache: GatherableItemSource[] | null = null;
@@ -5384,6 +5386,29 @@ export async function loadMaps(): Promise<Gw2Map[]> {
   return mapCache;
 }
 
+export async function loadCurrencyCatalog(options: { forceRefresh?: boolean } = {}): Promise<Gw2Currency[]> {
+  if (currencyCatalogCache && !options.forceRefresh) {
+    return currencyCatalogCache;
+  }
+
+  if (!options.forceRefresh) {
+    const cachedCurrencies = await loadSqlCache(
+      "official:currencies",
+      SQL_CACHE_TTL.staticCatalog,
+      isCurrencyCatalogPayload,
+    );
+    if (cachedCurrencies) {
+      currencyCatalogCache = sortCurrencyCatalog(cachedCurrencies);
+      return currencyCatalogCache;
+    }
+  }
+
+  const currencies = await fetchJson<Gw2Currency[]>(`${GW2_API}/currencies?ids=all`);
+  currencyCatalogCache = sortCurrencyCatalog(currencies.filter(isGw2Currency));
+  void saveSqlCache("official:currencies", currencyCatalogCache);
+  return currencyCatalogCache;
+}
+
 export async function loadListings(itemId: number): Promise<CommerceListings> {
   return fetchJson<CommerceListings>(`${GW2_API}/commerce/listings/${itemId}`);
 }
@@ -8223,6 +8248,34 @@ function isWikiGuide(value: unknown): value is WikiGuide {
       typeof value.extract === "string" &&
       typeof value.url === "string",
   );
+}
+
+function isGw2Currency(value: unknown): value is Gw2Currency {
+  return Boolean(
+    isRecord(value) &&
+      typeof value.id === "number" &&
+      typeof value.name === "string" &&
+      typeof value.description === "string" &&
+      typeof value.order === "number" &&
+      (value.icon === undefined || typeof value.icon === "string"),
+  );
+}
+
+function isCurrencyCatalogPayload(value: unknown): value is Gw2Currency[] {
+  return isArrayOf(value, isGw2Currency);
+}
+
+function sortCurrencyCatalog(currencies: Gw2Currency[]): Gw2Currency[] {
+  return [...currencies].sort(
+    (left, right) =>
+      compareOptionalNumber(left.order, right.order) ||
+      compareOptionalNumber(left.id, right.id) ||
+      left.name.localeCompare(right.name),
+  );
+}
+
+function compareOptionalNumber(left: number | undefined, right: number | undefined): number {
+  return (left ?? Number.MAX_SAFE_INTEGER) - (right ?? Number.MAX_SAFE_INTEGER);
 }
 
 function isWikiRecipeUnlock(value: unknown): value is WikiRecipeUnlock {

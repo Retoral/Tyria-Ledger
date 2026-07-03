@@ -50,7 +50,6 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -65,6 +64,7 @@ import {
   hydrateTradingPostCatalogCache,
   loadAchievementCatalog,
   loadContainerAnalysis,
+  loadCurrencyCatalog,
   loadGatherableItems,
   loadGatheringLocations,
   loadAccountSnapshot,
@@ -112,6 +112,7 @@ import type {
   GatheringLocationInfo,
   GatheringNodeYield,
   Gw2Achievement,
+  Gw2Currency,
   Gw2Item,
   Gw2Map,
   Gw2Recipe,
@@ -248,6 +249,9 @@ interface GuideVendorLink {
   location: string;
   locationUrl: string;
   note: string;
+  waypoint?: string;
+  waypointLabel?: string;
+  waypointUrl?: string;
 }
 
 interface GuideStoreItem {
@@ -497,20 +501,182 @@ const GUIDE_CURRENCY_DEFINITIONS: Record<string, GuideCurrencyDefinition> = {
     ],
   },
 };
+
+const CURRENCY_VENDOR_LINKS: Record<string, GuideVendorLink[]> = {
+  Karma: [
+    {
+      name: "Karma merchant",
+      url: "https://wiki.guildwars2.com/wiki/Karma_merchant",
+      location: "Across Tyria",
+      locationUrl: "https://wiki.guildwars2.com/wiki/Karma_merchant#Locations",
+      note: "Generic karma vendor category; exact stock depends on the merchant, heart completion, map, and account progress.",
+    },
+  ],
+  "Spirit Shard": [
+    {
+      name: "Miyani",
+      url: "https://wiki.guildwars2.com/wiki/Miyani",
+      location: "Trader's Forum, Lion's Arch",
+      locationUrl: "https://wiki.guildwars2.com/wiki/Trader%27s_Forum",
+      waypoint: "[&BBAEAAA=]",
+      waypointLabel: "Trader's Forum Waypoint",
+      waypointUrl: "https://wiki.guildwars2.com/wiki/Trader%27s_Forum_Waypoint",
+      note: "Mystic Forge vendor for Spirit Shard purchases and Mystic Forge maintenance items.",
+    },
+  ],
+  Laurel: [
+    {
+      name: "Laurel merchant",
+      url: "https://wiki.guildwars2.com/wiki/Laurel_merchant",
+      location: "Major cities and lounges",
+      locationUrl: "https://wiki.guildwars2.com/wiki/Laurel_merchant#Locations",
+      note: "Account reward vendor category for ascended trinkets, recipes, utility items, and material bags.",
+    },
+  ],
+  "Unbound Magic": [
+    {
+      name: "Unbound Magic Collector",
+      url: "https://wiki.guildwars2.com/wiki/Unbound_Magic_Collector",
+      location: "Living World Season 3 maps",
+      locationUrl: "https://wiki.guildwars2.com/wiki/Living_World_Season_3",
+      note: "Season 3 vendor category for local map rewards, gathering tools, and conversion purchases.",
+    },
+  ],
+  "Volatile Magic": GUIDE_CURRENCY_DEFINITIONS["Volatile Magic"].vendors ?? [],
+  "Astral Acclaim": [
+    {
+      name: "Wizard's Vault",
+      url: "https://wiki.guildwars2.com/wiki/Wizard%27s_Vault",
+      location: "Account interface",
+      locationUrl: "https://wiki.guildwars2.com/wiki/Wizard%27s_Vault",
+      note: "Account reward store opened from the Wizard's Vault UI; no map waypoint is needed.",
+    },
+  ],
+  "Guild Commendation": [
+    {
+      name: "Guild Commendation Trader",
+      url: "https://wiki.guildwars2.com/wiki/Guild_Commendation_Trader",
+      location: "Guild Initiative Headquarters, Lion's Arch",
+      locationUrl: "https://wiki.guildwars2.com/wiki/Guild_Initiative_Headquarters",
+      waypoint: "[&BBAEAAA=]",
+      waypointLabel: "Trader's Forum Waypoint",
+      waypointUrl: "https://wiki.guildwars2.com/wiki/Trader%27s_Forum_Waypoint",
+      note: "Guild reward vendor for commendation purchases after guild mission progress.",
+    },
+  ],
+};
 const EXTRA_GUIDE_CURRENCY_ICONS: Record<string, string> = {
-  Karma: "https://wiki.guildwars2.com/images/a/af/Karma.png",
-  "Spirit Shard": "https://wiki.guildwars2.com/images/6/63/Spirit_Shard.png",
-  Laurel: "https://wiki.guildwars2.com/images/5/56/Laurel.png",
-  "War Supplies": "https://wiki.guildwars2.com/images/5/5b/War_Supplies.png",
+  Karma: "https://render.guildwars2.com/file/94953FA23D3E0D23559624015DFEA4CFAA07F0E5/155026.png",
+  "Spirit Shard": "https://render.guildwars2.com/file/0AD608DE7FDEE0B909905C0AF9401321CF65CD94/1010701.png",
+  Laurel: "https://render.guildwars2.com/file/A1BD345AD9192C3A585BE2F6CB0617C5A797A1E2/619317.png",
+  "War Supplies": "https://render.guildwars2.com/file/3A930379AABCB10BDBE42F0FA436F29DD023C274/2293273.png",
   "Eternal Ice Shard": "https://wiki.guildwars2.com/images/2/23/Eternal_Ice_Shard.png",
   "Kralkatite Ore": "https://wiki.guildwars2.com/images/0/02/Kralkatite_Ore.png",
   "Branded Mass": "https://wiki.guildwars2.com/images/c/c2/Branded_Mass.png",
   "Mistborn Mote": "https://wiki.guildwars2.com/images/b/b3/Mistborn_Mote.png",
   "Charr Commendation": "https://wiki.guildwars2.com/images/6/6a/Charr_Commendation.png",
+  "Trade Contract": "https://render.guildwars2.com/file/DEC2276FB1D5637BE563F618A012DEE63402170C/1767459.png",
 };
 const GW2_CURRENCY_ICONS: Record<string, string> = {
   ...EXTRA_GUIDE_CURRENCY_ICONS,
   ...Object.fromEntries(Object.values(GUIDE_CURRENCY_DEFINITIONS).map((currency) => [currency.name, currency.icon])),
+};
+const GUIDE_PRICE_ITEM_COMPONENTS = [
+  {
+    name: "Ancient Wood Log",
+    itemId: 19725,
+    icon: "https://render.guildwars2.com/file/5C999770AB7CC1F85D270A50C205673DF8B6E104/220467.png",
+  },
+  {
+    name: "Ash Legion Special Mission Document",
+    itemId: 93516,
+    icon: "https://render.guildwars2.com/file/701F0CBDA430DBB2C57909484805AE9753AB7531/2314059.png",
+  },
+  {
+    name: "Blood Legion Special Mission Document",
+    itemId: 93499,
+    icon: "https://render.guildwars2.com/file/F49EF1507FA9289046A617B5FB0DDF1F7451DE9D/2314060.png",
+  },
+  {
+    name: "Elder Wood Log",
+    itemId: 19722,
+    icon: "https://render.guildwars2.com/file/205871B734054D0206986FB44D6DC5425E572B0B/220465.png",
+  },
+  {
+    name: "Flame Legion Special Mission Document",
+    itemId: 93522,
+    icon: "https://render.guildwars2.com/file/791FA66418949CBC77CB28EE41ECC838092308A7/2314062.png",
+  },
+  {
+    name: "Glob of Ectoplasm",
+    itemId: 19721,
+    icon: "https://render.guildwars2.com/file/18CE5D78317265000CF3C23ED76AB3CEE86BA60E/65941.png",
+  },
+  {
+    name: "Gossamer Scrap",
+    itemId: 19745,
+    icon: "https://render.guildwars2.com/file/0CB2040408D0789690575FFE3532F3C34B693C6F/340417.png",
+  },
+  {
+    name: "Iron Legion Special Mission Document",
+    itemId: 93619,
+    icon: "https://render.guildwars2.com/file/F4B6B9E107F90D4FC843325C0F0CAD1F3E08B4C9/2314065.png",
+  },
+  {
+    name: "Lesser Vision Crystal",
+    itemId: 49523,
+    icon: "https://render.guildwars2.com/file/F304B2B4F078BBD2EBA347FBEC521C7047B672A9/1200199.png",
+  },
+  {
+    name: "Mithril Ore",
+    itemId: 19700,
+    icon: "https://render.guildwars2.com/file/E90FE803CDC205CDEB13FE03694D4D04757ACF5D/65928.png",
+  },
+  {
+    name: "Orichalcum Filigree",
+    itemId: 12834,
+    icon: "https://render.guildwars2.com/file/36716A5309700B989075FD4A74AB94052A0DF01E/219512.png",
+  },
+  {
+    name: "Orichalcum Ore",
+    itemId: 19701,
+    icon: "https://render.guildwars2.com/file/A6E2C82153BA684E2D05D3FCA09F3E02431366ED/220461.png",
+  },
+  {
+    name: "Powdered Rose Quartz",
+    itemId: 86269,
+    icon: "https://render.guildwars2.com/file/2B673596C7E2C599B0DCE60C01EAA3C8B2DA280B/1894774.png",
+  },
+  {
+    name: "Silk Scrap",
+    itemId: 19748,
+    icon: "https://render.guildwars2.com/file/021DA825F2092327B1C6BC09EC77BD5DE5B4770D/65961.png",
+  },
+  {
+    name: "Special Mission Document",
+    itemId: 93371,
+    icon: "https://render.guildwars2.com/file/040738183848653F77B101A474AC5834BED6A5C0/2314064.png",
+  },
+  {
+    name: "Thick Leather Section",
+    itemId: 19729,
+    icon: "https://render.guildwars2.com/file/CC3A2CAADBB2F2B13B1E70079E7E207B08D16E93/65946.png",
+  },
+  {
+    name: "Xunlai Electrum Ingot",
+    itemId: 46743,
+    icon: "https://render.guildwars2.com/file/A52F4B070711BE096158957A790C264413CE3704/631491.png",
+  },
+] as const;
+const GUIDE_PRICE_ITEM_IDS_BY_NAME: Record<string, number> = Object.fromEntries(
+  GUIDE_PRICE_ITEM_COMPONENTS.map((component) => [normalizeSearchText(component.name), component.itemId]),
+);
+const GUIDE_PRICE_ITEM_ICONS: Record<string, string> = Object.fromEntries(
+  GUIDE_PRICE_ITEM_COMPONENTS.map((component) => [component.name, component.icon]),
+);
+const GUIDE_PRICE_COMPONENT_ICONS: Record<string, string> = {
+  ...GW2_CURRENCY_ICONS,
+  ...GUIDE_PRICE_ITEM_ICONS,
 };
 const GUIDE_STORE_ITEM_IDS_BY_NAME: Record<string, number> = {
   [normalizeSearchText("Trance Stone")]: 91098,
@@ -1675,6 +1841,7 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
     items: [
       { id: "account", label: "Your GW2 Account", icon: <Home /> },
       { id: "account-items", label: "Account Items", icon: <Boxes /> },
+      { id: "currencies", label: "Currencies", icon: <Coins /> },
       { id: "wizard-vault", label: "Wizard's Vault", icon: <Coins /> },
       { id: "account-achievements", label: "Achievements", icon: <Trophy /> },
       { id: "farming-builds", label: "Builds", icon: <ShieldCheck /> },
@@ -3272,7 +3439,6 @@ const GW2_TILE_SIZE = 256;
 const MAX_MAP_PREVIEW_TILES = 24;
 const MAP_PREVIEW_GRID_SIZE = 3;
 const GUIDE_MAP_GRID_SIZE = 7;
-const GUIDE_MAP_WHEEL_ZOOM_DELTA = 240;
 
 const GUIDE_MAP_FLOOR_OVERRIDES: Record<string, number> = {
   Dragonfall: 1,
@@ -5018,6 +5184,8 @@ function App() {
   const [apiStatuses, setApiStatuses] = useState<ApiStatusResult[]>([]);
   const [apiStatusState, setApiStatusState] = useState<LoadState>("idle");
   const [apiStatusUpdatedAt, setApiStatusUpdatedAt] = useState<number | null>(null);
+  const [currencies, setCurrencies] = useState<Gw2Currency[]>([]);
+  const [currencyCatalogState, setCurrencyCatalogState] = useState<LoadState>("idle");
   const [marketUpdatedAt, setMarketUpdatedAt] = useState<number | null>(null);
   const [accountUpdatedAt, setAccountUpdatedAt] = useState<number | null>(null);
   const [accountRefreshNextAt, setAccountRefreshNextAt] = useState<number | null>(null);
@@ -5164,6 +5332,12 @@ function App() {
       refreshApiStatuses("");
     }
   }, []);
+
+  useEffect(() => {
+    if (activePage === "currencies" && currencyCatalogState === "idle") {
+      void refreshCurrencies();
+    }
+  }, [activePage, currencyCatalogState]);
 
   useEffect(() => {
     loadStateRef.current = loadState;
@@ -5556,14 +5730,14 @@ function App() {
     const hasMarketPrice =
       selectedItem.price.buys.unit_price > 0 || selectedItem.price.sells.unit_price > 0;
     const loadRecipes = shouldLoadRecipeSections(selectedItem);
-    const isGuideStoreItem = isGuideStoreContextItem(selectedItem);
+    const isLocalOnlyItem = isLocalGuideOnlyItem(selectedItem);
 
     const immediateWikiGuide = buildImmediateWikiGuideForItem(selectedItem);
     if (immediateWikiGuide) {
       setWikiGuide(immediateWikiGuide);
     }
 
-    if (isGuideStoreItem) {
+    if (isLocalOnlyItem) {
       return () => {
         ignore = true;
       };
@@ -5786,6 +5960,21 @@ function App() {
     } catch (statusError) {
       setApiStatusState("error");
       setError(statusError instanceof Error ? statusError.message : "Unable to check API status");
+    }
+  }
+
+  async function refreshCurrencies(options: { forceRefresh?: boolean } = {}) {
+    setCurrencyCatalogState("loading");
+    setProgress(options.forceRefresh ? "Refreshing currency catalog" : "Loading currency catalog");
+
+    try {
+      const loadedCurrencies = await loadCurrencyCatalog(options);
+      setCurrencies(loadedCurrencies);
+      setCurrencyCatalogState("ready");
+      setProgress(`${loadedCurrencies.length.toLocaleString()} currencies loaded`);
+    } catch (currencyError) {
+      setCurrencyCatalogState("error");
+      setError(currencyError instanceof Error ? currencyError.message : "Unable to load currencies");
     }
   }
 
@@ -6418,6 +6607,26 @@ function App() {
             selectDetailItem(buildMarketItemForDetail(item));
             navigateToPage("market", { preserveSelectedItem: true });
           }}
+        />
+      );
+    }
+
+    if (activePage === "currencies") {
+      return (
+        <CurrenciesPage
+          currencies={currencies}
+          currencyCatalogState={currencyCatalogState}
+          accountSnapshot={accountSnapshot}
+          analysisState={analysisState}
+          selectedCurrency={selectedGuideCurrency}
+          onRefreshAccount={refreshOwnedAccountData}
+          onRefreshCurrencies={() => refreshCurrencies({ forceRefresh: true })}
+          onOpenCurrency={(currency) => selectGuideCurrency(currency, { inlineGuidePage: "currencies" })}
+          onCloseCurrency={() => {
+            setSelectedGuideCurrency(null);
+            setInlineGuideDetailPage(null);
+          }}
+          onOpenPage={navigateToPage}
         />
       );
     }
@@ -7749,6 +7958,345 @@ function AccountItemsPage({
       </section>
     </div>
   );
+}
+
+interface CurrencyRow {
+  currency: Gw2Currency;
+  definition: GuideCurrencyDefinition;
+  amount: number;
+  description: string;
+  displayOrder: number;
+}
+
+function CurrenciesPage({
+  currencies,
+  currencyCatalogState,
+  accountSnapshot,
+  analysisState,
+  selectedCurrency,
+  onRefreshAccount,
+  onRefreshCurrencies,
+  onOpenCurrency,
+  onCloseCurrency,
+  onOpenPage,
+}: {
+  currencies: Gw2Currency[];
+  currencyCatalogState: LoadState;
+  accountSnapshot: AccountSnapshot | null;
+  analysisState: LoadState;
+  selectedCurrency: GuideCurrencyDefinition | null;
+  onRefreshAccount: () => void;
+  onRefreshCurrencies: () => void;
+  onOpenCurrency: (currency: GuideCurrencyDefinition) => void;
+  onCloseCurrency: () => void;
+  onOpenPage: (page: ActivePage) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const walletAmounts = useMemo(
+    () => new Map((accountSnapshot?.wallet ?? []).map((entry) => [entry.id, entry.value])),
+    [accountSnapshot],
+  );
+  const rows = useMemo(
+    () => {
+      const displayableCurrencies = currencies
+        .filter((currency) => currency.id !== 1)
+        .map((currency) => normalizeCurrencyForDisplay(currency))
+        .filter((currency): currency is Gw2Currency => Boolean(currency));
+
+      return displayableCurrencies
+        .map((currency, index) => {
+          const normalizedCurrency = normalizeCurrencyForDisplay(currency);
+          if (!normalizedCurrency) {
+            return null;
+          }
+
+          return {
+            currency: normalizedCurrency,
+            definition: buildCurrencyGuideDefinition(normalizedCurrency),
+            amount: walletAmounts.get(currency.id) ?? 0,
+            description: formatCurrencyDescription(normalizedCurrency.description),
+            displayOrder: index + 1,
+          };
+        })
+        .filter((row): row is CurrencyRow => Boolean(row));
+    },
+    [currencies, walletAmounts],
+  );
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredRows = useMemo(() => {
+    if (!normalizedSearch) {
+      return rows;
+    }
+
+    return rows.filter((row) => {
+      const haystack = [
+        row.currency.id,
+        row.currency.name,
+        row.description,
+        row.definition.summary,
+        row.amount,
+        row.displayOrder,
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(normalizedSearch);
+    });
+  }, [normalizedSearch, rows]);
+  const ownedRows = rows.filter((row) => row.amount > 0);
+  const pageBody = (
+    <div className="focused-page account-items-page currencies-page">
+      <section className="page-header">
+        <div>
+          <span className="eyebrow">My GW2 Account</span>
+          <h2>Currencies</h2>
+          <p>
+            {accountSnapshot
+              ? `All wallet currencies for ${accountSnapshot.tokenInfo.name}, including currencies with a zero balance.`
+              : "All official wallet currencies, with account amounts shown after loading a GW2 API key."}
+          </p>
+        </div>
+        <div className="page-actions">
+          <button className="icon-button" onClick={onRefreshCurrencies} disabled={currencyCatalogState === "loading"}>
+            {currencyCatalogState === "loading" ? <Loader2 className="spin" /> : <RefreshCcw />}
+            <span>{currencyCatalogState === "loading" ? "Loading" : "Refresh Catalog"}</span>
+          </button>
+          <button className="icon-button primary" onClick={onRefreshAccount} disabled={analysisState === "loading"}>
+            {analysisState === "loading" ? <Loader2 className="spin" /> : <ShieldCheck />}
+            <span>{analysisState === "loading" ? "Refreshing" : accountSnapshot ? "Refresh Account" : "Analyze API"}</span>
+          </button>
+        </div>
+      </section>
+
+      <section className="account-metrics">
+        <Metric icon={<Coins />} label="Tracked Currencies" value={rows.length.toLocaleString()} />
+        <Metric icon={<Database />} label="Owned Balances" value={ownedRows.length.toLocaleString()} tone={ownedRows.length ? "positive" : "muted"} />
+        <Metric icon={<WalletIcon />} label="Wallet Entries" value={accountSnapshot ? Math.max(0, accountSnapshot.wallet.length - 1).toLocaleString() : "No API"} />
+        <Metric icon={<Coins />} label="Coin Balance" value={accountSnapshot ? <Money value={accountSnapshot.coins} /> : "No API"} tone={accountSnapshot ? "positive" : "muted"} />
+      </section>
+
+      <section className="surface account-items-browser currencies-browser">
+        <div className="section-title">
+          <Coins />
+          <h3>Currency Wallet</h3>
+        </div>
+        <label className="search-box">
+          <Search />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search currency, description, amount"
+          />
+        </label>
+
+        <CurrencyTable
+          rows={filteredRows}
+          loading={currencyCatalogState === "loading" && rows.length === 0}
+          emptyText={
+            currencyCatalogState === "error"
+              ? "Unable to load the currency catalog. Try refreshing the catalog."
+              : "No currencies match the current search."
+          }
+          selectedCurrencyName={selectedCurrency?.name ?? null}
+          onOpenCurrency={onOpenCurrency}
+        />
+      </section>
+    </div>
+  );
+
+  if (!selectedCurrency) {
+    return pageBody;
+  }
+
+  return (
+    <div className="market-workspace account-currency-workspace">
+      <aside className="market-panel account-currency-list-panel">
+        {pageBody}
+      </aside>
+      <MarketSplitHandle />
+      <GuideCurrencyDetailPane currency={selectedCurrency} onClose={onCloseCurrency} onOpenPage={onOpenPage} />
+    </div>
+  );
+}
+
+function CurrencyTable({
+  rows,
+  loading,
+  emptyText,
+  selectedCurrencyName,
+  onOpenCurrency,
+}: {
+  rows: CurrencyRow[];
+  loading: boolean;
+  emptyText: string;
+  selectedCurrencyName: string | null;
+  onOpenCurrency: (currency: GuideCurrencyDefinition) => void;
+}) {
+  const { sortedRows, renderHeader } = useSortableRows<
+    CurrencyRow,
+    "currency" | "amount" | "description" | "order"
+  >(
+    rows,
+    { key: "order", direction: "asc" },
+    {
+      currency: (left, right) => compareStringValue(left.currency.name, right.currency.name),
+      amount: (left, right) => compareNumberValue(left.amount, right.amount),
+      description: (left, right) => compareStringValue(left.description, right.description),
+      order: (left, right) => compareNumberValue(left.displayOrder, right.displayOrder),
+    },
+  );
+
+  return (
+    <div className="owned-item-section">
+      <div className="owned-item-section-head">
+        <h4>All Currencies</h4>
+        <span>{rows.length.toLocaleString()}</span>
+      </div>
+      {loading ? (
+        <SkeletonRows />
+      ) : rows.length > 0 ? (
+        <div className="craft-table-wrap">
+          <table className="craft-profit-table account-item-table currency-table">
+            <thead>
+              <tr>
+                {renderHeader("currency", "Currency")}
+                {renderHeader("amount", "Account Amount")}
+                {renderHeader("description", "Description")}
+                {renderHeader("order", "Order")}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedRows.map((row) => (
+                <tr
+                  key={row.currency.id}
+                  className={`clickable-row ${selectedCurrencyName === row.currency.name ? "selected" : ""}`}
+                  onClick={() => onOpenCurrency(row.definition)}
+                >
+                  <td>
+                    <span className="table-item-cell">
+                      <ItemIcon item={{ id: row.currency.id, name: row.currency.name, icon: row.definition.icon }} />
+                      <span className="item-copy">
+                        <strong>{row.currency.name}</strong>
+                      </span>
+                    </span>
+                  </td>
+                  <td>{row.amount > 0 ? row.amount.toLocaleString() : "0"}</td>
+                  <td>{row.description || row.definition.summary}</td>
+                  <td>{row.displayOrder.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="muted-copy">{emptyText}</p>
+      )}
+    </div>
+  );
+}
+
+function WalletIcon() {
+  return <Coins />;
+}
+
+function normalizeCurrencyForDisplay(currency: Gw2Currency): Gw2Currency | null {
+  const displayName = getCurrencyDisplayName(currency);
+  if (!displayName || isPlaceholderCurrencyName(displayName)) {
+    return null;
+  }
+
+  if (displayName === currency.name) {
+    return currency;
+  }
+
+  return {
+    ...currency,
+    name: displayName,
+  };
+}
+
+function getCurrencyDisplayName(currency: Gw2Currency): string | null {
+  const name = currency.name.trim();
+  if (name) {
+    return name;
+  }
+
+  const description = formatCurrencyDescription(currency.description).toLowerCase();
+  if (currency.order === 100 || description.includes("wizard") || description.includes("vault")) {
+    return "Astral Acclaim";
+  }
+
+  return null;
+}
+
+function isPlaceholderCurrencyName(name: string): boolean {
+  return /^currency(?:\s*#?\d+)?$/i.test(name.trim()) || /^unknown\s+currency/i.test(name.trim());
+}
+
+function buildCurrencyGuideDefinition(currency: Gw2Currency): GuideCurrencyDefinition {
+  const existing = GUIDE_CURRENCY_DEFINITIONS[currency.name];
+  const icon = existing?.icon ?? currency.icon ?? GW2_CURRENCY_ICONS[currency.name] ?? "";
+  const description = formatCurrencyDescription(currency.description);
+  const vendors = getCurrencyVendorLinks(currency, description);
+
+  if (existing) {
+    return {
+      ...existing,
+      icon,
+      summary: existing.summary || description,
+      vendors: vendors.length ? vendors : existing.vendors,
+    };
+  }
+
+  return {
+    name: currency.name,
+    icon,
+    wikiUrl: `https://wiki.guildwars2.com/wiki/${encodeURIComponent(currency.name.replace(/\s+/g, "_"))}`,
+    summary: description || "Account wallet currency tracked by the official Guild Wars 2 API.",
+    acquisition: [
+      description || "Earned from its related game mode, map, reward track, vendor route, or achievement source.",
+      "Open the linked wiki page for the exact current acquisition sources, prerequisites, and vendor restrictions.",
+    ],
+    uses: [
+      "Spend at its related vendors, reward tabs, account unlocks, or conversion routes when available.",
+      "Keep currencies needed for account progression, collections, legendary goals, mounts, skins, or weekly/daily purchases before converting surplus.",
+    ],
+    vendors: vendors.length ? vendors : undefined,
+  };
+}
+
+function getCurrencyVendorLinks(currency: Gw2Currency, description: string): GuideVendorLink[] {
+  const directLinks = CURRENCY_VENDOR_LINKS[currency.name];
+  if (directLinks?.length) {
+    return directLinks;
+  }
+
+  if (/\bMiyani\b/i.test(description)) {
+    return [
+      {
+        name: "Miyani",
+        url: "https://wiki.guildwars2.com/wiki/Miyani",
+        location: "Trader's Forum, Lion's Arch",
+        locationUrl: "https://wiki.guildwars2.com/wiki/Trader%27s_Forum",
+        waypoint: "[&BBAEAAA=]",
+        waypointLabel: "Trader's Forum Waypoint",
+        waypointUrl: "https://wiki.guildwars2.com/wiki/Trader%27s_Forum_Waypoint",
+        note: "Mystic Forge vendor mentioned by this currency's official description.",
+      },
+    ];
+  }
+
+  return [];
+}
+
+function formatCurrencyDescription(description: string): string {
+  return description
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function OwnedItemTable({
@@ -18942,6 +19490,20 @@ function GuideCurrencyDetailPane({
                           <ExternalLink />
                         </a>
                       </span>
+                      {vendor.waypoint ? (
+                        <span>
+                          Nearest waypoint:{" "}
+                          {vendor.waypointUrl ? (
+                            <a href={vendor.waypointUrl} target="_blank" rel="noreferrer">
+                              {vendor.waypointLabel ?? "Waypoint"}
+                              <ExternalLink />
+                            </a>
+                          ) : (
+                            vendor.waypointLabel ?? "Waypoint"
+                          )}{" "}
+                          <CopyableChatCode code={vendor.waypoint} />
+                        </span>
+                      ) : null}
                       <p>{vendor.note}</p>
                     </article>
                   ))}
@@ -19209,7 +19771,7 @@ function CurrencyAmount({
   amount: number;
   onOpenCurrency?: (currency: GuideCurrencyDefinition) => void;
 }) {
-  const icon = GW2_CURRENCY_ICONS[name];
+  const icon = getGuidePriceComponentIcon(name);
   const definition = GUIDE_CURRENCY_DEFINITIONS[name];
   const loss = amount < 0;
   const content = (
@@ -19272,7 +19834,7 @@ function parseGuideCurrencyText(value: string): { coin: number; currencies: Arra
     coin += Number(coinMatch[1].replace(/,/g, "")) * coinUnitValues[coinMatch[2].toLowerCase()];
   }
 
-  for (const currencyName of Object.keys(GW2_CURRENCY_ICONS).sort((left, right) => right.length - left.length)) {
+  for (const currencyName of Object.keys(GUIDE_PRICE_COMPONENT_ICONS).sort((left, right) => right.length - left.length)) {
     const currencyPattern = new RegExp(`([+-]?\\d[\\d,]*)\\s*${escapeRegExp(currencyName)}s?\\b`, "i");
     const currencyMatch = text.match(currencyPattern);
     if (currencyMatch) {
@@ -19287,6 +19849,20 @@ function parseGuideCurrencyText(value: string): { coin: number; currencies: Arra
     coin: sign * coin,
     currencies,
   };
+}
+
+function getGuidePriceComponentIcon(name: string): string | undefined {
+  return (
+    GUIDE_PRICE_COMPONENT_ICONS[name] ??
+    getStoredItemByName(name)?.icon ??
+    getStoredItem(GUIDE_PRICE_ITEM_IDS_BY_NAME[normalizeSearchText(name)] ?? 0)?.icon
+  );
+}
+
+function getGuidePriceItemIdsForPrice(value: string): number[] {
+  return parseGuideCurrencyText(value)
+    .currencies.map((currency) => GUIDE_PRICE_ITEM_IDS_BY_NAME[normalizeSearchText(currency.name)])
+    .filter((itemId): itemId is number => Number.isFinite(itemId));
 }
 
 function escapeRegExp(value: string): string {
@@ -19510,6 +20086,11 @@ function GuideStoresPanel({
         const itemId = getGuideStoreItemId(storeItem);
         if (itemId && !catalog.some((item) => item.id === itemId) && !getStoredItem(itemId)) {
           ids.add(itemId);
+        }
+        for (const priceItemId of getGuidePriceItemIdsForPrice(storeItem.price)) {
+          if (!catalog.some((item) => item.id === priceItemId) && !getStoredItem(priceItemId)) {
+            ids.add(priceItemId);
+          }
         }
       }
     }
@@ -20579,7 +21160,6 @@ function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; 
   const projectionMaxZoom = primaryMap ? getGw2MapProjectionMaxZoom(primaryMap.continent_id) : 8;
   const maxZoom = projectionMaxZoom;
   const mapRef = useRef<HTMLDivElement | null>(null);
-  const wheelZoomDeltaRef = useRef(0);
   const [mapSize, setMapSize] = useState({ width: 0, height: 0 });
   const mapLocations = useMemo(
     () =>
@@ -20669,7 +21249,6 @@ function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; 
   useEffect(() => {
     setCenter(defaultCenter);
     setZoom(defaultZoom);
-    wheelZoomDeltaRef.current = 0;
   }, [defaultCenter, defaultZoom, primaryMap?.id]);
 
   if (!primaryMap) {
@@ -20739,19 +21318,6 @@ function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; 
     }
   };
 
-  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    wheelZoomDeltaRef.current += event.deltaY;
-
-    if (Math.abs(wheelZoomDeltaRef.current) < GUIDE_MAP_WHEEL_ZOOM_DELTA) {
-      return;
-    }
-
-    const step = wheelZoomDeltaRef.current < 0 ? 1 : -1;
-    wheelZoomDeltaRef.current -= Math.sign(wheelZoomDeltaRef.current) * GUIDE_MAP_WHEEL_ZOOM_DELTA;
-    adjustZoom(step);
-  };
-
   const copyMarkerChatLink = async (event: ReactMouseEvent<HTMLButtonElement>, chatLink: string) => {
     event.preventDefault();
     event.stopPropagation();
@@ -20771,7 +21337,6 @@ function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; 
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        onWheel={handleWheel}
         role="application"
         aria-label={`${primaryMap.name} interactive guide map`}
       >
@@ -20846,10 +21411,6 @@ function GuideInteractiveMap({ locations, maps }: { locations: GuideLocation[]; 
           className="guide-map-toolbar"
           aria-label="Map controls"
           onPointerDown={(event) => event.stopPropagation()}
-          onWheel={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
         >
           <button type="button" onClick={() => adjustZoom(1)} aria-label="Zoom in">
             <Plus />
@@ -21141,7 +21702,7 @@ function ItemDetail({
     let ignore = false;
     setWikiAcquisition(null);
 
-    if (isGuideStoreContextItem(item) || isLocalGuideOnlyItem(item)) {
+    if (isLocalGuideOnlyItem(item)) {
       setWikiAcquisitionState("idle");
       return () => {
         ignore = true;
@@ -21224,10 +21785,12 @@ function ItemDetail({
       {extraInfo ??
         (resolvedGuideResource ? <GuideResourceDetailInfo resource={resolvedGuideResource} onOpenPage={onOpenPage} /> : null)}
 
+      {localGuideStoreDetails ? (
+        <LocalGuideStoreSourcePanel details={localGuideStoreDetails} onOpenCurrency={onOpenCurrency} />
+      ) : null}
+
       {wikiAcquisition?.vendorOffers.length ? (
         <VendorAcquisitionPanel acquisition={wikiAcquisition} guideResource={resolvedGuideResource} onOpenCurrency={onOpenCurrency} />
-      ) : localGuideStoreDetails ? (
-        <LocalGuideStoreSourcePanel details={localGuideStoreDetails} onOpenCurrency={onOpenCurrency} />
       ) : wikiAcquisitionState === "loading" ? (
         <section className="surface vendor-source-section">
           <div className="section-title">
@@ -21499,7 +22062,7 @@ function LocalGuideStoreSourcePanel({
     <section className="surface vendor-source-section">
       <div className="section-title">
         <Coins />
-        <h3>Vendor Sources</h3>
+        <h3>Selected Store Source</h3>
       </div>
       <div className="vendor-offer-list">
         <div>
@@ -21537,11 +22100,11 @@ interface LocalGuideStoreDetails {
 }
 
 function getLocalGuideStoreDetails(item: MarketItem | Gw2Item): LocalGuideStoreDetails | null {
-  if (!item.flags?.includes("GuideStoreFallback")) {
+  const details = item.details as Record<string, unknown> | undefined;
+  if (details?.guideStoreItem !== true) {
     return null;
   }
 
-  const details = item.details as Record<string, unknown> | undefined;
   const store = details?.store;
   const storeUrl = details?.storeUrl;
   const price = details?.price;
@@ -23597,7 +24160,7 @@ function isLikelyContainer(item: Gw2Item): boolean {
 }
 
 function shouldLoadRecipeSections(item: MarketItem | Gw2Item): boolean {
-  if (item.id <= 0 || isGuideStoreContextItem(item) || item.flags?.includes("WikiOnly")) {
+  if (item.id <= 0 || isLocalGuideOnlyItem(item)) {
     return false;
   }
 
@@ -23605,7 +24168,7 @@ function shouldLoadRecipeSections(item: MarketItem | Gw2Item): boolean {
 }
 
 function shouldFetchRemoteWikiGuide(item: MarketItem | Gw2Item): boolean {
-  return item.id > 0 && !isGuideStoreContextItem(item) && !item.flags?.includes("WikiOnly");
+  return item.id > 0 && !isLocalGuideOnlyItem(item);
 }
 
 function isLocalGuideOnlyItem(item: MarketItem | Gw2Item): boolean {

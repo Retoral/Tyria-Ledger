@@ -1208,6 +1208,59 @@ svg {
   gap: 12px;
 }
 
+.account-currency-workspace {
+  --market-split-left: 55%;
+}
+
+.account-currency-list-panel {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.account-currency-list-panel .currencies-page {
+  padding-right: 2px;
+}
+
+.currencies-page .page-actions {
+  justify-content: flex-end;
+}
+
+.currency-table {
+  min-width: 920px;
+}
+
+.currency-table th:nth-child(1),
+.currency-table td:nth-child(1) {
+  width: 290px;
+}
+
+.currency-table th:nth-child(2),
+.currency-table td:nth-child(2) {
+  width: 150px;
+}
+
+.currency-table th:nth-child(4),
+.currency-table td:nth-child(4) {
+  width: 82px;
+}
+
+.currency-table td:nth-child(3) {
+  color: #7f8983;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.currency-table tbody tr.selected td,
+.currency-table tbody tr:hover td {
+  background: rgba(0, 124, 122, 0.08);
+}
+
+.currency-table tbody tr.selected td:first-child {
+  box-shadow: inset 3px 0 0 #007c7a;
+}
+
 .owned-item-section {
   margin-top: 10px;
 }
@@ -2205,12 +2258,23 @@ svg {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+  align-items: start;
 }
 
 .guide-resource-detail-grid .guide-detail-section p {
   margin: 0;
   color: #a8b4ae;
   line-height: 1.5;
+}
+
+.guide-currency-detail .guide-detail-section {
+  align-content: start;
+  align-items: start;
+}
+
+.guide-currency-detail .guide-check-list,
+.guide-currency-detail .guide-step-list {
+  align-self: start;
 }
 
 .guide-resource-detail-info {

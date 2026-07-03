@@ -90,6 +90,14 @@ export interface Gw2Map {
   continent_rect: [[number, number], [number, number]];
 }
 
+export interface Gw2Currency {
+  id: number;
+  name: string;
+  description: string;
+  order: number;
+  icon?: string;
+}
+
 export interface MarketItem extends Gw2Item {
   price: CommercePrice;
   netSellPrice: Coin;
