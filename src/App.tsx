@@ -62,16 +62,19 @@ import { findGw2WikiMapPointByChatLink, findGw2WikiMapPointByName, findNearestGw
 import {
   createPlanningId,
   getDailyStorageKey,
+  readBuildGoals,
   readDailyChecks,
   readFarmSessionHistory,
   readPlannedMetaStops,
   readPriceAlerts,
   readProjectGoals,
   writeDailyChecks,
+  writeBuildGoals,
   writeFarmSessionHistory,
   writePlannedMetaStops,
   writePriceAlerts,
   writeProjectGoals,
+  type BuildGoal,
   type FarmSessionRecord,
   type GoalStatus,
   type GoalStrategy,
@@ -121,6 +124,8 @@ import type {
   AccountAnalysis,
   AccountAchievement,
   AccountCharacter,
+  AccountEquipmentSlot,
+  AccountEquipmentTab,
   AccountItemStack,
   AccountMaterial,
   AccountSnapshot,
@@ -503,10 +508,15 @@ interface FavoriteItemsContextValue {
 
 interface ProjectGoalsContextValue {
   goals: ProjectGoal[];
+  buildGoals: BuildGoal[];
   addGoal: (item: Gw2Item | MarketItem, quantity?: number) => ProjectGoal | null;
+  addBuildGoal: (build: MetaBattleBuildDetail) => BuildGoal;
   updateGoal: (goalId: string, updates: Partial<Pick<ProjectGoal, "quantity" | "strategy" | "status" | "note">>) => void;
+  updateBuildGoal: (goalId: string, updates: Partial<Pick<BuildGoal, "status" | "note" | "characterName" | "equipmentTab">>) => void;
   removeGoal: (goalId: string) => void;
+  removeBuildGoal: (goalId: string) => void;
   getGoalForItem: (itemId?: number) => ProjectGoal | null;
+  getBuildGoal: (buildId?: string) => BuildGoal | null;
 }
 
 interface HistoryRange {
@@ -888,10 +898,17 @@ const FavoriteItemsContext = createContext<FavoriteItemsContextValue>({
 });
 const ProjectGoalsContext = createContext<ProjectGoalsContextValue>({
   goals: [],
+  buildGoals: [],
   addGoal: () => null,
+  addBuildGoal: () => {
+    throw new Error("Build goals are unavailable outside the project provider.");
+  },
   updateGoal: () => undefined,
+  updateBuildGoal: () => undefined,
   removeGoal: () => undefined,
+  removeBuildGoal: () => undefined,
   getGoalForItem: () => null,
+  getBuildGoal: () => null,
 });
 
 const AccountRefreshContext = createContext<(() => Promise<void>) | null>(null);
@@ -5346,6 +5363,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [favoriteItemIds, setFavoriteItemIds] = useState<Set<number>>(() => readStoredFavoriteItemIds());
   const [projectGoals, setProjectGoals] = useState<ProjectGoal[]>(() => readProjectGoals());
+  const [buildGoals, setBuildGoals] = useState<BuildGoal[]>(() => readBuildGoals());
   const [priceAlerts, setPriceAlerts] = useState<PriceAlertRule[]>(() => readPriceAlerts());
   const activePage = pageHistory[pageHistoryIndex] ?? "account";
   const canNavigateBack = detailHistoryIndex > 0 || pageHistoryIndex > 0;
@@ -5396,6 +5414,7 @@ function App() {
   const projectGoalsContextValue = useMemo<ProjectGoalsContextValue>(
     () => ({
       goals: projectGoals,
+      buildGoals,
       addGoal: (item, quantity = 1) => {
         if (!Number.isInteger(item.id) || item.id === 0) {
           return null;
@@ -5432,6 +5451,53 @@ function App() {
         setProjectGoals((current) => [goal, ...current]);
         return goal;
       },
+      addBuildGoal: (build) => {
+        const existing = buildGoals.find((goal) => goal.buildId === build.summary.id);
+        if (existing) {
+          const updated = { ...existing, status: "active" as const, updatedAt: Date.now() };
+          setBuildGoals((current) => {
+            const next = current.map((goal) => goal.id === existing.id ? updated : goal);
+            writeBuildGoals(next);
+            return next;
+          });
+          return updated;
+        }
+
+        const now = Date.now();
+        const goal: BuildGoal = {
+          id: createPlanningId("build-goal"),
+          buildId: build.summary.id,
+          title: build.summary.title,
+          pageTitle: build.summary.pageTitle,
+          sourceUrl: build.summary.url,
+          mode: build.summary.mode,
+          section: build.summary.section,
+          profession: getBuildPrimaryProfession(build.summary),
+          eliteSpec: build.summary.eliteSpec,
+          status: "active",
+          note: "",
+          equipment: build.equipment
+            .filter((slot) => slot.slot !== "__empty__" && (slot.itemId || slot.item?.id || slot.stat || slot.slot !== "Equipment"))
+            .map((slot) => ({
+              slot: slot.slot,
+              stat: slot.stat,
+              itemId: slot.itemId ?? slot.item?.id,
+              itemName: slot.item?.name,
+              icon: slot.item?.icon,
+              rarity: slot.item?.rarity,
+              itemType: slot.item?.type,
+              attributeNames: slot.attributeCombination?.attributes.map((attribute) => attribute.name) ?? [],
+            })),
+          createdAt: now,
+          updatedAt: now,
+        };
+        setBuildGoals((current) => {
+          const next = [goal, ...current];
+          writeBuildGoals(next);
+          return next;
+        });
+        return goal;
+      },
       updateGoal: (goalId, updates) => {
         setProjectGoals((current) =>
           current.map((goal) =>
@@ -5449,10 +5515,25 @@ function App() {
       removeGoal: (goalId) => {
         setProjectGoals((current) => current.filter((goal) => goal.id !== goalId));
       },
+      updateBuildGoal: (goalId, updates) => {
+        setBuildGoals((current) => {
+          const next = current.map((goal) => goal.id === goalId ? { ...goal, ...updates, updatedAt: Date.now() } : goal);
+          writeBuildGoals(next);
+          return next;
+        });
+      },
+      removeBuildGoal: (goalId) => {
+        setBuildGoals((current) => {
+          const next = current.filter((goal) => goal.id !== goalId);
+          writeBuildGoals(next);
+          return next;
+        });
+      },
       getGoalForItem: (itemId) =>
         Number.isInteger(itemId) ? projectGoals.find((goal) => goal.itemId === itemId) ?? null : null,
+      getBuildGoal: (buildId) => buildId ? buildGoals.find((goal) => goal.buildId === buildId) ?? null : null,
     }),
-    [projectGoals],
+    [buildGoals, projectGoals],
   );
 
   useEffect(() => {
@@ -5465,6 +5546,10 @@ function App() {
   useEffect(() => {
     writeProjectGoals(projectGoals);
   }, [projectGoals]);
+
+  useEffect(() => {
+    writeBuildGoals(buildGoals);
+  }, [buildGoals]);
 
   useEffect(() => {
     writePriceAlerts(priceAlerts);
@@ -5621,9 +5706,17 @@ function App() {
     }
 
     let ignore = false;
-    const ids = Array.from(accountSnapshot.holdings.keys());
+    const ids = new Set(accountSnapshot.holdings.keys());
+    accountSnapshot.characters.forEach((character) => {
+      const equipmentSets = character.equipment_tabs?.map((tab) => tab.equipment) ?? [character.equipment ?? []];
+      equipmentSets.flat().forEach((slot) => {
+        ids.add(slot.id);
+        slot.upgrades?.forEach((id) => ids.add(id));
+        slot.infusions?.forEach((id) => ids.add(id));
+      });
+    });
 
-    loadItems(ids).then((items) => {
+    loadItems(Array.from(ids)).then((items) => {
       if (ignore) {
         return;
       }
@@ -6887,6 +6980,7 @@ function App() {
         <ProjectsPage
           catalog={catalog}
           accountSnapshot={accountSnapshot}
+          accountItems={accountItems}
           onOpenItem={(item) => {
             selectDetailItem(buildMarketItemForDetail(item));
             navigateToPage("market", { preserveSelectedItem: true });
@@ -7519,20 +7613,24 @@ function UpdateStatusButton({
 function ProjectsPage({
   catalog,
   accountSnapshot,
+  accountItems,
   onOpenItem,
   onOpenExplorer,
 }: {
   catalog: MarketItem[];
   accountSnapshot: AccountSnapshot | null;
+  accountItems: Map<number, Gw2Item>;
   onOpenItem: (item: Gw2Item) => void;
   onOpenExplorer: (item: Gw2Item) => void;
 }) {
-  const { goals, addGoal, updateGoal, removeGoal } = useProjectGoals();
-  const [selectedGoalId, setSelectedGoalId] = useState<string | null>(goals[0]?.id ?? null);
+  const { goals, buildGoals, addGoal, updateGoal, updateBuildGoal, removeGoal, removeBuildGoal } = useProjectGoals();
+  const [selectedGoalId, setSelectedGoalId] = useState<string | null>(buildGoals[0]?.id ?? goals[0]?.id ?? null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<GoalStatus | "all">("active");
   const selectedGoal = goals.find((goal) => goal.id === selectedGoalId) ?? goals[0] ?? null;
+  const selectedBuildGoal = buildGoals.find((goal) => goal.id === selectedGoalId) ?? null;
   const filteredGoals = goals.filter((goal) => statusFilter === "all" || goal.status === statusFilter);
+  const filteredBuildGoals = buildGoals.filter((goal) => statusFilter === "all" || goal.status === statusFilter);
   const catalogById = useMemo(() => new Map(catalog.map((item) => [item.id, item])), [catalog]);
   const searchResults = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -7546,7 +7644,9 @@ function ProjectsPage({
       .slice(0, 8);
   }, [catalog, goals, query]);
   const activeGoals = goals.filter((goal) => goal.status === "active");
+  const activeBuildGoals = buildGoals.filter((goal) => goal.status === "active");
   const completeGoals = goals.filter((goal) => goal.status === "complete");
+  const completeBuildGoals = buildGoals.filter((goal) => goal.status === "complete");
   const targetUnits = activeGoals.reduce((sum, goal) => sum + goal.quantity, 0);
   const ownedUnits = activeGoals.reduce(
     (sum, goal) => sum + Math.min(goal.quantity, accountSnapshot?.holdings.get(goal.itemId) ?? 0),
@@ -7554,30 +7654,33 @@ function ProjectsPage({
   );
 
   useEffect(() => {
-    if (!selectedGoalId && goals[0]) {
-      setSelectedGoalId(goals[0].id);
+    const allGoalIds = new Set([...buildGoals.map((goal) => goal.id), ...goals.map((goal) => goal.id)]);
+    if (!selectedGoalId && allGoalIds.size) {
+      setSelectedGoalId(buildGoals[0]?.id ?? goals[0]?.id ?? null);
       return;
     }
 
-    if (selectedGoalId && !goals.some((goal) => goal.id === selectedGoalId)) {
-      setSelectedGoalId(goals[0]?.id ?? null);
+    if (selectedGoalId && !allGoalIds.has(selectedGoalId)) {
+      setSelectedGoalId(buildGoals[0]?.id ?? goals[0]?.id ?? null);
     }
-  }, [goals, selectedGoalId]);
+  }, [buildGoals, goals, selectedGoalId]);
+
+  const hasSelectedGoal = Boolean(selectedGoal || selectedBuildGoal);
 
   return (
-    <div className={`market-workspace projects-workspace ${selectedGoal ? "" : "detail-closed"}`}>
+    <div className={`market-workspace projects-workspace ${hasSelectedGoal ? "" : "detail-closed"}`}>
       <aside className="market-panel projects-list-panel">
         <section className="page-header">
           <div>
             <span className="eyebrow">Account Projects</span>
             <h2>Goals & Projects</h2>
-            <p>Turn any item into a tracked plan using your owned materials, recipes, vendors, and market prices.</p>
+            <p>Track item projects or compare a complete build against the equipment on your account.</p>
           </div>
         </section>
 
         <section className="stat-grid projects-stat-grid">
-          <Metric icon={<Target />} label="Active Goals" value={activeGoals.length.toLocaleString()} />
-          <Metric icon={<CheckCircle2 />} label="Completed" value={completeGoals.length.toLocaleString()} tone={completeGoals.length ? "positive" : "muted"} />
+          <Metric icon={<Target />} label="Active Goals" value={(activeGoals.length + activeBuildGoals.length).toLocaleString()} />
+          <Metric icon={<CheckCircle2 />} label="Completed" value={(completeGoals.length + completeBuildGoals.length).toLocaleString()} tone={completeGoals.length + completeBuildGoals.length ? "positive" : "muted"} />
           <Metric
             icon={<Boxes />}
             label="Target Items Owned"
@@ -7628,8 +7731,27 @@ function ProjectsPage({
         </div>
 
         <section className="surface project-list-surface">
-          {filteredGoals.length ? (
+          {filteredGoals.length || filteredBuildGoals.length ? (
             <div className="project-list">
+              {filteredBuildGoals.map((goal) => {
+                const summary = summarizeBuildGoalEquipment(goal, accountSnapshot, accountItems);
+                return (
+                  <button
+                    key={goal.id}
+                    type="button"
+                    className={selectedBuildGoal?.id === goal.id ? "active" : ""}
+                    onClick={() => setSelectedGoalId(goal.id)}
+                  >
+                    <span className="project-build-icon"><ShieldCheck /></span>
+                    <span className="project-row-copy">
+                      <strong>{goal.title}</strong>
+                      <small>{goal.profession}{goal.eliteSpec ? ` · ${goal.eliteSpec}` : ""} · {summary.ready} of {summary.total} ready</small>
+                      <span className="project-progress-track"><span style={{ width: `${summary.percent}%` }} /></span>
+                    </span>
+                    <strong>{summary.percent}%</strong>
+                  </button>
+                );
+              })}
               {filteredGoals.map((goal) => {
                 const item = catalogById.get(goal.itemId) ?? getStoredItem(goal.itemId);
                 const owned = accountSnapshot?.holdings.get(goal.itemId) ?? 0;
@@ -7638,7 +7760,7 @@ function ProjectsPage({
                   <button
                     key={goal.id}
                     type="button"
-                    className={selectedGoal?.id === goal.id ? "active" : ""}
+                    className={!selectedBuildGoal && selectedGoal?.id === goal.id ? "active" : ""}
                     onClick={() => setSelectedGoalId(goal.id)}
                   >
                     <ItemIcon item={item ?? { id: goal.itemId, name: goal.itemName, icon: goal.icon }} />
@@ -7664,7 +7786,19 @@ function ProjectsPage({
 
       <MarketSplitHandle />
 
-      {selectedGoal ? (
+      {selectedBuildGoal ? (
+        <section className="detail-panel project-detail-panel">
+          <BuildGoalDetail
+            goal={selectedBuildGoal}
+            accountSnapshot={accountSnapshot}
+            accountItems={accountItems}
+            onUpdate={(updates) => updateBuildGoal(selectedBuildGoal.id, updates)}
+            onRemove={() => removeBuildGoal(selectedBuildGoal.id)}
+            onOpenItem={onOpenItem}
+            onAddItemGoal={(item, quantity) => addGoal(item, quantity)}
+          />
+        </section>
+      ) : selectedGoal ? (
         <section className="detail-panel project-detail-panel">
           <ProjectGoalDetail
             goal={selectedGoal}
@@ -7678,6 +7812,309 @@ function ProjectsPage({
           />
         </section>
       ) : null}
+    </div>
+  );
+}
+
+type BuildEquipmentMatchState = "exact" | "compatible" | "owned" | "missing";
+
+interface BuildEquipmentComparison {
+  desired: BuildGoal["equipment"][number];
+  state: BuildEquipmentMatchState;
+  actual?: AccountEquipmentSlot;
+  actualItem?: Gw2Item;
+  detail: string;
+}
+
+function getCharacterEquipmentTabs(character: AccountCharacter): AccountEquipmentTab[] {
+  if (character.equipment_tabs?.length) {
+    return character.equipment_tabs;
+  }
+  return [{
+    tab: character.active_equipment_tab ?? 1,
+    name: "Active Equipment",
+    is_active: true,
+    equipment: character.equipment ?? [],
+  }];
+}
+
+function normalizeEquipmentWord(value?: string): string {
+  return (value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function getDesiredEquipmentSlotPattern(slot: string): RegExp | null {
+  const normalized = normalizeEquipmentWord(slot);
+  if (/head|helm/.test(normalized)) return /^Helm$/i;
+  if (/shoulder/.test(normalized)) return /^Shoulders$/i;
+  if (/chest|coat/.test(normalized)) return /^Coat$/i;
+  if (/hand|glove/.test(normalized)) return /^Gloves$/i;
+  if (/leg|legging/.test(normalized)) return /^Leggings$/i;
+  if (/feet|boot/.test(normalized)) return /^Boots$/i;
+  if (/back/.test(normalized)) return /^Backpack$/i;
+  if (/amulet/.test(normalized)) return /^Amulet$/i;
+  if (/accessory/.test(normalized)) return /^Accessory\d*$/i;
+  if (/ring/.test(normalized)) return /^Ring\d*$/i;
+  if (/relic/.test(normalized)) return /^Relic$/i;
+  if (/aquatic/.test(normalized)) return /Aquatic/i;
+  if (/(weapon|hammer|bow|greatsword|warhorn|scepter|sceptre|trident|harpoon|pistol|dagger|shield|focus|torch|sword|staff|rifle|mace|spear|axe)/.test(normalized)) return /^Weapon/i;
+  return null;
+}
+
+function isBuildUpgradeSlot(slot: BuildGoal["equipment"][number]): boolean {
+  const normalized = normalizeEquipmentWord(`${slot.slot} ${slot.itemType ?? ""}`);
+  return /rune|sigil|infusion|upgradecomponent/.test(normalized);
+}
+
+function getBuildSlotQuantity(slot: BuildGoal["equipment"][number]): number {
+  const match = slot.stat?.match(/x\s*(\d+)/i);
+  return match ? Math.max(1, Number(match[1])) : 1;
+}
+
+function matchesDesiredAttributes(desired: BuildGoal["equipment"][number], actual: AccountEquipmentSlot): boolean {
+  if (!desired.attributeNames.length) {
+    return true;
+  }
+  const actualAttributes = new Set(Object.keys(actual.stats?.attributes ?? {}).map(normalizeEquipmentWord));
+  return desired.attributeNames.every((attribute) => actualAttributes.has(normalizeEquipmentWord(attribute)));
+}
+
+function getBuildGoalDesiredItem(
+  desired: BuildGoal["equipment"][number],
+  accountItems: Map<number, Gw2Item>,
+): Gw2Item | null {
+  if (!desired.itemId) {
+    return null;
+  }
+  return accountItems.get(desired.itemId) ?? getStoredItem(desired.itemId) ?? {
+    id: desired.itemId,
+    name: desired.itemName ?? `Item ${desired.itemId}`,
+    icon: desired.icon,
+    type: desired.itemType ?? "Item",
+    rarity: desired.rarity ?? "Basic",
+    level: 0,
+    vendor_value: 0,
+  };
+}
+
+function compareBuildGoalEquipment(
+  goal: BuildGoal,
+  accountSnapshot: AccountSnapshot | null,
+  accountItems: Map<number, Gw2Item>,
+): BuildEquipmentComparison[] {
+  if (!accountSnapshot) {
+    return goal.equipment.map((desired) => ({ desired, state: "missing", detail: "Load an account snapshot to compare this slot." }));
+  }
+
+  const matchingProfession = accountSnapshot.characters.filter((character) => character.profession === goal.profession);
+  const character = accountSnapshot.characters.find((entry) => entry.name === goal.characterName) ?? matchingProfession[0] ?? accountSnapshot.characters[0];
+  if (!character) {
+    return goal.equipment.map((desired) => ({ desired, state: "missing", detail: "No character is available for comparison." }));
+  }
+  const tabs = getCharacterEquipmentTabs(character);
+  const tab = tabs.find((entry) => entry.tab === goal.equipmentTab) ?? tabs.find((entry) => entry.is_active) ?? tabs[0];
+  const actualEquipment = tab?.equipment ?? [];
+  const usedSlots = new Set<number>();
+  const upgradeCounts = new Map<number, number>();
+  actualEquipment.forEach((slot) => {
+    slot.upgrades?.forEach((id) => upgradeCounts.set(id, (upgradeCounts.get(id) ?? 0) + 1));
+    slot.infusions?.forEach((id) => upgradeCounts.set(id, (upgradeCounts.get(id) ?? 0) + 1));
+  });
+
+  return goal.equipment.map((desired) => {
+    const desiredItem = getBuildGoalDesiredItem(desired, accountItems);
+    const quantity = getBuildSlotQuantity(desired);
+    if (isBuildUpgradeSlot(desired)) {
+      if (desired.itemId && (upgradeCounts.get(desired.itemId) ?? 0) >= quantity) {
+        return { desired, state: "exact", actualItem: desiredItem ?? undefined, detail: `${quantity} equipped in this template.` };
+      }
+      if (desired.itemId && (accountSnapshot.holdings.get(desired.itemId) ?? 0) >= quantity) {
+        return { desired, state: "owned", actualItem: desiredItem ?? undefined, detail: `${quantity} owned elsewhere on the account.` };
+      }
+      return { desired, state: "missing", actualItem: desiredItem ?? undefined, detail: desired.itemId ? `${quantity} required.` : "Recommended upgrade is not confirmed on this template." };
+    }
+
+    const exactIndex = desired.itemId
+      ? actualEquipment.findIndex((slot, index) => {
+          const hasReportedAttributes = Object.keys(slot.stats?.attributes ?? {}).length > 0;
+          return !usedSlots.has(index) && slot.id === desired.itemId && (!hasReportedAttributes || matchesDesiredAttributes(desired, slot));
+        })
+      : -1;
+    if (exactIndex >= 0) {
+      usedSlots.add(exactIndex);
+      const actual = actualEquipment[exactIndex];
+      return { desired, state: "exact", actual, actualItem: accountItems.get(actual.id), detail: "Exact recommended item equipped." };
+    }
+
+    const slotPattern = getDesiredEquipmentSlotPattern(desired.slot);
+    const compatibleIndex = actualEquipment.findIndex((slot, index) => {
+      if (usedSlots.has(index) || !slotPattern?.test(slot.slot)) {
+        return false;
+      }
+      const actualItem = accountItems.get(slot.id);
+      const desiredType = normalizeEquipmentWord(desired.slot);
+      const actualType = normalizeEquipmentWord(String(actualItem?.details?.type ?? ""));
+      const isWeaponRecommendation = slotPattern.source === "^Weapon";
+      if (isWeaponRecommendation && desiredType && actualType && !desiredType.includes(actualType) && !actualType.includes(desiredType)) {
+        return false;
+      }
+      return matchesDesiredAttributes(desired, slot);
+    });
+    if (compatibleIndex >= 0) {
+      usedSlots.add(compatibleIndex);
+      const actual = actualEquipment[compatibleIndex];
+      return {
+        desired,
+        state: desired.itemId ? "compatible" : "compatible",
+        actual,
+        actualItem: accountItems.get(actual.id),
+        detail: desired.stat ? `Compatible ${desired.stat} attributes equipped.` : "Compatible equipment occupies this slot.",
+      };
+    }
+
+    if (desired.itemId && (accountSnapshot.holdings.get(desired.itemId) ?? 0) >= quantity) {
+      return { desired, state: "owned", actualItem: desiredItem ?? undefined, detail: "Recommended item is owned elsewhere on the account." };
+    }
+
+    const occupiedIndex = actualEquipment.findIndex((slot, index) => !usedSlots.has(index) && Boolean(slotPattern?.test(slot.slot)));
+    const actual = occupiedIndex >= 0 ? actualEquipment[occupiedIndex] : undefined;
+    if (occupiedIndex >= 0) usedSlots.add(occupiedIndex);
+    return {
+      desired,
+      state: "missing",
+      actual,
+      actualItem: actual ? accountItems.get(actual.id) : undefined,
+      detail: actual ? "This slot is occupied, but the item or attributes do not match." : "Nothing matching this recommendation is equipped or owned.",
+    };
+  });
+}
+
+function summarizeBuildGoalEquipment(goal: BuildGoal, accountSnapshot: AccountSnapshot | null, accountItems: Map<number, Gw2Item>) {
+  const comparisons = compareBuildGoalEquipment(goal, accountSnapshot, accountItems);
+  const ready = comparisons.filter((entry) => entry.state !== "missing").length;
+  const total = comparisons.length;
+  return { ready, total, percent: total ? Math.round((ready / total) * 100) : 0 };
+}
+
+function BuildGoalDetail({
+  goal,
+  accountSnapshot,
+  accountItems,
+  onUpdate,
+  onRemove,
+  onOpenItem,
+  onAddItemGoal,
+}: {
+  goal: BuildGoal;
+  accountSnapshot: AccountSnapshot | null;
+  accountItems: Map<number, Gw2Item>;
+  onUpdate: (updates: Partial<Pick<BuildGoal, "status" | "note" | "characterName" | "equipmentTab">>) => void;
+  onRemove: () => void;
+  onOpenItem: (item: Gw2Item) => void;
+  onAddItemGoal: (item: Gw2Item, quantity?: number) => ProjectGoal | null;
+}) {
+  const professionCharacters = accountSnapshot?.characters.filter((character) => character.profession === goal.profession) ?? [];
+  const characters = professionCharacters.length ? professionCharacters : accountSnapshot?.characters ?? [];
+  const selectedCharacter = characters.find((character) => character.name === goal.characterName) ?? characters[0] ?? null;
+  const tabs = selectedCharacter ? getCharacterEquipmentTabs(selectedCharacter) : [];
+  const selectedTab = tabs.find((tab) => tab.tab === goal.equipmentTab) ?? tabs.find((tab) => tab.is_active) ?? tabs[0] ?? null;
+  const effectiveGoal = { ...goal, characterName: selectedCharacter?.name, equipmentTab: selectedTab?.tab };
+  const comparisons = compareBuildGoalEquipment(effectiveGoal, accountSnapshot, accountItems);
+  const counts = {
+    exact: comparisons.filter((entry) => entry.state === "exact").length,
+    compatible: comparisons.filter((entry) => entry.state === "compatible").length,
+    owned: comparisons.filter((entry) => entry.state === "owned").length,
+    missing: comparisons.filter((entry) => entry.state === "missing").length,
+  };
+
+  return (
+    <div className="project-detail build-goal-detail">
+      <header className="surface project-detail-header build-goal-header">
+        <div>
+          <span className="eyebrow">Build Goal · {goal.mode}</span>
+          <h2>{goal.title}</h2>
+          <p>{goal.profession}{goal.eliteSpec ? ` · ${goal.eliteSpec}` : ""} · {goal.section}</p>
+        </div>
+        <div className="project-detail-actions">
+          <a className="icon-button" href={goal.sourceUrl} target="_blank" rel="noreferrer"><ExternalLink /><span>Source</span></a>
+          <button className="icon-button danger" type="button" onClick={onRemove}><X /><span>Remove</span></button>
+        </div>
+      </header>
+
+      <section className="surface build-goal-controls">
+        <label>
+          Character
+          <select
+            value={selectedCharacter?.name ?? ""}
+            disabled={!characters.length}
+            onChange={(event) => onUpdate({ characterName: event.target.value, equipmentTab: undefined })}
+          >
+            {!characters.length ? <option value="">Load account equipment</option> : null}
+            {characters.map((character) => <option key={character.name} value={character.name}>{character.name} · {character.profession}</option>)}
+          </select>
+        </label>
+        <label>
+          Equipment Template
+          <select
+            value={selectedTab?.tab ?? ""}
+            disabled={!tabs.length}
+            onChange={(event) => onUpdate({ equipmentTab: Number(event.target.value) })}
+          >
+            {!tabs.length ? <option value="">No templates loaded</option> : null}
+            {tabs.map((tab) => <option key={tab.tab} value={tab.tab}>{tab.name || `Template ${tab.tab}`}{tab.is_active ? " · Active" : ""}</option>)}
+          </select>
+        </label>
+        <label>
+          Status
+          <select value={goal.status} onChange={(event) => onUpdate({ status: event.target.value as GoalStatus })}>
+            <option value="active">Active</option>
+            <option value="paused">Paused</option>
+            <option value="complete">Complete</option>
+          </select>
+        </label>
+        <label className="build-goal-note">
+          Notes
+          <input value={goal.note} onChange={(event) => onUpdate({ note: event.target.value })} placeholder="Role, encounter, or upgrade notes" />
+        </label>
+      </section>
+
+      {!accountSnapshot ? (
+        <section className="surface account-callout"><KeyRound /><div><strong>Load a GW2 account snapshot</strong><p>Equipment comparison requires an API key with account, characters, and inventories or builds permissions.</p></div></section>
+      ) : null}
+
+      <section className="stat-grid build-goal-stat-grid">
+        <Metric icon={<CheckCircle2 />} label="Exact" value={counts.exact.toLocaleString()} tone="positive" />
+        <Metric icon={<ShieldCheck />} label="Compatible" value={counts.compatible.toLocaleString()} />
+        <Metric icon={<Backpack />} label="Owned Elsewhere" value={counts.owned.toLocaleString()} />
+        <Metric icon={<Target />} label="Missing" value={counts.missing.toLocaleString()} tone={counts.missing ? "negative" : "positive"} />
+      </section>
+
+      <section className="surface build-goal-comparison-surface">
+        <div className="section-title"><ShieldCheck /><h3>Equipment Comparison</h3></div>
+        <div className="build-goal-comparison-list">
+          {comparisons.map((comparison, index) => {
+            const desiredItem = getBuildGoalDesiredItem(comparison.desired, accountItems);
+            return (
+              <article key={`${comparison.desired.slot}-${comparison.desired.itemId ?? comparison.desired.stat ?? index}-${index}`} className={`build-goal-comparison-row ${comparison.state}`}>
+                <span className="build-goal-item-icon">
+                  {comparison.desired.icon ? <img src={comparison.desired.icon} alt="" /> : <ShieldCheck />}
+                </span>
+                <span className="build-goal-slot-copy">
+                  <strong>{comparison.desired.itemName ?? `${comparison.desired.slot}${comparison.desired.stat ? ` · ${comparison.desired.stat}` : ""}`}</strong>
+                  <small>{comparison.desired.slot}{comparison.desired.stat ? ` · ${comparison.desired.stat}` : ""}</small>
+                </span>
+                <span className="build-goal-match-copy">
+                  <span className={`build-goal-state ${comparison.state}`}>{comparison.state === "owned" ? "Owned elsewhere" : comparison.state}</span>
+                  <small>{comparison.actualItem ? `Current: ${comparison.actualItem.name} · ` : ""}{comparison.detail}</small>
+                </span>
+                <span className="build-goal-row-actions">
+                  {desiredItem ? <button className="icon-button" type="button" onClick={() => onOpenItem(desiredItem)} title="Open item detail"><ExternalLink /></button> : null}
+                  {desiredItem && comparison.state === "missing" ? <button className="icon-button primary" type="button" onClick={() => onAddItemGoal(desiredItem, getBuildSlotQuantity(comparison.desired))} title="Add missing item as a project"><Target /></button> : null}
+                </span>
+              </article>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }
@@ -7972,13 +8409,14 @@ function DailyPlannerPage({
   accountSnapshot: AccountSnapshot | null;
   onOpenPage: (page: ActivePage) => void;
 }) {
-  const { goals } = useProjectGoals();
+  const { goals, buildGoals } = useProjectGoals();
   const [checks, setChecks] = useState<Set<string>>(() => readDailyChecks());
   const [vault, setVault] = useState<WizardVaultSnapshot | null>(null);
   const [vaultState, setVaultState] = useState<LoadState>("idle");
   const [now, setNow] = useState(Date.now());
   const dateKey = getDailyStorageKey(new Date(now));
   const activeGoals = goals.filter((goal) => goal.status === "active");
+  const activeBuildGoals = buildGoals.filter((goal) => goal.status === "active");
   const dailyObjectives = vault?.sections.find((section) => section.id === "daily")?.objectives ?? [];
   const incompleteObjectives = dailyObjectives.filter((objective) => !objective.claimed);
   const upcomingMetas = META_SCHEDULES
@@ -7998,6 +8436,14 @@ function DailyPlannerPage({
       page: "projects" as ActivePage,
     };
   });
+  const buildTasks = activeBuildGoals.slice(0, 3).map((goal) => ({
+    id: `build-goal:${goal.id}`,
+    title: goal.title,
+    detail: goal.characterName
+      ? `Review the missing equipment on ${goal.characterName}'s selected template.`
+      : "Choose a character and equipment template to calculate build readiness.",
+    page: "projects" as ActivePage,
+  }));
   const vaultTasks = incompleteObjectives.slice(0, 6).map((objective) => ({
     id: `vault:${objective.id}`,
     title: objective.title,
@@ -8026,7 +8472,7 @@ function DailyPlannerPage({
       page: "farming-tracker" as ActivePage,
     },
   ];
-  const allTasks = [...projectTasks, ...vaultTasks, ...routineTasks];
+  const allTasks = [...buildTasks, ...projectTasks, ...vaultTasks, ...routineTasks];
   const completedCount = allTasks.filter((task) => checks.has(task.id)).length;
 
   useEffect(() => {
@@ -8084,7 +8530,7 @@ function DailyPlannerPage({
 
       <section className="stat-grid daily-stat-grid">
         <Metric icon={<CheckCircle2 />} label="Tasks Complete" value={`${completedCount} / ${allTasks.length}`} tone={completedCount === allTasks.length && allTasks.length ? "positive" : "default"} />
-        <Metric icon={<Target />} label="Active Projects" value={activeGoals.length.toLocaleString()} />
+        <Metric icon={<Target />} label="Active Projects" value={(activeGoals.length + activeBuildGoals.length).toLocaleString()} />
         <Metric icon={<Coins />} label="Vault Tasks" value={vaultState === "loading" ? "Loading" : incompleteObjectives.length.toLocaleString()} />
         <Metric icon={<Clock />} label="Next Fixed Meta" value={upcomingMetas[0] ? formatCountdown(upcomingMetas[0].timing.nextStart - now) : "None"} />
       </section>
@@ -18552,11 +18998,13 @@ function MetaBattleBuildDetailPanel({
   onOpenItem: (item: Gw2Item) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const { addBuildGoal, getBuildGoal } = useProjectGoals();
 
   useEffect(() => {
     setCopied(false);
   }, [build?.id]);
   const smartTerms = useMemo(() => (detail ? getBuildSmartTerms(detail) : []), [detail]);
+  const buildGoal = getBuildGoal(build?.id);
 
   if (!build) {
     return (
@@ -18587,10 +19035,21 @@ function MetaBattleBuildDetailPanel({
               .join(" · ")}
           </p>
         </div>
-        <a className="icon-button" href={build.url} target="_blank" rel="noreferrer">
-          <ExternalLink />
-          <span>Source</span>
-        </a>
+        <div className="build-detail-actions">
+          <button
+            className={`icon-button ${buildGoal ? "active" : "primary"}`}
+            type="button"
+            disabled={!detail}
+            onClick={() => detail && addBuildGoal(detail)}
+          >
+            {buildGoal ? <CheckCircle2 /> : <Target />}
+            <span>{buildGoal ? "Build Goal Added" : "Set as Build Goal"}</span>
+          </button>
+          <a className="icon-button" href={build.url} target="_blank" rel="noreferrer">
+            <ExternalLink />
+            <span>Source</span>
+          </a>
+        </div>
       </div>
 
       {detailState === "loading" ? <SkeletonRows /> : null}

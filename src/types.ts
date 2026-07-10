@@ -409,6 +409,20 @@ export interface AccountCharacterBag {
   inventory?: Array<AccountItemStack | null>;
 }
 
+export interface AccountEquipmentSlot extends AccountItemStack {
+  slot: string;
+  location?: "Equipped" | "Armory" | string;
+  bound_to?: string;
+  dyes?: Array<number | null>;
+}
+
+export interface AccountEquipmentTab {
+  tab: number;
+  name: string;
+  is_active: boolean;
+  equipment: AccountEquipmentSlot[];
+}
+
 export interface AccountCharacter {
   name: string;
   race?: string;
@@ -426,6 +440,9 @@ export interface AccountCharacter {
     active?: boolean;
   }>;
   bags?: Array<AccountCharacterBag | null>;
+  equipment?: AccountEquipmentSlot[];
+  equipment_tabs?: AccountEquipmentTab[];
+  active_equipment_tab?: number;
 }
 
 export interface AccountAchievement {

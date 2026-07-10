@@ -10,6 +10,7 @@ Desktop Guild Wars 2 Trading Post and crafting companion for macOS and Windows.
 - Local GW2 API key storage through Electron's main process.
 - Account analysis for craft profit and legendary readiness using account materials, bank, inventory, recipes, and achievements when the key scopes permit it.
 - Persistent Goals & Projects with account-owned progress, recipe requirements, vendors, route preferences, and recursive acquisition maps.
+- Build goals that compare MetaBattle equipment recommendations against a selected character and equipment template.
 - A personal Daily Planner and configurable Meta Train schedule with copyable in-game waypoints.
 - Local Trading Post price history, threshold alerts, and native desktop notifications.
 - Named Farming Tracker sessions with saved value, duration, gold-per-hour, and drop history.

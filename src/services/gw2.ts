@@ -7626,7 +7626,7 @@ export async function loadAccountSnapshot(
       fetchAccountJson<AccountMaterial[]>(trimmedKey, "/account/materials", [], { required: true }),
       fetchAccountJson<AccountItemStack[]>(trimmedKey, "/account/bank", [], { required: true }),
       fetchAccountJson<AccountItemStack[]>(trimmedKey, "/account/inventory", [], { required: true }),
-      fetchAccountJson<AccountCharacter[]>(trimmedKey, "/characters?ids=all", [], { required: true }),
+      fetchAccountJson<AccountCharacter[]>(trimmedKey, "/characters?ids=all&v=latest", [], { required: true }),
       fetchAccountJson<AccountWalletEntry[]>(trimmedKey, "/account/wallet", [], { required: true }),
       fetchAccountJson<number[]>(trimmedKey, "/account/recipes", [], { required: true }),
       fetchAccountJson<AccountAchievement[]>(trimmedKey, "/account/achievements", [], { required: true }),

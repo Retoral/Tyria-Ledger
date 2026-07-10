@@ -9243,6 +9243,26 @@ body,
   height: 46px;
 }
 
+.project-build-icon,
+.build-goal-item-icon {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 6px;
+  color: #7ff8ee;
+  background: #0b2729;
+}
+
+.project-build-icon {
+  width: 46px;
+  height: 46px;
+}
+
+.project-build-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
 .project-progress-track {
   display: block;
   width: 100%;
@@ -9312,6 +9332,158 @@ body,
 .project-detail-actions {
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.build-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.build-detail-actions .icon-button.active {
+  border-color: #247e58;
+  color: #9af0bc;
+  background: rgba(36, 126, 88, 0.2);
+}
+
+.build-goal-header {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.build-goal-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+
+.build-goal-controls label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: #9aa7a2;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.build-goal-controls select,
+.build-goal-controls input {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid #303b3f;
+  border-radius: 6px;
+  color: #edf5ef;
+  background: #0f1518;
+}
+
+.build-goal-note {
+  grid-column: 1 / -1;
+}
+
+.account-callout {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 14px;
+  color: #d8bc5e;
+}
+
+.account-callout p {
+  margin: 4px 0 0;
+  color: #a8b4ae;
+}
+
+.build-goal-stat-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.build-goal-comparison-surface {
+  padding: 14px;
+}
+
+.build-goal-comparison-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.build-goal-comparison-row {
+  display: grid;
+  grid-template-columns: 44px minmax(150px, 0.75fr) minmax(220px, 1.25fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #303b3f;
+  border-left-width: 3px;
+  border-radius: 6px;
+  background: #11171a;
+}
+
+.build-goal-comparison-row.exact {
+  border-left-color: #50d890;
+}
+
+.build-goal-comparison-row.compatible {
+  border-left-color: #00a7a0;
+}
+
+.build-goal-comparison-row.owned {
+  border-left-color: #d8bc5e;
+}
+
+.build-goal-comparison-row.missing {
+  border-left-color: #d96b75;
+}
+
+.build-goal-item-icon {
+  width: 44px;
+  height: 44px;
+}
+
+.build-goal-item-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.build-goal-slot-copy,
+.build-goal-match-copy,
+.build-goal-slot-copy small,
+.build-goal-match-copy small {
+  display: block;
+  min-width: 0;
+}
+
+.build-goal-slot-copy small,
+.build-goal-match-copy small {
+  margin-top: 3px;
+  color: #9aa7a2;
+}
+
+.build-goal-state {
+  display: inline-flex;
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: #c9d3ce;
+  background: #263035;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.build-goal-state.exact { color: #9af0bc; background: rgba(36, 126, 88, 0.22); }
+.build-goal-state.compatible { color: #7ff8ee; background: rgba(0, 124, 122, 0.22); }
+.build-goal-state.owned { color: #f0d67a; background: rgba(154, 113, 48, 0.2); }
+.build-goal-state.missing { color: #f0a7b0; background: rgba(178, 59, 69, 0.18); }
+
+.build-goal-row-actions {
+  display: flex;
+  gap: 5px;
 }
 
 .icon-button.danger,
@@ -9995,6 +10167,32 @@ body,
   .project-detail-actions {
     grid-column: 1 / -1;
     justify-content: flex-start;
+  }
+
+  .build-goal-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .build-goal-header .project-detail-actions {
+    grid-column: 1;
+  }
+
+  .build-goal-controls,
+  .build-goal-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .build-goal-comparison-row {
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+  }
+
+  .build-goal-match-copy {
+    grid-column: 2 / -1;
+  }
+
+  .build-goal-row-actions {
+    grid-column: 3;
+    grid-row: 1;
   }
 
   .project-cost-summary,

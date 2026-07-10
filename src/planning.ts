@@ -16,6 +16,36 @@ export interface ProjectGoal {
   updatedAt: number;
 }
 
+export interface BuildGoalEquipmentSlot {
+  slot: string;
+  stat?: string;
+  itemId?: number;
+  itemName?: string;
+  icon?: string;
+  rarity?: string;
+  itemType?: string;
+  attributeNames: string[];
+}
+
+export interface BuildGoal {
+  id: string;
+  buildId: string;
+  title: string;
+  pageTitle: string;
+  sourceUrl: string;
+  mode: string;
+  section: string;
+  profession: string;
+  eliteSpec?: string;
+  status: GoalStatus;
+  note: string;
+  characterName?: string;
+  equipmentTab?: number;
+  equipment: BuildGoalEquipmentSlot[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 export type PriceAlertMetric = "buy" | "sell" | "spread";
 export type PriceAlertDirection = "above" | "below";
 
@@ -63,6 +93,7 @@ export interface FarmSessionRecord {
 }
 
 const PROJECT_GOALS_STORAGE_KEY = "tyria-ledger:projects:v1";
+const BUILD_GOALS_STORAGE_KEY = "tyria-ledger:build-goals:v1";
 const PRICE_ALERTS_STORAGE_KEY = "tyria-ledger:price-alerts:v1";
 const DAILY_CHECKS_STORAGE_KEY = "tyria-ledger:daily-checks:v1";
 const META_TRAIN_STORAGE_KEY = "tyria-ledger:meta-train:v1";
@@ -112,6 +143,35 @@ export function readProjectGoals(): ProjectGoal[] {
 
 export function writeProjectGoals(goals: ProjectGoal[]) {
   writeJson(PROJECT_GOALS_STORAGE_KEY, goals);
+}
+
+export function readBuildGoals(): BuildGoal[] {
+  return readJson<unknown[]>(BUILD_GOALS_STORAGE_KEY, [])
+    .filter((value): value is BuildGoal => {
+      const goal = value as Partial<BuildGoal>;
+      return (
+        typeof goal.id === "string" &&
+        typeof goal.buildId === "string" &&
+        typeof goal.title === "string" &&
+        typeof goal.sourceUrl === "string" &&
+        Array.isArray(goal.equipment)
+      );
+    })
+    .map((goal) => ({
+      ...goal,
+      status: goal.status ?? "active",
+      note: goal.note ?? "",
+      equipment: goal.equipment
+        .map((slot) => ({
+          ...slot,
+          attributeNames: Array.isArray(slot.attributeNames) ? slot.attributeNames : [],
+        }))
+        .filter((slot) => slot.slot !== "__empty__" && (slot.itemId || slot.itemName || slot.stat || slot.slot !== "Equipment")),
+    }));
+}
+
+export function writeBuildGoals(goals: BuildGoal[]) {
+  writeJson(BUILD_GOALS_STORAGE_KEY, goals);
 }
 
 export function readPriceAlerts(): PriceAlertRule[] {
