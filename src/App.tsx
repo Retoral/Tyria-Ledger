@@ -277,6 +277,9 @@ interface GuideStore {
 }
 
 interface GuideCurrencyDefinition {
+  id?: number;
+  itemId?: number;
+  amount?: number;
   name: string;
   icon: string;
   wikiUrl: string;
@@ -794,7 +797,7 @@ function readStoredFavoriteItemIds(): Set<number> {
     return new Set(
       parsedValue
         .map((value) => Number(value))
-        .filter((value) => Number.isInteger(value) && value > 0),
+        .filter((value) => Number.isInteger(value) && value !== 0),
     );
   } catch {
     return new Set<number>();
@@ -5221,7 +5224,7 @@ function App() {
     () => ({
       favoriteItemIds,
       toggleFavoriteItem: (item) => {
-        if (!item.id) {
+        if (!Number.isInteger(item.id) || item.id === 0) {
           return;
         }
 
@@ -5242,7 +5245,7 @@ function App() {
         }
 
         const itemId = typeof item === "number" ? item : item.id;
-        return typeof itemId === "number" && favoriteItemIds.has(itemId);
+        return typeof itemId === "number" && Number.isInteger(itemId) && itemId !== 0 && favoriteItemIds.has(itemId);
       },
     }),
     [favoriteItemIds],
@@ -5334,7 +5337,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (activePage === "currencies" && currencyCatalogState === "idle") {
+    if ((activePage === "currencies" || activePage === "account-items") && currencyCatalogState === "idle") {
       void refreshCurrencies();
     }
   }, [activePage, currencyCatalogState]);
@@ -6601,11 +6604,17 @@ function App() {
         <AccountItemsPage
           accountSnapshot={accountSnapshot}
           accountItems={accountItems}
+          currencies={currencies}
+          currencyCatalogState={currencyCatalogState}
           analysisState={analysisState}
           onAnalyze={refreshOwnedAccountData}
           onOpenItem={(item) => {
             selectDetailItem(buildMarketItemForDetail(item));
             navigateToPage("market", { preserveSelectedItem: true });
+          }}
+          onOpenCurrency={(currency) => {
+            selectGuideCurrency(currency, { inlineGuidePage: "currencies" });
+            navigateToPage("currencies", { preserveSelectedItem: true });
           }}
         />
       );
@@ -6617,11 +6626,16 @@ function App() {
           currencies={currencies}
           currencyCatalogState={currencyCatalogState}
           accountSnapshot={accountSnapshot}
+          catalog={catalog}
           analysisState={analysisState}
           selectedCurrency={selectedGuideCurrency}
           onRefreshAccount={refreshOwnedAccountData}
           onRefreshCurrencies={() => refreshCurrencies({ forceRefresh: true })}
           onOpenCurrency={(currency) => selectGuideCurrency(currency, { inlineGuidePage: "currencies" })}
+          onOpenDetail={(item) => {
+            selectDetailItem(buildMarketItemForDetail(item));
+            navigateToPage("market", { preserveSelectedItem: true });
+          }}
           onCloseCurrency={() => {
             setSelectedGuideCurrency(null);
             setInlineGuideDetailPage(null);
@@ -7841,20 +7855,34 @@ interface OwnedItemRow {
 function AccountItemsPage({
   accountSnapshot,
   accountItems,
+  currencies,
+  currencyCatalogState,
   analysisState,
   onAnalyze,
   onOpenItem,
+  onOpenCurrency,
 }: {
   accountSnapshot: AccountSnapshot | null;
   accountItems: Map<number, Gw2Item>;
+  currencies: Gw2Currency[];
+  currencyCatalogState: LoadState;
   analysisState: LoadState;
   onAnalyze: () => void;
   onOpenItem: (item: Gw2Item) => void;
+  onOpenCurrency: (currency: GuideCurrencyDefinition) => void;
 }) {
   const [search, setSearch] = useState("");
   const rows = useMemo(
     () => (accountSnapshot ? buildOwnedItemRows(accountSnapshot, accountItems) : []),
     [accountItems, accountSnapshot],
+  );
+  const walletAmounts = useMemo(
+    () => new Map((accountSnapshot?.wallet ?? []).map((entry) => [entry.id, entry.value])),
+    [accountSnapshot],
+  );
+  const currencyRows = useMemo(
+    () => buildCurrencyRows(currencies, walletAmounts),
+    [currencies, walletAmounts],
   );
   const normalizedSearch = search.trim().toLowerCase();
   const filteredRows = useMemo(() => {
@@ -7873,6 +7901,25 @@ function AccountItemsPage({
       );
     });
   }, [normalizedSearch, rows]);
+  const filteredCurrencyRows = useMemo(() => {
+    if (!normalizedSearch) {
+      return currencyRows;
+    }
+
+    return currencyRows.filter((row) => {
+      const haystack = [
+        row.currency.id,
+        row.currency.name,
+        row.description,
+        row.definition.summary,
+        row.amount,
+        row.displayOrder,
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(normalizedSearch);
+    });
+  }, [currencyRows, normalizedSearch]);
   const craftingRows = filteredRows.filter((row) => row.isCraftingItem);
   const normalRows = filteredRows.filter((row) => !row.isCraftingItem);
   const totalOwnedCount = rows.reduce((sum, row) => sum + row.count, 0);
@@ -7919,6 +7966,7 @@ function AccountItemsPage({
 
       <section className="account-metrics">
         <Metric icon={<Boxes />} label="Unique Items" value={rows.length.toLocaleString()} />
+        <Metric icon={<Coins />} label="Wallet Currencies" value={currencyRows.length.toLocaleString()} />
         <Metric icon={<Database />} label="Total Stack Count" value={totalOwnedCount.toLocaleString()} />
         <Metric icon={<Hammer />} label="Crafting Items" value={craftingRows.length.toLocaleString()} />
         <Metric
@@ -7949,6 +7997,16 @@ function AccountItemsPage({
           emptyText="No owned crafting items match the current search."
           onOpenItem={onOpenItem}
         />
+        <CurrencyMaterialTable
+          rows={filteredCurrencyRows}
+          loading={currencyCatalogState === "loading" && currencyRows.length === 0}
+          emptyText={
+            currencyCatalogState === "error"
+              ? "Unable to load wallet currencies right now."
+              : "No wallet currencies match the current search."
+          }
+          onOpenCurrency={onOpenCurrency}
+        />
         <OwnedItemTable
           title="Normal Items"
           rows={normalRows}
@@ -7968,26 +8026,58 @@ interface CurrencyRow {
   displayOrder: number;
 }
 
+function buildCurrencyRows(
+  currencies: Gw2Currency[],
+  walletAmounts: Map<number, number>,
+): CurrencyRow[] {
+  const displayableCurrencies = currencies
+    .filter((currency) => currency.id !== 1)
+    .map((currency) => normalizeCurrencyForDisplay(currency))
+    .filter((currency): currency is Gw2Currency => Boolean(currency));
+
+  return displayableCurrencies
+    .map((currency, index) => {
+      const normalizedCurrency = normalizeCurrencyForDisplay(currency);
+      if (!normalizedCurrency) {
+        return null;
+      }
+
+      const amount = walletAmounts.get(currency.id) ?? 0;
+      return {
+        currency: normalizedCurrency,
+        definition: buildCurrencyGuideDefinition(normalizedCurrency, amount),
+        amount,
+        description: formatCurrencyDescription(normalizedCurrency.description),
+        displayOrder: index + 1,
+      };
+    })
+    .filter((row): row is CurrencyRow => Boolean(row));
+}
+
 function CurrenciesPage({
   currencies,
   currencyCatalogState,
   accountSnapshot,
+  catalog,
   analysisState,
   selectedCurrency,
   onRefreshAccount,
   onRefreshCurrencies,
   onOpenCurrency,
+  onOpenDetail,
   onCloseCurrency,
   onOpenPage,
 }: {
   currencies: Gw2Currency[];
   currencyCatalogState: LoadState;
   accountSnapshot: AccountSnapshot | null;
+  catalog: MarketItem[];
   analysisState: LoadState;
   selectedCurrency: GuideCurrencyDefinition | null;
   onRefreshAccount: () => void;
   onRefreshCurrencies: () => void;
   onOpenCurrency: (currency: GuideCurrencyDefinition) => void;
+  onOpenDetail: (item: Gw2Item) => void;
   onCloseCurrency: () => void;
   onOpenPage: (page: ActivePage) => void;
 }) {
@@ -7997,29 +8087,7 @@ function CurrenciesPage({
     [accountSnapshot],
   );
   const rows = useMemo(
-    () => {
-      const displayableCurrencies = currencies
-        .filter((currency) => currency.id !== 1)
-        .map((currency) => normalizeCurrencyForDisplay(currency))
-        .filter((currency): currency is Gw2Currency => Boolean(currency));
-
-      return displayableCurrencies
-        .map((currency, index) => {
-          const normalizedCurrency = normalizeCurrencyForDisplay(currency);
-          if (!normalizedCurrency) {
-            return null;
-          }
-
-          return {
-            currency: normalizedCurrency,
-            definition: buildCurrencyGuideDefinition(normalizedCurrency),
-            amount: walletAmounts.get(currency.id) ?? 0,
-            description: formatCurrencyDescription(normalizedCurrency.description),
-            displayOrder: index + 1,
-          };
-        })
-        .filter((row): row is CurrencyRow => Boolean(row));
-    },
+    () => buildCurrencyRows(currencies, walletAmounts),
     [currencies, walletAmounts],
   );
   const normalizedSearch = search.trim().toLowerCase();
@@ -8113,7 +8181,14 @@ function CurrenciesPage({
         {pageBody}
       </aside>
       <MarketSplitHandle />
-      <GuideCurrencyDetailPane currency={selectedCurrency} onClose={onCloseCurrency} onOpenPage={onOpenPage} />
+      <GuideCurrencyDetailPane
+        currency={selectedCurrency}
+        accountSnapshot={accountSnapshot}
+        catalog={catalog}
+        onClose={onCloseCurrency}
+        onOpenDetail={onOpenDetail}
+        onOpenPage={onOpenPage}
+      />
     </div>
   );
 }
@@ -8173,7 +8248,10 @@ function CurrencyTable({
                 >
                   <td>
                     <span className="table-item-cell">
-                      <ItemIcon item={{ id: row.currency.id, name: row.currency.name, icon: row.definition.icon }} />
+                      <ItemIcon
+                        item={{ id: row.currency.id, name: row.currency.name, icon: row.definition.icon }}
+                        showFavoriteBadge={false}
+                      />
                       <span className="item-copy">
                         <strong>{row.currency.name}</strong>
                       </span>
@@ -8181,6 +8259,82 @@ function CurrencyTable({
                   </td>
                   <td>{row.amount > 0 ? row.amount.toLocaleString() : "0"}</td>
                   <td>{row.description || row.definition.summary}</td>
+                  <td>{row.displayOrder.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="muted-copy">{emptyText}</p>
+      )}
+    </div>
+  );
+}
+
+function CurrencyMaterialTable({
+  rows,
+  loading,
+  emptyText,
+  onOpenCurrency,
+}: {
+  rows: CurrencyRow[];
+  loading: boolean;
+  emptyText: string;
+  onOpenCurrency: (currency: GuideCurrencyDefinition) => void;
+}) {
+  const materialRows = rows.filter((row) => row.amount > 0);
+  const { sortedRows, renderHeader } = useSortableRows<
+    CurrencyRow,
+    "currency" | "amount" | "order"
+  >(
+    materialRows,
+    { key: "currency", direction: "asc" },
+    {
+      currency: (left, right) => compareStringValue(left.currency.name, right.currency.name),
+      amount: (left, right) => compareNumberValue(left.amount, right.amount),
+      order: (left, right) => compareNumberValue(left.displayOrder, right.displayOrder),
+    },
+  );
+
+  return (
+    <div className="owned-item-section">
+      <div className="owned-item-section-head">
+        <h4>Wallet Currencies</h4>
+        <span>{materialRows.length.toLocaleString()}</span>
+      </div>
+      {loading ? (
+        <SkeletonRows />
+      ) : materialRows.length > 0 ? (
+        <div className="craft-table-wrap">
+          <table className="craft-profit-table account-item-table currency-material-table">
+            <thead>
+              <tr>
+                {renderHeader("currency", "Currency")}
+                {renderHeader("amount", "Amount")}
+                {renderHeader("order", "Order")}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedRows.map((row) => (
+                <tr
+                  key={`wallet-currency-${row.currency.id}`}
+                  className="clickable-row"
+                  onClick={() => onOpenCurrency(row.definition)}
+                >
+                  <td>
+                    <span className="table-item-cell">
+                      <ItemIcon
+                        item={{ id: row.currency.id, name: row.currency.name, icon: row.definition.icon }}
+                        showFavoriteBadge={false}
+                      />
+                      <span className="item-copy">
+                        <strong>{row.currency.name}</strong>
+                        <span>{row.description || row.definition.summary}</span>
+                      </span>
+                    </span>
+                  </td>
+                  <td>{row.amount.toLocaleString()}</td>
                   <td>{row.displayOrder.toLocaleString()}</td>
                 </tr>
               ))}
@@ -8232,15 +8386,19 @@ function isPlaceholderCurrencyName(name: string): boolean {
   return /^currency(?:\s*#?\d+)?$/i.test(name.trim()) || /^unknown\s+currency/i.test(name.trim());
 }
 
-function buildCurrencyGuideDefinition(currency: Gw2Currency): GuideCurrencyDefinition {
+function buildCurrencyGuideDefinition(currency: Gw2Currency, amount?: number): GuideCurrencyDefinition {
   const existing = GUIDE_CURRENCY_DEFINITIONS[currency.name];
   const icon = existing?.icon ?? currency.icon ?? GW2_CURRENCY_ICONS[currency.name] ?? "";
   const description = formatCurrencyDescription(currency.description);
   const vendors = getCurrencyVendorLinks(currency, description);
+  const itemId = getCurrencyMaterialItemId(currency.name);
 
   if (existing) {
     return {
       ...existing,
+      id: currency.id,
+      itemId: existing.itemId ?? itemId,
+      amount,
       icon,
       summary: existing.summary || description,
       vendors: vendors.length ? vendors : existing.vendors,
@@ -8248,6 +8406,9 @@ function buildCurrencyGuideDefinition(currency: Gw2Currency): GuideCurrencyDefin
   }
 
   return {
+    id: currency.id,
+    itemId,
+    amount,
     name: currency.name,
     icon,
     wikiUrl: `https://wiki.guildwars2.com/wiki/${encodeURIComponent(currency.name.replace(/\s+/g, "_"))}`,
@@ -8262,6 +8423,13 @@ function buildCurrencyGuideDefinition(currency: Gw2Currency): GuideCurrencyDefin
     ],
     vendors: vendors.length ? vendors : undefined,
   };
+}
+
+function getCurrencyMaterialItemId(currencyName: string): number | undefined {
+  return (
+    GUIDE_PRICE_ITEM_IDS_BY_NAME[normalizeSearchText(currencyName)] ??
+    getStoredItemByName(currencyName)?.id
+  );
 }
 
 function getCurrencyVendorLinks(currency: Gw2Currency, description: string): GuideVendorLink[] {
@@ -11093,7 +11261,7 @@ function FavoritesPage({
 
   useEffect(() => {
     const missingIds = favoriteIds.filter(
-      (id) => !catalogIdSet.has(id) && !getStoredItem(id),
+      (id) => id > 0 && !catalogIdSet.has(id) && !getStoredItem(id),
     );
     if (missingIds.length === 0) {
       return;
@@ -13690,6 +13858,9 @@ function LegendaryReadinessPage({
   const [activeFilters, setActiveFilters] = useState<Set<LegendaryReadinessFilterId>>(() => new Set(["all"]));
   const [resolvedCosts, setResolvedCosts] = useState<Map<number, LegendaryReadinessResolvedCost>>(new Map());
   const [resolvingCostCount, setResolvingCostCount] = useState(0);
+  const [fullRecipeScanState, setFullRecipeScanState] = useState<LoadState>("idle");
+  const [fullRecipeScanProgress, setFullRecipeScanProgress] = useState({ done: 0, total: 0 });
+  const fullRecipeScanRunRef = useRef(0);
   const normalizedQuery = query.trim().toLowerCase();
   const activeFilterList = useMemo(() => Array.from(activeFilters), [activeFilters]);
   const activeFilterCount = activeFilters.has("all") ? 0 : activeFilters.size;
@@ -13700,6 +13871,8 @@ function LegendaryReadinessPage({
 
   useEffect(() => {
     setResolvedCosts(new Map());
+    setFullRecipeScanState("idle");
+    setFullRecipeScanProgress({ done: 0, total: 0 });
   }, [accountSnapshot, analysis]);
 
   const { filteredActionableLegendaries, filteredExternalLegendaries } = useMemo(() => {
@@ -13785,6 +13958,58 @@ function LegendaryReadinessPage({
       return next.size > 0 ? next : new Set(["all"]);
     });
   };
+
+  const scanAllLegendaryRecipes = useCallback(async () => {
+    if (!accountSnapshot || fullRecipeScanState === "loading") {
+      return;
+    }
+
+    const runId = fullRecipeScanRunRef.current + 1;
+    fullRecipeScanRunRef.current = runId;
+    const candidates = legendaries.filter(
+      (entry) => entry.recipe.ingredients.length > 0 && !isExternalLegendaryReadinessEntry(entry),
+    );
+
+    setFullRecipeScanProgress({ done: 0, total: candidates.length });
+    if (candidates.length === 0) {
+      setFullRecipeScanState("ready");
+      return;
+    }
+
+    setFullRecipeScanState("loading");
+    let nextIndex = 0;
+    let completed = 0;
+    const workerCount = Math.min(3, candidates.length);
+
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (fullRecipeScanRunRef.current === runId && nextIndex < candidates.length) {
+          const index = nextIndex;
+          nextIndex += 1;
+          const entry = candidates[index];
+          try {
+            const resolved = await resolveLegendaryReadinessCost(entry, accountSnapshot);
+            if (resolved && fullRecipeScanRunRef.current === runId) {
+              setResolvedCosts((current) => {
+                const updated = new Map(current);
+                updated.set(entry.item.id, resolved);
+                return updated;
+              });
+            }
+          } finally {
+            if (fullRecipeScanRunRef.current === runId) {
+              completed += 1;
+              setFullRecipeScanProgress({ done: completed, total: candidates.length });
+            }
+          }
+        }
+      }),
+    );
+
+    if (fullRecipeScanRunRef.current === runId) {
+      setFullRecipeScanState("ready");
+    }
+  }, [accountSnapshot, fullRecipeScanState, legendaries]);
 
   useEffect(() => {
     if (!accountSnapshot || filteredActionableLegendaries.length === 0) {
@@ -13883,10 +14108,24 @@ function LegendaryReadinessPage({
               unlocks, and remaining personal cost.
             </p>
           </div>
-          <button className="icon-button primary" onClick={() => void onAnalyze()}>
-            <RefreshCcw className={analysisState === "loading" ? "spin" : undefined} />
-            <span>{analysisState === "loading" ? "Analyzing" : "Refresh Scan"}</span>
-          </button>
+          <div className="page-actions">
+            <button
+              className="icon-button"
+              onClick={() => void scanAllLegendaryRecipes()}
+              disabled={fullRecipeScanState === "loading" || legendaries.length === 0}
+            >
+              {fullRecipeScanState === "loading" ? <Loader2 className="spin" /> : <ListChecks />}
+              <span>
+                {fullRecipeScanState === "loading"
+                  ? `${fullRecipeScanProgress.done.toLocaleString()} / ${fullRecipeScanProgress.total.toLocaleString()}`
+                  : "Scan Recipes"}
+              </span>
+            </button>
+            <button className="icon-button primary" onClick={() => void onAnalyze()}>
+              <RefreshCcw className={analysisState === "loading" ? "spin" : undefined} />
+              <span>{analysisState === "loading" ? "Analyzing" : "Refresh Scan"}</span>
+            </button>
+          </div>
         </section>
 
         <section className="surface craft-profit-surface">
@@ -13934,7 +14173,15 @@ function LegendaryReadinessPage({
                     </div>
                   </section>
                 ) : null}
-                {resolvingCostCount > 0 ? (
+                {fullRecipeScanState === "loading" ? (
+                  <small className="legendary-cost-state">
+                    Scanning all modeled recipe routes {fullRecipeScanProgress.done.toLocaleString()} / {fullRecipeScanProgress.total.toLocaleString()}...
+                  </small>
+                ) : fullRecipeScanState === "ready" && fullRecipeScanProgress.total > 0 ? (
+                  <small className="legendary-cost-state">
+                    Full recipe scan complete for {fullRecipeScanProgress.total.toLocaleString()} modeled routes.
+                  </small>
+                ) : resolvingCostCount > 0 ? (
                   <small className="legendary-cost-state">
                     Resolving detailed recipe prices for {resolvingCostCount.toLocaleString()} visible routes...
                   </small>
@@ -19412,13 +19659,55 @@ function GuideResourceHubPage({
 
 function GuideCurrencyDetailPane({
   currency,
+  accountSnapshot,
+  catalog = [],
   onClose,
+  onOpenDetail,
   onOpenPage,
 }: {
   currency: GuideCurrencyDefinition;
+  accountSnapshot?: AccountSnapshot | null;
+  catalog?: MarketItem[];
   onClose: () => void;
+  onOpenDetail?: (item: Gw2Item) => void;
   onOpenPage?: (page: ActivePage) => void;
 }) {
+  const [usedInRecipes, setUsedInRecipes] = useState<RecipeGuide[]>([]);
+  const [recipeState, setRecipeState] = useState<LoadState>("idle");
+  const currencyItemId = currency.itemId ?? getCurrencyMaterialItemId(currency.name);
+
+  useEffect(() => {
+    if (!currencyItemId) {
+      setUsedInRecipes([]);
+      setRecipeState("idle");
+      return;
+    }
+
+    let cancelled = false;
+    setRecipeState("loading");
+    loadRecipesUsingItem(currencyItemId, accountSnapshot?.holdings)
+      .then((guides) => {
+        if (cancelled) {
+          return;
+        }
+
+        setUsedInRecipes(guides);
+        setRecipeState("ready");
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+
+        setUsedInRecipes([]);
+        setRecipeState("error");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accountSnapshot, currency.name, currencyItemId]);
+
   return (
     <section className="detail-panel">
       <div className="item-detail guide-currency-detail">
@@ -19430,6 +19719,11 @@ function GuideCurrencyDetailPane({
             <span className="rarity rarity-basic">Currency</span>
             <h2>{currency.name}</h2>
             <p>{currency.summary}</p>
+            {typeof currency.amount === "number" ? (
+              <small className="currency-detail-balance">
+                Account amount: {currency.amount.toLocaleString()}
+              </small>
+            ) : null}
           </div>
           <a
             className="detail-wiki-button"
@@ -19534,6 +19828,33 @@ function GuideCurrencyDetailPane({
               </section>
             ) : null}
           </div>
+        </section>
+
+        <section className="surface guide-currency-recipe-usage">
+          <div className="section-title">
+            <ListChecks />
+            <h3>Recipe Usage</h3>
+          </div>
+          {currencyItemId ? (
+            <RecipeCollapsibleSection
+              title="Recipes Requiring This Currency"
+              guides={usedInRecipes}
+              state={recipeState}
+              emptyText={
+                recipeState === "error"
+                  ? "Unable to load recipe usage for this currency right now."
+                  : "No modeled recipes currently require this currency as an item ingredient."
+              }
+              keyPrefix={`currency-used-${currencyItemId}`}
+              accountSnapshot={accountSnapshot ?? null}
+              catalog={catalog}
+              onOpenDetail={onOpenDetail}
+            />
+          ) : (
+            <p className="muted-copy">
+              This wallet currency is not backed by a modeled item ingredient in the local recipe data yet.
+            </p>
+          )}
         </section>
       </div>
     </section>
@@ -21604,13 +21925,19 @@ function normalizeMapName(value: string): string {
     .trim();
 }
 
-function ItemIcon({ item }: { item: { id?: number; name: string; icon?: string } }) {
+function ItemIcon({
+  item,
+  showFavoriteBadge = true,
+}: {
+  item: { id?: number; name: string; icon?: string };
+  showFavoriteBadge?: boolean;
+}) {
   const { isFavoriteItem } = useFavoriteItems();
   const [iconFailed, setIconFailed] = useState(false);
   const iconUrl = item.icon?.startsWith("http://")
     ? item.icon.replace(/^http:\/\//i, "https://")
     : item.icon;
-  const favorite = isFavoriteItem(item);
+  const favorite = showFavoriteBadge && isFavoriteItem(item);
 
   useEffect(() => {
     setIconFailed(false);
@@ -21694,6 +22021,7 @@ function ItemDetail({
   const [wikiAcquisition, setWikiAcquisition] = useState<WikiItemAcquisition | null>(null);
   const [wikiAcquisitionState, setWikiAcquisitionState] = useState<LoadState>("idle");
   const [selectedRecipeIndex, setSelectedRecipeIndex] = useState(0);
+  const canFavoriteItem = Number.isInteger(item.id) && item.id !== 0;
   const isFavorite = isFavoriteItem(item);
   const resolvedGuideResource = findGuideResourceForItem(item, guideResource);
   const netSpread = getMarketNetSpread(item);
@@ -21745,7 +22073,7 @@ function ItemDetail({
 
   return (
     <div className="item-detail">
-      <section className={`item-title-row ${isTradable ? "" : "no-favorite"}`}>
+      <section className={`item-title-row ${canFavoriteItem ? "" : "no-favorite"}`}>
         <ItemIcon item={item} />
         <div>
           <span className={`rarity rarity-${item.rarity.toLowerCase()}`}>{item.rarity}</span>
@@ -21754,7 +22082,7 @@ function ItemDetail({
             {item.type} - Level {item.level || "Any"}
           </p>
         </div>
-        {isTradable ? (
+        {canFavoriteItem ? (
           <button
             className={`detail-favorite-button ${isFavorite ? "active" : ""}`}
             type="button"
@@ -25616,7 +25944,7 @@ function getAcquisitionSourceUrl(acquisition?: WikiItemAcquisition | null): stri
 }
 
 interface CraftMapAcquisition {
-  kind: "craft" | "vendor" | "market" | "unknown";
+  kind: "craft" | "mystic" | "vendor" | "market" | "unknown";
   label: string;
   totalCost: number;
   vendorOffer?: WikiVendorOffer;
@@ -25651,7 +25979,7 @@ function chooseCraftMapAcquisition({
   if (marketTotal > 0) {
     options.push({
       kind: "market",
-      label: "Market",
+      label: "Bought",
       totalCost: marketTotal,
     });
   }
@@ -25659,7 +25987,7 @@ function chooseCraftMapAcquisition({
   if (vendorOffer && vendorTotal > 0) {
     options.push({
       kind: "vendor",
-      label: "Vendor",
+      label: "Bought",
       totalCost: vendorTotal,
       vendorOffer,
       sourceUrl: wikiAcquisition?.sourceUrl,
@@ -25667,16 +25995,17 @@ function chooseCraftMapAcquisition({
   }
 
   if (recipe && craftTotal > 0) {
+    const isMysticRecipe = isMysticForgeRecipe(recipe.recipe);
     options.push({
-      kind: "craft",
-      label: "Craft",
+      kind: isMysticRecipe ? "mystic" : "craft",
+      label: isMysticRecipe ? "Mystic Forged" : "Crafted",
       totalCost: craftTotal,
     });
   }
 
   return options.sort((left, right) => left.totalCost - right.totalCost)[0] ?? {
     kind: "unknown",
-    label: "Source",
+    label: "Check source",
     totalCost: 0,
     sourceUrl: getAcquisitionSourceUrl(wikiAcquisition),
   };
@@ -26104,10 +26433,15 @@ function IngredientMindMap({
                     <span className="node-total-price">
                       {node.acquisition.totalCost > 0 ? (
                         <>
-                          {node.acquisition.label} <Money value={node.acquisition.totalCost} />
+                          <span className={`node-route-kind node-route-${node.acquisition.kind}`}>
+                            {node.acquisition.label}
+                          </span>
+                          <Money value={node.acquisition.totalCost} />
                         </>
                       ) : (
-                        "Check source"
+                        <span className={`node-route-kind node-route-${node.acquisition.kind}`}>
+                          {node.acquisition.label}
+                        </span>
                       )}
                     </span>
                     {hasBranch ? (
@@ -26619,6 +26953,10 @@ function NodeInfoWindow({
       ? "Use owned stack"
       : node.acquisition.kind === "vendor"
         ? `Buy from ${node.acquisition.vendorOffer?.vendor ?? "vendor"}`
+        : node.acquisition.kind === "mystic"
+          ? "Combine in the Mystic Forge"
+          : node.acquisition.kind === "craft"
+            ? "Craft at the matching station"
         : buyCost > 0
         ? accountSnapshot && accountSnapshot.coins < buyCost
           ? "Grind gold, then buy"

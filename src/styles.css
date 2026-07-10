@@ -1231,6 +1231,25 @@ svg {
   min-width: 920px;
 }
 
+.currency-material-table {
+  min-width: 680px;
+}
+
+.currency-material-table th:nth-child(1),
+.currency-material-table td:nth-child(1) {
+  width: 58%;
+}
+
+.currency-material-table th:nth-child(2),
+.currency-material-table td:nth-child(2) {
+  width: 22%;
+}
+
+.currency-material-table th:nth-child(3),
+.currency-material-table td:nth-child(3) {
+  width: 90px;
+}
+
 .currency-table th:nth-child(1),
 .currency-table td:nth-child(1) {
   width: 290px;
@@ -2301,6 +2320,18 @@ svg {
   height: 42px;
   object-fit: contain;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.45));
+}
+
+.currency-detail-balance {
+  display: inline-block;
+  margin-top: 5px;
+  color: #79fff2;
+  font-weight: 800;
+}
+
+.guide-currency-recipe-usage {
+  display: grid;
+  gap: 12px;
 }
 
 .guide-currency-detail-header .detail-wiki-button,
@@ -7121,6 +7152,36 @@ p {
   margin-top: 3px;
   color: #30362e;
   font-weight: 900;
+}
+
+.map-node .node-route-kind {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 2px 5px;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: #10201f;
+  background: #d7ebe4;
+}
+
+.map-node .node-route-mystic {
+  color: #291634;
+  background: #e8cafc;
+}
+
+.map-node .node-route-craft {
+  color: #17251c;
+  background: #c9edc9;
+}
+
+.map-node .node-route-market,
+.map-node .node-route-vendor {
+  color: #2d220f;
+  background: #f0dfb3;
 }
 
 .map-node .node-owned-count {
