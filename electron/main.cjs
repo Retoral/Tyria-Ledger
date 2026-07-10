@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, clipboard, dialog, ipcMain, nativeImage, nativeTheme, safeStorage, screen, shell } = require("electron");
+const { app, BrowserWindow, Menu, Notification, Tray, clipboard, dialog, ipcMain, nativeImage, nativeTheme, safeStorage, screen, shell } = require("electron");
 const fs = require("node:fs/promises");
 const fsSync = require("node:fs");
 const path = require("node:path");
@@ -199,6 +199,23 @@ function setStartupSettings(_event, options = {}) {
   });
   updateTrayMenu();
   return getStartupSettings();
+}
+
+function showNotification(_event, rawNotification = {}) {
+  const title = typeof rawNotification.title === "string" ? rawNotification.title.trim().slice(0, 120) : "";
+  const body = typeof rawNotification.body === "string" ? rawNotification.body.trim().slice(0, 500) : "";
+  if (!title || !body || !Notification.isSupported()) {
+    return false;
+  }
+
+  const notification = new Notification({
+    title,
+    body,
+    icon: getWindowIconPath(),
+  });
+  notification.on("click", showMainWindow);
+  notification.show();
+  return true;
 }
 
 function showMainWindow() {
@@ -1998,6 +2015,7 @@ if (!hasSingleInstanceLock) {
     ipcMain.handle("updates:open-download", openUpdateDownload);
     ipcMain.handle("startup:get", getStartupSettings);
     ipcMain.handle("startup:set", setStartupSettings);
+    ipcMain.handle("notification:show", showNotification);
 
     createWindow();
 

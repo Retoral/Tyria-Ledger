@@ -1,8 +1,10 @@
 import {
   AlertCircle,
   Backpack,
+  Bell,
   BookOpen,
   Boxes,
+  CalendarDays,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
@@ -14,6 +16,7 @@ import {
   Database,
   ExternalLink,
   Fish,
+  GitBranch,
   Hammer,
   Home,
   KeyRound,
@@ -26,11 +29,13 @@ import {
   PackageSearch,
   Plus,
   RefreshCcw,
+  Route,
   Search,
   ShieldCheck,
   ShoppingCart,
   SlidersHorizontal,
   Star,
+  Target,
   Toilet,
   Trophy,
   TrendingUp,
@@ -54,6 +59,28 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { findGw2WikiMapPointByChatLink, findGw2WikiMapPointByName, findNearestGw2WikiWaypoint } from "./data/gw2WikiMapPoints";
+import {
+  createPlanningId,
+  getDailyStorageKey,
+  readDailyChecks,
+  readFarmSessionHistory,
+  readPlannedMetaStops,
+  readPriceAlerts,
+  readProjectGoals,
+  writeDailyChecks,
+  writeFarmSessionHistory,
+  writePlannedMetaStops,
+  writePriceAlerts,
+  writeProjectGoals,
+  type FarmSessionRecord,
+  type GoalStatus,
+  type GoalStrategy,
+  type PlannedMetaStop,
+  type PriceAlertDirection,
+  type PriceAlertMetric,
+  type PriceAlertRule,
+  type ProjectGoal,
+} from "./planning";
 import {
   analyzeAccount,
   checkApiStatuses,
@@ -343,6 +370,95 @@ interface MetaEventGuide {
   relatedPageIds?: ActivePage[];
 }
 
+interface MetaScheduleDefinition {
+  id: string;
+  title: string;
+  map: string;
+  pageId?: ActivePage;
+  wikiUrl: string;
+  waypoint?: string;
+  durationMinutes: number;
+  cadenceMinutes?: number;
+  offsetMinutesUtc?: number;
+  mode: "fixed" | "continuous" | "instance";
+  note: string;
+}
+
+const META_SCHEDULES: MetaScheduleDefinition[] = [
+  {
+    id: "palawadan",
+    title: "Palawadan, Jewel of Istan",
+    map: "Domain of Istan",
+    pageId: "palawadan-volatile-magic",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Palawadan,_Jewel_of_Istan_(meta_event)",
+    waypoint: "[&BAkLAAA=]",
+    durationMinutes: 30,
+    cadenceMinutes: 120,
+    offsetMinutesUtc: 105,
+    mode: "fixed",
+    note: "Starts fifteen minutes before every odd UTC hour and runs for about 30 minutes.",
+  },
+  {
+    id: "thunderhead-keep",
+    title: "Thunderhead Keep",
+    map: "Thunderhead Peaks",
+    pageId: "thunderhead-peaks-volatile-magic",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Thunderhead_Keep_(meta_event)",
+    waypoint: "[&BLsLAAA=]",
+    durationMinutes: 20,
+    cadenceMinutes: 120,
+    offsetMinutesUtc: 105,
+    mode: "fixed",
+    note: "Begins at :45 on odd UTC hours.",
+  },
+  {
+    id: "oil-floes",
+    title: "The Oil Floes",
+    map: "Thunderhead Peaks",
+    pageId: "oil-floes-volatile-magic",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/The_Oil_Floes",
+    waypoint: "[&BKYLAAA=]",
+    durationMinutes: 15,
+    cadenceMinutes: 120,
+    offsetMinutesUtc: 45,
+    mode: "fixed",
+    note: "Begins at :45 on even UTC hours.",
+  },
+  {
+    id: "dragonfall",
+    title: "The Battle of Dragonfall",
+    map: "Dragonfall",
+    pageId: "dragonfall-volatile-magic",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/The_Battle_of_Dragonfall",
+    waypoint: "[&BN4LAAA=]",
+    durationMinutes: 50,
+    mode: "continuous",
+    note: "Instance-driven camp progression; join an active commander map rather than waiting for a global timer.",
+  },
+  {
+    id: "great-hall",
+    title: "Sunspear Uprising at the Great Hall",
+    map: "Domain of Istan",
+    pageId: "great-hall-volatile-magic",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Sunspear_Uprising",
+    waypoint: "[&BPoKAAA=]",
+    durationMinutes: 20,
+    mode: "instance",
+    note: "Map-instance state controls availability; check the guide and LFG.",
+  },
+  {
+    id: "drizzlewood",
+    title: "Drizzlewood Coast Campaign",
+    map: "Drizzlewood Coast",
+    pageId: "drizzlewood-donation",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Drizzlewood_Coast",
+    waypoint: "[&BGQMAAA=]",
+    durationMinutes: 90,
+    mode: "continuous",
+    note: "Instance-driven south and north campaigns; join a progressing commander map.",
+  },
+];
+
 type AchievementFilter = "unfinished" | "completed" | "all";
 
 interface AchievementView {
@@ -383,6 +499,14 @@ interface FavoriteItemsContextValue {
   favoriteItemIds: Set<number>;
   toggleFavoriteItem: (item: { id?: number }) => void;
   isFavoriteItem: (item: { id?: number } | number | null | undefined) => boolean;
+}
+
+interface ProjectGoalsContextValue {
+  goals: ProjectGoal[];
+  addGoal: (item: Gw2Item | MarketItem, quantity?: number) => ProjectGoal | null;
+  updateGoal: (goalId: string, updates: Partial<Pick<ProjectGoal, "quantity" | "strategy" | "status" | "note">>) => void;
+  removeGoal: (goalId: string) => void;
+  getGoalForItem: (itemId?: number) => ProjectGoal | null;
 }
 
 interface HistoryRange {
@@ -762,12 +886,23 @@ const FavoriteItemsContext = createContext<FavoriteItemsContextValue>({
   toggleFavoriteItem: () => undefined,
   isFavoriteItem: () => false,
 });
+const ProjectGoalsContext = createContext<ProjectGoalsContextValue>({
+  goals: [],
+  addGoal: () => null,
+  updateGoal: () => undefined,
+  removeGoal: () => undefined,
+  getGoalForItem: () => null,
+});
 
 const AccountRefreshContext = createContext<(() => Promise<void>) | null>(null);
 const DemandMovementContext = createContext<DemandMovementMap>(new Map());
 
 function useFavoriteItems() {
   return useContext(FavoriteItemsContext);
+}
+
+function useProjectGoals() {
+  return useContext(ProjectGoalsContext);
 }
 
 function useAccountRefresh() {
@@ -1843,6 +1978,8 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
     title: "My GW2 Account",
     items: [
       { id: "account", label: "Your GW2 Account", icon: <Home /> },
+      { id: "daily-planner", label: "Daily Planner", icon: <CalendarDays /> },
+      { id: "projects", label: "Goals & Projects", icon: <Target /> },
       { id: "account-items", label: "Account Items", icon: <Boxes /> },
       { id: "currencies", label: "Currencies", icon: <Coins /> },
       { id: "wizard-vault", label: "Wizard's Vault", icon: <Coins /> },
@@ -1857,6 +1994,8 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
     title: "Market",
     items: [
       { id: "market", label: "Trading Post", icon: <PackageSearch /> },
+      { id: "market-alerts", label: "Market Alerts", icon: <Bell /> },
+      { id: "acquisition-explorer", label: "Acquisition Explorer", icon: <GitBranch /> },
       { id: "crafting", label: "Crafting Planner", icon: <Hammer /> },
       { id: "profitable-crafts", label: "Profitable Crafts", icon: <TrendingUp /> },
       { id: "mystic-forge", label: "Mystic Forge", icon: <Toilet /> },
@@ -1879,6 +2018,7 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
     title: "Farming",
     items: [
       { id: "meta-events", label: "Meta", icon: <ShieldCheck /> },
+      { id: "meta-train", label: "Meta Train", icon: <Route /> },
       { id: "lws4-resources", label: "LWS4 Resources", icon: <Coins /> },
       { id: "dragonfall-volatile-magic", label: "Dragonfall", icon: <PackageSearch /> },
       { id: "palawadan-volatile-magic", label: "Palawadan", icon: <ShieldCheck /> },
@@ -5205,6 +5345,8 @@ function App() {
   const [maps, setMaps] = useState<Gw2Map[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [favoriteItemIds, setFavoriteItemIds] = useState<Set<number>>(() => readStoredFavoriteItemIds());
+  const [projectGoals, setProjectGoals] = useState<ProjectGoal[]>(() => readProjectGoals());
+  const [priceAlerts, setPriceAlerts] = useState<PriceAlertRule[]>(() => readPriceAlerts());
   const activePage = pageHistory[pageHistoryIndex] ?? "account";
   const canNavigateBack = detailHistoryIndex > 0 || pageHistoryIndex > 0;
   const canNavigateForward =
@@ -5251,12 +5393,122 @@ function App() {
     [favoriteItemIds],
   );
 
+  const projectGoalsContextValue = useMemo<ProjectGoalsContextValue>(
+    () => ({
+      goals: projectGoals,
+      addGoal: (item, quantity = 1) => {
+        if (!Number.isInteger(item.id) || item.id === 0) {
+          return null;
+        }
+
+        const existing = projectGoals.find((goal) => goal.itemId === item.id);
+        if (existing) {
+          const nextQuantity = Math.max(existing.quantity, Math.max(1, Math.round(quantity)));
+          setProjectGoals((current) =>
+            current.map((goal) =>
+              goal.id === existing.id
+                ? { ...goal, quantity: nextQuantity, status: "active", updatedAt: Date.now() }
+                : goal,
+            ),
+          );
+          return { ...existing, quantity: nextQuantity, status: "active", updatedAt: Date.now() };
+        }
+
+        const now = Date.now();
+        const goal: ProjectGoal = {
+          id: createPlanningId("goal"),
+          itemId: item.id,
+          itemName: item.name,
+          icon: item.icon,
+          rarity: item.rarity || "Basic",
+          itemType: item.type || "Item",
+          quantity: Math.max(1, Math.round(quantity)),
+          strategy: "balanced",
+          status: "active",
+          note: "",
+          createdAt: now,
+          updatedAt: now,
+        };
+        setProjectGoals((current) => [goal, ...current]);
+        return goal;
+      },
+      updateGoal: (goalId, updates) => {
+        setProjectGoals((current) =>
+          current.map((goal) =>
+            goal.id === goalId
+              ? {
+                  ...goal,
+                  ...updates,
+                  quantity: updates.quantity === undefined ? goal.quantity : Math.max(1, Math.round(updates.quantity)),
+                  updatedAt: Date.now(),
+                }
+              : goal,
+          ),
+        );
+      },
+      removeGoal: (goalId) => {
+        setProjectGoals((current) => current.filter((goal) => goal.id !== goalId));
+      },
+      getGoalForItem: (itemId) =>
+        Number.isInteger(itemId) ? projectGoals.find((goal) => goal.itemId === itemId) ?? null : null,
+    }),
+    [projectGoals],
+  );
+
   useEffect(() => {
     window.localStorage.setItem(
       FAVORITE_ITEM_IDS_STORAGE_KEY,
       JSON.stringify(Array.from(favoriteItemIds).sort((left, right) => left - right)),
     );
   }, [favoriteItemIds]);
+
+  useEffect(() => {
+    writeProjectGoals(projectGoals);
+  }, [projectGoals]);
+
+  useEffect(() => {
+    writePriceAlerts(priceAlerts);
+  }, [priceAlerts]);
+
+  useEffect(() => {
+    if (!catalog.length || !priceAlerts.length) {
+      return;
+    }
+
+    const catalogById = new Map(catalog.map((item) => [item.id, item]));
+    let changed = false;
+    const nextAlerts = priceAlerts.map((alert) => {
+      const item = catalogById.get(alert.itemId);
+      if (!item || !alert.enabled) {
+        if (alert.wasMatching === false || alert.wasMatching === undefined) return alert;
+        changed = true;
+        return { ...alert, wasMatching: false };
+      }
+
+      const currentValue = getPriceAlertCurrentValue(alert, item);
+      const matching = alert.direction === "above" ? currentValue >= alert.target : currentValue <= alert.target;
+      if (matching && !alert.wasMatching) {
+        changed = true;
+        const triggeredAt = Date.now();
+        void showDesktopNotification(
+          `${alert.itemName} price alert`,
+          `${getPriceAlertMetricLabel(alert.metric)} is ${formatCoinText(currentValue)}, ${alert.direction} your ${formatCoinText(alert.target)} target.`,
+        );
+        return { ...alert, wasMatching: true, lastTriggeredAt: triggeredAt };
+      }
+
+      if (alert.wasMatching !== matching) {
+        changed = true;
+        return { ...alert, wasMatching: matching };
+      }
+
+      return alert;
+    });
+
+    if (changed) {
+      setPriceAlerts(nextAlerts);
+    }
+  }, [catalog, priceAlerts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -6620,6 +6872,33 @@ function App() {
       );
     }
 
+    if (activePage === "daily-planner") {
+      return (
+        <DailyPlannerPage
+          apiKey={apiKey}
+          accountSnapshot={accountSnapshot}
+          onOpenPage={navigateToPage}
+        />
+      );
+    }
+
+    if (activePage === "projects") {
+      return (
+        <ProjectsPage
+          catalog={catalog}
+          accountSnapshot={accountSnapshot}
+          onOpenItem={(item) => {
+            selectDetailItem(buildMarketItemForDetail(item));
+            navigateToPage("market", { preserveSelectedItem: true });
+          }}
+          onOpenExplorer={(item) => {
+            selectDetailItem(buildMarketItemForDetail(item));
+            navigateToPage("acquisition-explorer", { preserveSelectedItem: true });
+          }}
+        />
+      );
+    }
+
     if (activePage === "currencies") {
       return (
         <CurrenciesPage
@@ -6786,6 +7065,38 @@ function App() {
           onSelectItem={selectDetailItem}
           onLoadMarket={loadCatalog}
           onOpenPage={navigateToPage}
+        />
+      );
+    }
+
+    if (activePage === "market-alerts") {
+      return (
+        <MarketAlertsPage
+          catalog={catalog}
+          loadState={loadState}
+          alerts={priceAlerts}
+          onAlertsChange={setPriceAlerts}
+          onLoadMarket={loadCatalog}
+          onOpenItem={(item) => {
+            selectDetailItem(item);
+            navigateToPage("market", { preserveSelectedItem: true });
+          }}
+        />
+      );
+    }
+
+    if (activePage === "acquisition-explorer") {
+      return (
+        <AcquisitionExplorerPage
+          catalog={catalog}
+          loadState={loadState}
+          selectedItem={selectedItem}
+          recipes={recipes}
+          detailState={detailState}
+          accountSnapshot={accountSnapshot}
+          onLoadMarket={loadCatalog}
+          onSelectItem={selectDetailItem}
+          onClose={() => selectDetailItem(null)}
         />
       );
     }
@@ -7029,6 +7340,10 @@ function App() {
       );
     }
 
+    if (activePage === "meta-train") {
+      return <MetaTrainPlannerPage onOpenPage={navigateToPage} />;
+    }
+
     if (activePage === "gathering") {
       return (
         <GatheringPage
@@ -7098,7 +7413,8 @@ function App() {
   return (
     <DemandMovementContext.Provider value={demandMovementByItem}>
       <FavoriteItemsContext.Provider value={favoriteItemsContextValue}>
-        <AccountRefreshContext.Provider value={apiKey.trim() ? refreshOwnedAccountData : null}>
+        <ProjectGoalsContext.Provider value={projectGoalsContextValue}>
+          <AccountRefreshContext.Provider value={apiKey.trim() ? refreshOwnedAccountData : null}>
       <div className="app-shell">
         <Sidebar
           activePage={activePage}
@@ -7121,7 +7437,7 @@ function App() {
                 </button>
               </div>
               <div className="progress-copy">
-                <strong>{progress}</strong>
+                <strong title={progress}>{progress}</strong>
                 {progressCount ? (
                   <span>
                     {progressCount.done} / {progressCount.total}
@@ -7151,7 +7467,8 @@ function App() {
           <div className="content-main">{content}</div>
         </main>
       </div>
-        </AccountRefreshContext.Provider>
+          </AccountRefreshContext.Provider>
+        </ProjectGoalsContext.Provider>
       </FavoriteItemsContext.Provider>
     </DemandMovementContext.Provider>
   );
@@ -7196,6 +7513,1260 @@ function UpdateStatusButton({
       {isChecking ? <Loader2 className="spin" /> : isAvailable ? <AlertCircle /> : updateState === "current" ? <CheckCircle2 /> : <RefreshCcw />}
       <span>{label}</span>
     </button>
+  );
+}
+
+function ProjectsPage({
+  catalog,
+  accountSnapshot,
+  onOpenItem,
+  onOpenExplorer,
+}: {
+  catalog: MarketItem[];
+  accountSnapshot: AccountSnapshot | null;
+  onOpenItem: (item: Gw2Item) => void;
+  onOpenExplorer: (item: Gw2Item) => void;
+}) {
+  const { goals, addGoal, updateGoal, removeGoal } = useProjectGoals();
+  const [selectedGoalId, setSelectedGoalId] = useState<string | null>(goals[0]?.id ?? null);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<GoalStatus | "all">("active");
+  const selectedGoal = goals.find((goal) => goal.id === selectedGoalId) ?? goals[0] ?? null;
+  const filteredGoals = goals.filter((goal) => statusFilter === "all" || goal.status === statusFilter);
+  const catalogById = useMemo(() => new Map(catalog.map((item) => [item.id, item])), [catalog]);
+  const searchResults = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (normalized.length < 2) {
+      return [];
+    }
+
+    const goalItemIds = new Set(goals.map((goal) => goal.itemId));
+    return catalog
+      .filter((item) => !goalItemIds.has(item.id) && `${item.name} ${item.type} ${item.rarity}`.toLowerCase().includes(normalized))
+      .slice(0, 8);
+  }, [catalog, goals, query]);
+  const activeGoals = goals.filter((goal) => goal.status === "active");
+  const completeGoals = goals.filter((goal) => goal.status === "complete");
+  const targetUnits = activeGoals.reduce((sum, goal) => sum + goal.quantity, 0);
+  const ownedUnits = activeGoals.reduce(
+    (sum, goal) => sum + Math.min(goal.quantity, accountSnapshot?.holdings.get(goal.itemId) ?? 0),
+    0,
+  );
+
+  useEffect(() => {
+    if (!selectedGoalId && goals[0]) {
+      setSelectedGoalId(goals[0].id);
+      return;
+    }
+
+    if (selectedGoalId && !goals.some((goal) => goal.id === selectedGoalId)) {
+      setSelectedGoalId(goals[0]?.id ?? null);
+    }
+  }, [goals, selectedGoalId]);
+
+  return (
+    <div className={`market-workspace projects-workspace ${selectedGoal ? "" : "detail-closed"}`}>
+      <aside className="market-panel projects-list-panel">
+        <section className="page-header">
+          <div>
+            <span className="eyebrow">Account Projects</span>
+            <h2>Goals & Projects</h2>
+            <p>Turn any item into a tracked plan using your owned materials, recipes, vendors, and market prices.</p>
+          </div>
+        </section>
+
+        <section className="stat-grid projects-stat-grid">
+          <Metric icon={<Target />} label="Active Goals" value={activeGoals.length.toLocaleString()} />
+          <Metric icon={<CheckCircle2 />} label="Completed" value={completeGoals.length.toLocaleString()} tone={completeGoals.length ? "positive" : "muted"} />
+          <Metric
+            icon={<Boxes />}
+            label="Target Items Owned"
+            value={targetUnits ? `${ownedUnits.toLocaleString()} / ${targetUnits.toLocaleString()}` : "No targets"}
+          />
+        </section>
+
+        <section className="surface project-add-surface">
+          <label className="search-box">
+            <Search />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Add an item as a goal" />
+          </label>
+          {searchResults.length ? (
+            <div className="project-search-results">
+              {searchResults.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    const goal = addGoal(item);
+                    setSelectedGoalId(goal?.id ?? null);
+                    setQuery("");
+                  }}
+                >
+                  <ItemIcon item={item} />
+                  <span>
+                    <ItemGradeName name={item.name} rarity={item.rarity} />
+                    <small>{formatItemTypeLabel(item.type)}</small>
+                  </span>
+                  <Plus />
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </section>
+
+        <div className="segmented-control project-status-filter" aria-label="Filter project status">
+          {(["active", "paused", "complete", "all"] as const).map((status) => (
+            <button
+              key={status}
+              type="button"
+              className={statusFilter === status ? "active" : ""}
+              onClick={() => setStatusFilter(status)}
+            >
+              {status === "all" ? "All" : status[0].toUpperCase() + status.slice(1)}
+            </button>
+          ))}
+        </div>
+
+        <section className="surface project-list-surface">
+          {filteredGoals.length ? (
+            <div className="project-list">
+              {filteredGoals.map((goal) => {
+                const item = catalogById.get(goal.itemId) ?? getStoredItem(goal.itemId);
+                const owned = accountSnapshot?.holdings.get(goal.itemId) ?? 0;
+                const percent = Math.min(100, Math.round((owned / Math.max(1, goal.quantity)) * 100));
+                return (
+                  <button
+                    key={goal.id}
+                    type="button"
+                    className={selectedGoal?.id === goal.id ? "active" : ""}
+                    onClick={() => setSelectedGoalId(goal.id)}
+                  >
+                    <ItemIcon item={item ?? { id: goal.itemId, name: goal.itemName, icon: goal.icon }} />
+                    <span className="project-row-copy">
+                      <ItemGradeName name={goal.itemName} rarity={goal.rarity} />
+                      <small>{goal.quantity.toLocaleString()} target · {owned.toLocaleString()} owned</small>
+                      <span className="project-progress-track"><span style={{ width: `${percent}%` }} /></span>
+                    </span>
+                    <strong>{percent}%</strong>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="empty-detail inline-empty">
+              <Target />
+              <h2>No projects in this view</h2>
+              <p>Search above or use the target button on any item detail page.</p>
+            </div>
+          )}
+        </section>
+      </aside>
+
+      <MarketSplitHandle />
+
+      {selectedGoal ? (
+        <section className="detail-panel project-detail-panel">
+          <ProjectGoalDetail
+            goal={selectedGoal}
+            item={catalogById.get(selectedGoal.itemId) ?? getStoredItem(selectedGoal.itemId) ?? null}
+            catalog={catalog}
+            accountSnapshot={accountSnapshot}
+            onUpdate={(updates) => updateGoal(selectedGoal.id, updates)}
+            onRemove={() => removeGoal(selectedGoal.id)}
+            onOpenItem={onOpenItem}
+            onOpenExplorer={onOpenExplorer}
+          />
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function ProjectGoalDetail({
+  goal,
+  item,
+  catalog,
+  accountSnapshot,
+  onUpdate,
+  onRemove,
+  onOpenItem,
+  onOpenExplorer,
+}: {
+  goal: ProjectGoal;
+  item: Gw2Item | MarketItem | null;
+  catalog: MarketItem[];
+  accountSnapshot: AccountSnapshot | null;
+  onUpdate: (updates: Partial<Pick<ProjectGoal, "quantity" | "strategy" | "status" | "note">>) => void;
+  onRemove: () => void;
+  onOpenItem: (item: Gw2Item) => void;
+  onOpenExplorer: (item: Gw2Item) => void;
+}) {
+  const [recipeState, setRecipeState] = useState<LoadState>("idle");
+  const [goalRecipes, setGoalRecipes] = useState<RecipeGuide[]>([]);
+  const [acquisition, setAcquisition] = useState<WikiItemAcquisition | null>(null);
+  const [selectedRecipeIndex, setSelectedRecipeIndex] = useState(0);
+  const marketItem = item ? buildMarketItemForDetail(item) : null;
+  const owned = accountSnapshot?.holdings.get(goal.itemId) ?? 0;
+  const directProgress = Math.min(1, owned / Math.max(1, goal.quantity));
+
+  useEffect(() => {
+    let ignore = false;
+    setRecipeState("loading");
+    setGoalRecipes([]);
+    setAcquisition(null);
+
+    Promise.all([
+      loadRecipesForOutput(goal.itemId, accountSnapshot?.holdings).catch(() => []),
+      loadWikiItemAcquisition(goal.itemName).catch(() => null),
+    ]).then(([loadedRecipes, loadedAcquisition]) => {
+      if (ignore) return;
+      setGoalRecipes(loadedRecipes);
+      setAcquisition(loadedAcquisition);
+      setRecipeState("ready");
+    }).catch(() => {
+      if (!ignore) setRecipeState("error");
+    });
+
+    return () => {
+      ignore = true;
+    };
+  }, [accountSnapshot, goal.itemId, goal.itemName]);
+
+  const recommendedRecipe = useMemo(
+    () => selectGoalRecipe(goalRecipes, goal.strategy),
+    [goal.strategy, goalRecipes],
+  );
+  const selectedRecipe = goalRecipes[selectedRecipeIndex] ?? recommendedRecipe;
+  const runs = selectedRecipe
+    ? Math.max(1, Math.ceil(goal.quantity / Math.max(1, selectedRecipe.recipe.output_item_count)))
+    : 0;
+  const recipeCoverage = selectedRecipe?.ownedCoverage ?? 0;
+  const progress = Math.max(directProgress, recipeCoverage);
+  const remainingCount = Math.max(0, goal.quantity - owned);
+  const marketPrice = "price" in (item ?? {}) ? (item as MarketItem).price.sells.unit_price : getStoredPrice(goal.itemId)?.sells.unit_price ?? 0;
+  const marketTotal = marketPrice * remainingCount;
+  const recipeTotal = selectedRecipe ? selectedRecipe.marketCost * runs : 0;
+  const personalTotal = selectedRecipe ? selectedRecipe.personalCost * runs : 0;
+  const recipeUnlocked = selectedRecipe
+    ? selectedRecipe.recipe.source === "wiki" || selectedRecipe.recipe.flags.includes("AutoLearned") || Boolean(accountSnapshot?.recipes.includes(selectedRecipe.recipe.id))
+    : false;
+
+  useEffect(() => {
+    const recommendedIndex = recommendedRecipe ? goalRecipes.indexOf(recommendedRecipe) : 0;
+    setSelectedRecipeIndex(Math.max(0, recommendedIndex));
+  }, [goal.itemId, goal.strategy, goalRecipes, recommendedRecipe]);
+
+  return (
+    <div className="project-detail">
+      <section className="surface project-detail-header">
+        <ItemIcon item={item ?? { id: goal.itemId, name: goal.itemName, icon: goal.icon }} priority />
+        <div>
+          <span className="eyebrow">{goal.status} project</span>
+          <h2><ItemGradeName name={goal.itemName} rarity={goal.rarity} /></h2>
+          <p>{goal.quantity.toLocaleString()} target · {owned.toLocaleString()} currently owned</p>
+        </div>
+        <div className="project-detail-actions">
+          {item ? (
+            <button className="icon-button" type="button" onClick={() => onOpenItem(item)} title="Open full item detail">
+              <PackageSearch />
+              <span>Item</span>
+            </button>
+          ) : null}
+          <button className="icon-button danger" type="button" onClick={onRemove} title="Remove project">
+            <X />
+            <span>Remove</span>
+          </button>
+        </div>
+      </section>
+
+      <section className="surface project-progress-surface">
+        <div className="project-progress-heading">
+          <div>
+            <span className="eyebrow">Project Readiness</span>
+            <strong>{Math.round(progress * 100)}%</strong>
+          </div>
+          <span>{directProgress >= 1 ? "Target item owned" : selectedRecipe ? "Includes owned recipe materials" : "Direct target progress"}</span>
+        </div>
+        <span className="project-progress-track large"><span style={{ width: `${Math.round(progress * 100)}%` }} /></span>
+        <div className="project-cost-summary">
+          <Metric icon={<ShoppingCart />} label="Buy Remaining" value={marketTotal > 0 ? <Money value={marketTotal} /> : "Unavailable"} />
+          <Metric icon={<Hammer />} label="Full Recipe" value={recipeTotal > 0 ? <Money value={recipeTotal} /> : "No recipe"} />
+          <Metric icon={<Boxes />} label="Missing Recipe Cost" value={personalTotal > 0 ? <Money value={personalTotal} /> : selectedRecipe ? "Owned" : "No recipe"} />
+        </div>
+      </section>
+
+      <section className="surface project-controls-surface">
+        <div className="project-control-row">
+          <label>
+            Quantity
+            <input type="number" min={1} value={goal.quantity} onChange={(event) => onUpdate({ quantity: Number(event.target.value) || 1 })} />
+          </label>
+          <label>
+            Status
+            <select value={goal.status} onChange={(event) => onUpdate({ status: event.target.value as GoalStatus })}>
+              <option value="active">Active</option>
+              <option value="paused">Paused</option>
+              <option value="complete">Complete</option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <span className="control-label">Route preference</span>
+          <div className="segmented-control goal-strategy-control">
+            {(["balanced", "cheapest", "fastest", "owned"] as GoalStrategy[]).map((strategy) => (
+              <button key={strategy} type="button" className={goal.strategy === strategy ? "active" : ""} onClick={() => onUpdate({ strategy })}>
+                {strategy === "owned" ? "Use Owned" : strategy[0].toUpperCase() + strategy.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <label>
+          Notes
+          <textarea value={goal.note} onChange={(event) => onUpdate({ note: event.target.value })} placeholder="Optional reminder or milestone" />
+        </label>
+      </section>
+
+      <section className="surface project-checklist-surface">
+        <div className="section-title">
+          <ListChecks />
+          <h3>Project Checklist</h3>
+        </div>
+        <ProjectCheckRow complete={directProgress >= 1} title={`Own ${goal.quantity.toLocaleString()} ${goal.itemName}`} detail={`${owned.toLocaleString()} available across the account`} />
+        {selectedRecipe ? (
+          <>
+            <ProjectCheckRow complete={recipeUnlocked} title="Recipe available" detail={recipeUnlocked ? getRecipeSourceLabel(selectedRecipe.recipe) : "Recipe is not unlocked on this account"} />
+            {selectedRecipe.ingredients.map((ingredient) => {
+              const needed = ingredient.count * runs;
+              const ingredientOwned = accountSnapshot?.holdings.get(ingredient.item_id) ?? ingredient.ownedCount;
+              return (
+                <ProjectCheckRow
+                  key={`${selectedRecipe.recipe.id}-${ingredient.item_id}`}
+                  complete={ingredientOwned >= needed}
+                  title={`${needed.toLocaleString()} ${ingredient.item?.name ?? `Item ${ingredient.item_id}`}`}
+                  detail={`${ingredientOwned.toLocaleString()} owned · ${Math.max(0, needed - ingredientOwned).toLocaleString()} remaining`}
+                  item={ingredient.item}
+                  onOpenItem={onOpenItem}
+                />
+              );
+            })}
+          </>
+        ) : recipeState === "loading" ? (
+          <SkeletonRows />
+        ) : (
+          <ProjectCheckRow complete={false} title="Choose an acquisition route" detail="No direct crafting or Mystic Forge recipe is currently modeled." />
+        )}
+        {acquisition?.vendorOffers.slice(0, 3).map((offer) => (
+          <ProjectCheckRow
+            key={`${offer.vendor}-${offer.costText}`}
+            complete={false}
+            title={`Vendor: ${offer.vendor}`}
+            detail={`${offer.costText}${offer.zone ? ` · ${offer.zone}` : ""}`}
+            href={offer.vendorUrl ?? offer.sourceUrl}
+          />
+        ))}
+        {acquisition?.acquisitionNotes
+          .filter((note) => /daily|weekly|once per|limit|time.?gat/i.test(note))
+          .slice(0, 4)
+          .map((note) => (
+            <ProjectCheckRow
+              key={note}
+              complete={false}
+              title="Time-gated requirement"
+              detail={note}
+              href={acquisition.sourceUrl}
+            />
+          ))}
+      </section>
+
+      {marketItem && goalRecipes.length ? (
+        <section className="project-acquisition-map">
+          <div className="project-map-actions">
+            <div>
+              <span className="eyebrow">Full Dependency Route</span>
+              <h3>Acquisition Map</h3>
+            </div>
+            <button className="icon-button" type="button" onClick={() => onOpenExplorer(marketItem)}>
+              <GitBranch />
+              <span>Open Explorer</span>
+            </button>
+          </div>
+          <IngredientMindMap
+            item={marketItem}
+            recipes={goalRecipes}
+            selectedRecipeIndex={selectedRecipeIndex}
+            onSelectRecipeIndex={setSelectedRecipeIndex}
+            accountSnapshot={accountSnapshot}
+            wikiGuide={null}
+            onOpenDetail={onOpenItem}
+          />
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function ProjectCheckRow({
+  complete,
+  title,
+  detail,
+  item,
+  onOpenItem,
+  href,
+}: {
+  complete: boolean;
+  title: string;
+  detail: string;
+  item?: Gw2Item;
+  onOpenItem?: (item: Gw2Item) => void;
+  href?: string;
+}) {
+  const content = (
+    <>
+      <span className={`project-check-icon ${complete ? "complete" : ""}`}>
+        {complete ? <CheckCircle2 /> : <Clock />}
+      </span>
+      {item ? <ItemIcon item={item} /> : null}
+      <span>
+        <strong>{title}</strong>
+        <small>{detail}</small>
+      </span>
+      {href ? <ExternalLink /> : null}
+    </>
+  );
+
+  if (href) {
+    return <a className="project-check-row" href={href} target="_blank" rel="noreferrer">{content}</a>;
+  }
+
+  if (item && onOpenItem) {
+    return <button className="project-check-row" type="button" onClick={() => onOpenItem(item)}>{content}</button>;
+  }
+
+  return <div className="project-check-row">{content}</div>;
+}
+
+function selectGoalRecipe(recipes: RecipeGuide[], strategy: GoalStrategy): RecipeGuide | null {
+  if (!recipes.length) return null;
+
+  return [...recipes].sort((left, right) => {
+    if (strategy === "cheapest") return left.marketCost - right.marketCost;
+    if (strategy === "owned") return left.personalCost - right.personalCost;
+    if (strategy === "fastest") {
+      const leftDepth = left.ingredients.length + (isMysticForgeRecipe(left.recipe) ? 2 : 0);
+      const rightDepth = right.ingredients.length + (isMysticForgeRecipe(right.recipe) ? 2 : 0);
+      return leftDepth - rightDepth || left.personalCost - right.personalCost;
+    }
+
+    const leftScore = left.personalCost * 0.7 + left.marketCost * 0.3;
+    const rightScore = right.personalCost * 0.7 + right.marketCost * 0.3;
+    return leftScore - rightScore;
+  })[0];
+}
+
+function DailyPlannerPage({
+  apiKey,
+  accountSnapshot,
+  onOpenPage,
+}: {
+  apiKey: string;
+  accountSnapshot: AccountSnapshot | null;
+  onOpenPage: (page: ActivePage) => void;
+}) {
+  const { goals } = useProjectGoals();
+  const [checks, setChecks] = useState<Set<string>>(() => readDailyChecks());
+  const [vault, setVault] = useState<WizardVaultSnapshot | null>(null);
+  const [vaultState, setVaultState] = useState<LoadState>("idle");
+  const [now, setNow] = useState(Date.now());
+  const dateKey = getDailyStorageKey(new Date(now));
+  const activeGoals = goals.filter((goal) => goal.status === "active");
+  const dailyObjectives = vault?.sections.find((section) => section.id === "daily")?.objectives ?? [];
+  const incompleteObjectives = dailyObjectives.filter((objective) => !objective.claimed);
+  const upcomingMetas = META_SCHEDULES
+    .filter((event) => event.mode === "fixed")
+    .map((event) => ({ event, timing: getMetaTiming(event, now) }))
+    .sort((left, right) => left.timing.nextStart - right.timing.nextStart)
+    .slice(0, 3);
+  const projectTasks = activeGoals.slice(0, 5).map((goal) => {
+    const owned = accountSnapshot?.holdings.get(goal.itemId) ?? 0;
+    const remaining = Math.max(0, goal.quantity - owned);
+    return {
+      id: `goal:${goal.id}`,
+      title: goal.itemName,
+      detail: remaining > 0
+        ? `${remaining.toLocaleString()} target items remain; open the project for its next material step.`
+        : "Target quantity is owned; review and complete the project.",
+      page: "projects" as ActivePage,
+    };
+  });
+  const vaultTasks = incompleteObjectives.slice(0, 6).map((objective) => ({
+    id: `vault:${objective.id}`,
+    title: objective.title,
+    detail: objective.complete
+      ? `${objective.current ?? 0} / ${objective.complete} · ${objective.acclaim} Astral Acclaim`
+      : `${objective.acclaim} Astral Acclaim`,
+    page: "wizard-vault" as ActivePage,
+  }));
+  const routineTasks = [
+    {
+      id: "routine:account",
+      title: accountSnapshot ? "Account snapshot reviewed" : "Load your account snapshot",
+      detail: accountSnapshot ? "Inventory, wallet, recipes, and achievements are available to the planner." : "Required for personal project progress and owned-material decisions.",
+      page: "account" as ActivePage,
+    },
+    {
+      id: "routine:vendors",
+      title: "Review limited vendor purchases",
+      detail: "Check project currencies and daily-limited purchases before the next reset.",
+      page: "currencies" as ActivePage,
+    },
+    {
+      id: "routine:farm",
+      title: "Record one farming session",
+      detail: "Use Farming Tracker so today has a comparable gold-per-hour result.",
+      page: "farming-tracker" as ActivePage,
+    },
+  ];
+  const allTasks = [...projectTasks, ...vaultTasks, ...routineTasks];
+  const completedCount = allTasks.filter((task) => checks.has(task.id)).length;
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    setChecks(readDailyChecks(dateKey));
+  }, [dateKey]);
+
+  useEffect(() => {
+    let ignore = false;
+    setVaultState("loading");
+    loadWizardVault(apiKey)
+      .then((snapshot) => {
+        if (ignore) return;
+        setVault(snapshot);
+        setVaultState("ready");
+      })
+      .catch(() => {
+        if (!ignore) setVaultState("error");
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [apiKey]);
+
+  function toggleCheck(taskId: string) {
+    setChecks((current) => {
+      const next = new Set(current);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      writeDailyChecks(next, dateKey);
+      return next;
+    });
+  }
+
+  return (
+    <div className="focused-page daily-planner-page">
+      <section className="page-header">
+        <div>
+          <span className="eyebrow">Personal Command Center</span>
+          <h2>Daily Planner</h2>
+          <p>One practical view of account tasks, project progress, Wizard&apos;s Vault objectives, and upcoming metas.</p>
+        </div>
+        <div className="daily-date-block">
+          <CalendarDays />
+          <span>
+            <strong>{new Date(now).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</strong>
+            <small>Daily reset checklist</small>
+          </span>
+        </div>
+      </section>
+
+      <section className="stat-grid daily-stat-grid">
+        <Metric icon={<CheckCircle2 />} label="Tasks Complete" value={`${completedCount} / ${allTasks.length}`} tone={completedCount === allTasks.length && allTasks.length ? "positive" : "default"} />
+        <Metric icon={<Target />} label="Active Projects" value={activeGoals.length.toLocaleString()} />
+        <Metric icon={<Coins />} label="Vault Tasks" value={vaultState === "loading" ? "Loading" : incompleteObjectives.length.toLocaleString()} />
+        <Metric icon={<Clock />} label="Next Fixed Meta" value={upcomingMetas[0] ? formatCountdown(upcomingMetas[0].timing.nextStart - now) : "None"} />
+      </section>
+
+      <div className="daily-planner-grid">
+        <section className="surface daily-task-section">
+          <div className="section-title">
+            <ListChecks />
+            <h3>Today&apos;s Actions</h3>
+          </div>
+          {allTasks.map((task) => (
+            <div key={task.id} className={`daily-task-row ${checks.has(task.id) ? "complete" : ""}`}>
+              <button type="button" className="daily-check-button" onClick={() => toggleCheck(task.id)} aria-label={checks.has(task.id) ? `Mark ${task.title} incomplete` : `Mark ${task.title} complete`}>
+                {checks.has(task.id) ? <CheckCircle2 /> : <span />}
+              </button>
+              <span>
+                <strong>{task.title}</strong>
+                <small>{task.detail}</small>
+              </span>
+              <button type="button" className="icon-button compact" onClick={() => onOpenPage(task.page)} title={`Open ${task.title}`}>
+                <ChevronRight />
+              </button>
+            </div>
+          ))}
+        </section>
+
+        <section className="surface daily-meta-section">
+          <div className="section-title">
+            <Route />
+            <h3>Upcoming Metas</h3>
+          </div>
+          {upcomingMetas.map(({ event, timing }) => (
+            <article key={event.id} className="daily-meta-row">
+              <span className={timing.active ? "meta-live-dot active" : "meta-live-dot"} />
+              <div>
+                <strong>{event.title}</strong>
+                <small>{event.map} · {timing.active ? `${formatCountdown(timing.endAt - now)} remaining` : `starts in ${formatCountdown(timing.nextStart - now)}`}</small>
+              </div>
+              {event.pageId ? (
+                <button type="button" className="icon-button compact" onClick={() => onOpenPage(event.pageId!)} title={`Open ${event.title} guide`}>
+                  <ChevronRight />
+                </button>
+              ) : null}
+            </article>
+          ))}
+          <button type="button" className="icon-button daily-open-train" onClick={() => onOpenPage("meta-train")}>
+            <Route />
+            <span>Plan Meta Train</span>
+          </button>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function MetaTrainPlannerPage({ onOpenPage }: { onOpenPage: (page: ActivePage) => void }) {
+  const [now, setNow] = useState(Date.now());
+  const [stops, setStops] = useState<PlannedMetaStop[]>(() => {
+    const stored = readPlannedMetaStops();
+    return stored.length
+      ? stored
+      : META_SCHEDULES.map((event, index) => ({
+          eventId: event.id,
+          enabled: event.id === "palawadan" || event.id === "oil-floes" || event.id === "dragonfall",
+          order: index,
+        }));
+  });
+  const scheduleById = useMemo(() => new Map(META_SCHEDULES.map((event) => [event.id, event])), []);
+  const orderedStops = [...stops].sort((left, right) => left.order - right.order);
+  const enabledStops = orderedStops.filter((stop) => stop.enabled);
+  const conflictIds = getMetaScheduleConflictIds(enabledStops, scheduleById, now);
+
+  useEffect(() => {
+    writePlannedMetaStops(stops);
+  }, [stops]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  function toggleStop(eventId: string) {
+    setStops((current) => current.map((stop) => stop.eventId === eventId ? { ...stop, enabled: !stop.enabled } : stop));
+  }
+
+  function moveStop(eventId: string, direction: -1 | 1) {
+    setStops((current) => {
+      const ordered = [...current].sort((left, right) => left.order - right.order);
+      const index = ordered.findIndex((stop) => stop.eventId === eventId);
+      const swapIndex = index + direction;
+      if (index < 0 || swapIndex < 0 || swapIndex >= ordered.length) return current;
+      const next = [...ordered];
+      [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
+      return next.map((stop, order) => ({ ...stop, order }));
+    });
+  }
+
+  return (
+    <div className="focused-page meta-train-page">
+      <section className="page-header">
+        <div>
+          <span className="eyebrow">Open World Schedule</span>
+          <h2>Meta Train Planner</h2>
+          <p>Arrange the metas you care about, follow reliable UTC schedules, and keep instance-driven routes clearly separated.</p>
+        </div>
+        <div className="meta-clock">
+          <Clock />
+          <span>
+            <strong>{new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</strong>
+            <small>{Intl.DateTimeFormat().resolvedOptions().timeZone}</small>
+          </span>
+        </div>
+      </section>
+
+      <section className="surface meta-train-timeline">
+        <div className="section-title">
+          <Route />
+          <h3>Your Train</h3>
+        </div>
+        {enabledStops.length ? (
+          <div className="meta-train-stops">
+            {enabledStops.map((stop, index) => {
+              const event = scheduleById.get(stop.eventId);
+              if (!event) return null;
+              const timing = getMetaTiming(event, now);
+              return (
+                <article key={stop.eventId} className={`${timing.active ? "active" : ""} ${conflictIds.has(event.id) ? "conflict" : ""}`}>
+                  <span className="meta-stop-index">{index + 1}</span>
+                  <div>
+                    <span className="eyebrow">{conflictIds.has(event.id) ? "Schedule conflict" : event.mode === "fixed" ? timing.active ? "Active now" : `In ${formatCountdown(timing.nextStart - now)}` : event.mode === "continuous" ? "Continuous" : "Instance state"}</span>
+                    <strong>{event.title}</strong>
+                    <small>{event.map} · {event.durationMinutes} min target</small>
+                  </div>
+                  <div className="meta-stop-actions">
+                    {event.waypoint ? <CopyableChatCode code={event.waypoint} /> : null}
+                    {event.pageId ? (
+                      <button type="button" className="icon-button compact" onClick={() => onOpenPage(event.pageId!)} title="Open guide">
+                        <BookOpen />
+                      </button>
+                    ) : null}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="empty-detail inline-empty">
+            <Route />
+            <h2>No stops selected</h2>
+            <p>Enable events below to build a train.</p>
+          </div>
+        )}
+      </section>
+
+      <section className="surface meta-schedule-library">
+        <div className="section-title">
+          <CalendarDays />
+          <h3>Schedule Library</h3>
+        </div>
+        <div className="meta-schedule-list">
+          {orderedStops.map((stop, index) => {
+            const event = scheduleById.get(stop.eventId);
+            if (!event) return null;
+            const timing = getMetaTiming(event, now);
+            return (
+              <article key={event.id} className={`${stop.enabled ? "enabled" : ""} ${conflictIds.has(event.id) ? "conflict" : ""}`}>
+                <button type="button" className={`meta-enable-toggle ${stop.enabled ? "active" : ""}`} onClick={() => toggleStop(event.id)} aria-pressed={stop.enabled} title={stop.enabled ? "Remove from train" : "Add to train"}>
+                  <span />
+                </button>
+                <div className="meta-schedule-copy">
+                  <strong>{event.title}</strong>
+                  <small>{event.map} · {event.note}</small>
+                </div>
+                <div className="meta-schedule-time">
+                  <strong>{event.mode === "fixed" ? timing.active ? "Active" : formatClockTime(timing.nextStart) : event.mode === "continuous" ? "Continuous" : "Instance"}</strong>
+                  <small>{event.mode === "fixed" ? timing.active ? `${formatCountdown(timing.endAt - now)} left` : formatCountdown(timing.nextStart - now) : "Check LFG"}</small>
+                </div>
+                <div className="meta-order-actions">
+                  <button type="button" onClick={() => moveStop(event.id, -1)} disabled={index === 0} aria-label={`Move ${event.title} earlier`} title="Move earlier"><ChevronLeft /></button>
+                  <button type="button" onClick={() => moveStop(event.id, 1)} disabled={index === orderedStops.length - 1} aria-label={`Move ${event.title} later`} title="Move later"><ChevronRight /></button>
+                </div>
+                <a className="icon-button compact" href={event.wikiUrl} target="_blank" rel="noreferrer" title="Open wiki schedule"><ExternalLink /></a>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function getMetaTiming(event: MetaScheduleDefinition, now: number) {
+  if (event.mode !== "fixed" || !event.cadenceMinutes || event.offsetMinutesUtc === undefined) {
+    return { active: false, previousStart: now, nextStart: now, endAt: now };
+  }
+
+  const minuteMs = 60_000;
+  const nowMinute = now / minuteMs;
+  const occurrence = Math.floor((nowMinute - event.offsetMinutesUtc) / event.cadenceMinutes);
+  const previousStart = (event.offsetMinutesUtc + occurrence * event.cadenceMinutes) * minuteMs;
+  const endAt = previousStart + event.durationMinutes * minuteMs;
+  const active = now >= previousStart && now < endAt;
+  const nextStart = active ? previousStart : previousStart + event.cadenceMinutes * minuteMs;
+  return { active, previousStart, nextStart, endAt };
+}
+
+function getMetaScheduleConflictIds(
+  stops: PlannedMetaStop[],
+  scheduleById: Map<string, MetaScheduleDefinition>,
+  now: number,
+): Set<string> {
+  const fixedEvents = stops
+    .map((stop) => scheduleById.get(stop.eventId))
+    .filter((event): event is MetaScheduleDefinition => Boolean(event && event.mode === "fixed"))
+    .map((event) => {
+      const timing = getMetaTiming(event, now);
+      const start = timing.active ? timing.previousStart : timing.nextStart;
+      return { event, start, end: start + event.durationMinutes * 60_000 };
+    });
+  const conflicts = new Set<string>();
+
+  for (let index = 0; index < fixedEvents.length; index += 1) {
+    for (let compareIndex = index + 1; compareIndex < fixedEvents.length; compareIndex += 1) {
+      const left = fixedEvents[index];
+      const right = fixedEvents[compareIndex];
+      if (left.start < right.end && right.start < left.end) {
+        conflicts.add(left.event.id);
+        conflicts.add(right.event.id);
+      }
+    }
+  }
+
+  return conflicts;
+}
+
+function formatCountdown(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(durationMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes.toString().padStart(2, "0")}m`;
+  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+function formatClockTime(time: number): string {
+  return new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function MarketAlertsPage({
+  catalog,
+  loadState,
+  alerts,
+  onAlertsChange,
+  onLoadMarket,
+  onOpenItem,
+}: {
+  catalog: MarketItem[];
+  loadState: LoadState;
+  alerts: PriceAlertRule[];
+  onAlertsChange: (alerts: PriceAlertRule[]) => void;
+  onLoadMarket: () => void;
+  onOpenItem: (item: MarketItem) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [selectedItem, setSelectedItem] = useState<MarketItem | null>(null);
+  const [metric, setMetric] = useState<PriceAlertMetric>("sell");
+  const [direction, setDirection] = useState<PriceAlertDirection>("below");
+  const [target, setTarget] = useState("");
+  const [history, setHistory] = useState<MarketHistoryPoint[]>([]);
+  const normalizedQuery = query.trim().toLowerCase();
+  const searchResults = normalizedQuery.length >= 2
+    ? catalog.filter((item) => `${item.name} ${item.rarity} ${item.type}`.toLowerCase().includes(normalizedQuery)).slice(0, 8)
+    : [];
+  const catalogById = useMemo(() => new Map(catalog.map((item) => [item.id, item])), [catalog]);
+  const historyByItem = useMemo(() => {
+    const grouped = new Map<number, MarketHistoryPoint[]>();
+    for (const point of history) {
+      const existing = grouped.get(point.itemId) ?? [];
+      existing.push(point);
+      grouped.set(point.itemId, existing);
+    }
+    return grouped;
+  }, [history]);
+  const triggeredCount = alerts.filter((alert) => alert.wasMatching).length;
+
+  useEffect(() => {
+    let ignore = false;
+    readAllMarketHistory().then((points) => {
+      if (!ignore) setHistory(points);
+    }).catch(() => undefined);
+    return () => {
+      ignore = true;
+    };
+  }, [catalog.length]);
+
+  function chooseItem(item: MarketItem) {
+    setSelectedItem(item);
+    setQuery(item.name);
+    const draft: PriceAlertRule = {
+      id: "draft",
+      itemId: item.id,
+      itemName: item.name,
+      icon: item.icon,
+      rarity: item.rarity,
+      metric,
+      direction,
+      target: 0,
+      enabled: true,
+      createdAt: Date.now(),
+    };
+    setTarget(String(getPriceAlertCurrentValue(draft, item)));
+  }
+
+  function createAlert() {
+    if (!selectedItem) return;
+    const numericTarget = Math.max(0, Math.round(Number(target)));
+    if (!numericTarget) return;
+
+    const alert: PriceAlertRule = {
+      id: createPlanningId("alert"),
+      itemId: selectedItem.id,
+      itemName: selectedItem.name,
+      icon: selectedItem.icon,
+      rarity: selectedItem.rarity,
+      metric,
+      direction,
+      target: numericTarget,
+      enabled: true,
+      createdAt: Date.now(),
+      wasMatching: false,
+    };
+    onAlertsChange([alert, ...alerts]);
+    setSelectedItem(null);
+    setQuery("");
+    setTarget("");
+  }
+
+  return (
+    <div className="focused-page market-alerts-page">
+      <section className="page-header">
+        <div>
+          <span className="eyebrow">Local Market Watch</span>
+          <h2>Market Alerts</h2>
+          <p>Watch buy, sell, or spread thresholds using the same locally recorded history shown on item detail pages.</p>
+        </div>
+        {!catalog.length ? (
+          <button type="button" className="icon-button primary" onClick={onLoadMarket} disabled={loadState === "loading"}>
+            {loadState === "loading" ? <Loader2 className="spin" /> : <PackageSearch />}
+            <span>{loadState === "loading" ? "Loading Market" : "Load Market"}</span>
+          </button>
+        ) : null}
+      </section>
+
+      <section className="stat-grid alert-stat-grid">
+        <Metric icon={<Bell />} label="Active Alerts" value={alerts.filter((alert) => alert.enabled).length.toLocaleString()} />
+        <Metric icon={<CheckCircle2 />} label="Currently Matching" value={triggeredCount.toLocaleString()} tone={triggeredCount ? "positive" : "muted"} />
+        <Metric icon={<Database />} label="History Samples" value={history.length.toLocaleString()} />
+      </section>
+
+      <section className="surface alert-builder">
+        <div className="section-title">
+          <Plus />
+          <h3>Create Alert</h3>
+        </div>
+        <div className="alert-builder-grid">
+          <div className="alert-item-search">
+            <label className="search-box">
+              <Search />
+              <input value={query} onChange={(event) => { setQuery(event.target.value); setSelectedItem(null); }} placeholder="Search Trading Post item" />
+            </label>
+            {searchResults.length && !selectedItem ? (
+              <div className="project-search-results alert-search-results">
+                {searchResults.map((item) => (
+                  <button key={item.id} type="button" onClick={() => chooseItem(item)}>
+                    <ItemIcon item={item} />
+                    <span>
+                      <ItemGradeName name={item.name} rarity={item.rarity} />
+                      <small><Money value={item.price.sells.unit_price} /> lowest sell</small>
+                    </span>
+                    <Plus />
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <label>
+            Watch
+            <select
+              value={metric}
+              onChange={(event) => {
+                const nextMetric = event.target.value as PriceAlertMetric;
+                setMetric(nextMetric);
+                if (selectedItem) setTarget(String(getPriceAlertCurrentValue({ metric: nextMetric } as PriceAlertRule, selectedItem)));
+              }}
+            >
+              <option value="sell">Lowest sell</option>
+              <option value="buy">Highest buy</option>
+              <option value="spread">Net spread</option>
+            </select>
+          </label>
+          <label>
+            Direction
+            <select value={direction} onChange={(event) => setDirection(event.target.value as PriceAlertDirection)}>
+              <option value="below">At or below</option>
+              <option value="above">At or above</option>
+            </select>
+          </label>
+          <label>
+            Target (copper)
+            <input type="number" min={1} value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Price in copper" />
+          </label>
+          <button type="button" className="icon-button primary" onClick={createAlert} disabled={!selectedItem || !Number(target)}>
+            <Bell />
+            <span>Add Alert</span>
+          </button>
+        </div>
+        {selectedItem ? (
+          <div className="alert-selected-item">
+            <ItemIcon item={selectedItem} />
+            <span><ItemGradeName name={selectedItem.name} rarity={selectedItem.rarity} /><small>Current {getPriceAlertMetricLabel(metric).toLowerCase()}: <Money value={getPriceAlertCurrentValue({ metric } as PriceAlertRule, selectedItem)} /></small></span>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="surface alert-list-surface">
+        <div className="section-title">
+          <Bell />
+          <h3>Watchlist</h3>
+        </div>
+        {alerts.length ? (
+          <div className="alert-list">
+            {alerts.map((alert) => {
+              const item = catalogById.get(alert.itemId);
+              const currentValue = item ? getPriceAlertCurrentValue(alert, item) : 0;
+              const trend = getPriceAlertTrend(historyByItem.get(alert.itemId) ?? [], alert.metric);
+              const matching = item ? (alert.direction === "above" ? currentValue >= alert.target : currentValue <= alert.target) : false;
+              return (
+                <article key={alert.id} className={`${alert.enabled ? "" : "disabled"} ${matching ? "matching" : ""}`}>
+                  <button type="button" className={`meta-enable-toggle ${alert.enabled ? "active" : ""}`} onClick={() => onAlertsChange(alerts.map((entry) => entry.id === alert.id ? { ...entry, enabled: !entry.enabled, wasMatching: false } : entry))} aria-pressed={alert.enabled} title={alert.enabled ? "Disable alert" : "Enable alert"}><span /></button>
+                  <button type="button" className="alert-item-button" onClick={() => item && onOpenItem(item)} disabled={!item}>
+                    <ItemIcon item={item ?? { id: alert.itemId, name: alert.itemName, icon: alert.icon }} />
+                    <span><ItemGradeName name={alert.itemName} rarity={alert.rarity} /><small>{getPriceAlertMetricLabel(alert.metric)} {alert.direction} <Money value={alert.target} /></small></span>
+                  </button>
+                  <div className="alert-current-value">
+                    <strong>{item ? <Money value={currentValue} /> : "Load market"}</strong>
+                    <small className={trend > 0 ? "profit" : trend < 0 ? "loss" : ""}>{trend ? `${trend > 0 ? "+" : ""}${trend.toFixed(1)}% history` : "No movement yet"}</small>
+                  </div>
+                  <span className={`alert-state ${matching ? "matching" : ""}`}>{matching ? "Triggered" : "Watching"}</span>
+                  <button type="button" className="icon-button compact danger" onClick={() => onAlertsChange(alerts.filter((entry) => entry.id !== alert.id))} title="Delete alert"><X /></button>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="empty-detail inline-empty">
+            <Bell />
+            <h2>No alerts yet</h2>
+            <p>Create a rule above to watch local market snapshots.</p>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function getPriceAlertCurrentValue(alert: Pick<PriceAlertRule, "metric">, item: MarketItem): number {
+  if (alert.metric === "buy") return item.price.buys.unit_price;
+  if (alert.metric === "spread") return Math.max(0, getMarketNetSpread(item));
+  return item.price.sells.unit_price;
+}
+
+function getPriceAlertMetricLabel(metric: PriceAlertMetric): string {
+  if (metric === "buy") return "Highest buy";
+  if (metric === "spread") return "Net spread";
+  return "Lowest sell";
+}
+
+function getPriceAlertTrend(points: MarketHistoryPoint[], metric: PriceAlertMetric): number {
+  if (points.length < 2) return 0;
+  const sorted = [...points].sort((left, right) => new Date(left.recordedAt).getTime() - new Date(right.recordedAt).getTime());
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  const value = (point: MarketHistoryPoint) => {
+    if (metric === "buy") return point.buyPrice;
+    if (metric === "spread") return Math.max(0, Math.floor(point.sellPrice * 0.85) - point.buyPrice);
+    return point.sellPrice;
+  };
+  const start = value(first);
+  return start > 0 ? ((value(last) - start) / start) * 100 : 0;
+}
+
+async function showDesktopNotification(title: string, body: string): Promise<boolean> {
+  if (window.gw2Desktop?.showNotification) {
+    return window.gw2Desktop.showNotification({ title, body }).catch(() => false);
+  }
+
+  if ("Notification" in window && Notification.permission === "granted") {
+    new Notification(title, { body });
+    return true;
+  }
+  return false;
+}
+
+function AcquisitionExplorerPage({
+  catalog,
+  loadState,
+  selectedItem,
+  recipes,
+  detailState,
+  accountSnapshot,
+  onLoadMarket,
+  onSelectItem,
+  onClose,
+}: {
+  catalog: MarketItem[];
+  loadState: LoadState;
+  selectedItem: MarketItem | null;
+  recipes: RecipeGuide[];
+  detailState: LoadState;
+  accountSnapshot: AccountSnapshot | null;
+  onLoadMarket: () => void;
+  onSelectItem: (item: MarketItem) => void;
+  onClose: () => void;
+}) {
+  const { goals } = useProjectGoals();
+  const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
+  const goalIds = useMemo(() => new Set(goals.map((goal) => goal.itemId)), [goals]);
+  const visibleItems = useMemo(() => {
+    const normalized = deferredQuery.trim().toLowerCase();
+    if (!normalized) {
+      return catalog.filter((item) => goalIds.has(item.id)).slice(0, 120);
+    }
+    return catalog
+      .filter((item) => `${item.name} ${item.rarity} ${item.type}`.toLowerCase().includes(normalized))
+      .slice(0, 160);
+  }, [catalog, deferredQuery, goalIds]);
+
+  return (
+    <div className={`market-workspace acquisition-explorer-workspace ${selectedItem ? "" : "detail-closed"}`}>
+      <aside className="market-panel acquisition-list-panel">
+        <section className="page-header">
+          <div>
+            <span className="eyebrow">Universal Item Routes</span>
+            <h2>Acquisition Explorer</h2>
+            <p>Trace crafted, Mystic Forged, vendor, market, and account-owned paths through one recursive dependency map.</p>
+          </div>
+          {!catalog.length ? (
+            <button type="button" className="icon-button primary" onClick={onLoadMarket} disabled={loadState === "loading"}>
+              {loadState === "loading" ? <Loader2 className="spin" /> : <PackageSearch />}
+              <span>{loadState === "loading" ? "Loading" : "Load Items"}</span>
+            </button>
+          ) : null}
+        </section>
+        <label className="search-box acquisition-search">
+          <Search />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search an item to trace" />
+        </label>
+        <section className="surface acquisition-item-list">
+          {!query.trim() && goals.length ? (
+            <div className="acquisition-list-caption"><Target /><span>Showing project items</span></div>
+          ) : null}
+          {visibleItems.length ? visibleItems.map((item) => (
+            <button key={item.id} type="button" className={selectedItem?.id === item.id ? "active" : ""} onClick={() => onSelectItem(item)}>
+              <ItemIcon item={item} />
+              <span>
+                <ItemGradeName name={item.name} rarity={item.rarity} />
+                <small>{formatItemTypeLabel(item.type)} · {hasTradingPostPrice(item) ? <Money value={item.price.sells.unit_price} /> : "Account item"}</small>
+              </span>
+              <GitBranch />
+            </button>
+          )) : (
+            <div className="empty-detail inline-empty">
+              <Search />
+              <h2>{catalog.length ? "Search for an item" : "Market catalog not loaded"}</h2>
+              <p>{catalog.length ? "Project items appear here automatically, or search the full catalog." : "Load item data to explore acquisition routes."}</p>
+            </div>
+          )}
+        </section>
+      </aside>
+
+      <MarketSplitHandle />
+
+      {selectedItem ? (
+        <section className="detail-panel acquisition-detail-panel">
+          <AcquisitionExplorerDetail
+            item={selectedItem}
+            recipes={recipes}
+            detailState={detailState}
+            accountSnapshot={accountSnapshot}
+            onClose={onClose}
+            onSelectItem={(item) => onSelectItem(buildMarketItemForDetail(item))}
+          />
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function AcquisitionExplorerDetail({
+  item,
+  recipes,
+  detailState,
+  accountSnapshot,
+  onClose,
+  onSelectItem,
+}: {
+  item: MarketItem;
+  recipes: RecipeGuide[];
+  detailState: LoadState;
+  accountSnapshot: AccountSnapshot | null;
+  onClose: () => void;
+  onSelectItem: (item: Gw2Item) => void;
+}) {
+  const { addGoal, getGoalForItem } = useProjectGoals();
+  const [selectedRecipeIndex, setSelectedRecipeIndex] = useState(0);
+  const [acquisition, setAcquisition] = useState<WikiItemAcquisition | null>(null);
+  const [acquisitionState, setAcquisitionState] = useState<LoadState>("idle");
+  const owned = accountSnapshot?.holdings.get(item.id) ?? 0;
+  const goal = getGoalForItem(item.id);
+
+  useEffect(() => {
+    setSelectedRecipeIndex(0);
+    let ignore = false;
+    setAcquisitionState("loading");
+    loadWikiItemAcquisition(item.name).then((result) => {
+      if (ignore) return;
+      setAcquisition(result);
+      setAcquisitionState("ready");
+    }).catch(() => {
+      if (!ignore) setAcquisitionState("error");
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [item.id, item.name]);
+
+  const bestRecipe = recipes[selectedRecipeIndex] ?? recipes[0] ?? null;
+  const vendorOffer = getBestVendorOffer(acquisition);
+  const marketCost = hasTradingPostPrice(item) ? item.price.sells.unit_price : 0;
+
+  return (
+    <div className="acquisition-explorer-detail">
+      <section className="item-title-row acquisition-title-row">
+        <ItemIcon item={item} priority />
+        <div>
+          <span className={`rarity rarity-${item.rarity.toLowerCase()}`}>{item.rarity}</span>
+          <h2>{item.name}</h2>
+          <p>{owned.toLocaleString()} owned · {recipes.length.toLocaleString()} modeled route{recipes.length === 1 ? "" : "s"}</p>
+        </div>
+        <button type="button" className={`detail-goal-button ${goal ? "active" : ""}`} onClick={() => addGoal(item)} title={goal ? "Already in Goals and Projects" : "Add to Goals and Projects"}><Target /></button>
+        <button type="button" className="detail-close-button" onClick={onClose} aria-label="Close acquisition explorer"><X /></button>
+      </section>
+
+      <section className="surface acquisition-options-surface">
+        <div className="section-title"><Route /><h3>Acquisition Options</h3></div>
+        <div className="acquisition-option-grid">
+          <RouteOption label="Trading Post" value={marketCost ? <Money value={marketCost} /> : "Not tradable"} active={Boolean(marketCost && (!bestRecipe || marketCost <= bestRecipe.marketCost))} detail={marketCost ? "Immediate purchase" : "No current listing route"} />
+          <RouteOption label={bestRecipe ? (isMysticForgeRecipe(bestRecipe.recipe) ? "Mystic Forge" : "Crafting") : "Recipe"} value={bestRecipe ? <Money value={bestRecipe.marketCost} /> : detailState === "loading" ? "Loading" : "Unavailable"} active={Boolean(bestRecipe && bestRecipe.marketCost > 0 && (!marketCost || bestRecipe.marketCost < marketCost))} detail={bestRecipe ? `${Math.round(bestRecipe.ownedCoverage * 100)}% owned coverage` : "No modeled output recipe"} />
+          <RouteOption label="Vendor" value={vendorOffer ? vendorOffer.costText : acquisitionState === "loading" ? "Loading" : "Unavailable"} active={false} detail={vendorOffer ? `${vendorOffer.vendor}${vendorOffer.zone ? ` · ${vendorOffer.zone}` : ""}` : "No structured vendor offer"} />
+          <RouteOption label="Account" value={`${owned.toLocaleString()} owned`} active={owned > 0} detail={owned > 0 ? "Already available" : "Not currently held"} />
+        </div>
+      </section>
+
+      {recipes.length ? (
+        <IngredientMindMap
+          item={item}
+          recipes={recipes}
+          selectedRecipeIndex={selectedRecipeIndex}
+          onSelectRecipeIndex={setSelectedRecipeIndex}
+          accountSnapshot={accountSnapshot}
+          wikiGuide={null}
+          onOpenDetail={onSelectItem}
+        />
+      ) : (
+        <section className="surface acquisition-no-recipe">
+          <div className="section-title"><ExternalLink /><h3>Direct Sources</h3></div>
+          {acquisition?.acquisitionNotes.length ? acquisition.acquisitionNotes.map((note) => <p key={note}>{note}</p>) : <p>{detailState === "loading" || acquisitionState === "loading" ? "Loading known acquisition routes." : "No recursive recipe is available. Use the linked wiki source for achievements, drops, or collection requirements."}</p>}
+          {acquisition?.sourceUrl ? <a href={acquisition.sourceUrl} target="_blank" rel="noreferrer">Open acquisition source <ExternalLink /></a> : null}
+        </section>
+      )}
+    </div>
   );
 }
 
@@ -7813,7 +9384,7 @@ function AccountDashboard({
                 >
                   <ItemIcon item={row.item ?? { name: "Item" }} />
                   <div>
-                    <strong>{row.item?.name ?? `Item ${row.id}`}</strong>
+                    <ItemGradeName name={row.item?.name ?? `Item ${row.id}`} rarity={row.item?.rarity} />
                     <span>{row.count.toLocaleString()} owned</span>
                   </div>
                   <strong>{row.value ? <Money value={row.value} /> : "-"}</strong>
@@ -8247,15 +9818,24 @@ function CurrencyTable({
                   onClick={() => onOpenCurrency(row.definition)}
                 >
                   <td>
-                    <span className="table-item-cell">
-                      <ItemIcon
-                        item={{ id: row.currency.id, name: row.currency.name, icon: row.definition.icon }}
-                        showFavoriteBadge={false}
-                      />
-                      <span className="item-copy">
-                        <strong>{row.currency.name}</strong>
+                    <button
+                      type="button"
+                      className="table-item-button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onOpenCurrency(row.definition);
+                      }}
+                    >
+                      <span className="table-item-cell">
+                        <ItemIcon
+                          item={{ id: row.currency.id, name: row.currency.name, icon: row.definition.icon }}
+                          showFavoriteBadge={false}
+                        />
+                        <span className="item-copy">
+                          <strong>{row.currency.name}</strong>
+                        </span>
                       </span>
-                    </span>
+                    </button>
                   </td>
                   <td>{row.amount > 0 ? row.amount.toLocaleString() : "0"}</td>
                   <td>{row.description || row.definition.summary}</td>
@@ -8323,16 +9903,25 @@ function CurrencyMaterialTable({
                   onClick={() => onOpenCurrency(row.definition)}
                 >
                   <td>
-                    <span className="table-item-cell">
-                      <ItemIcon
-                        item={{ id: row.currency.id, name: row.currency.name, icon: row.definition.icon }}
-                        showFavoriteBadge={false}
-                      />
-                      <span className="item-copy">
-                        <strong>{row.currency.name}</strong>
-                        <span>{row.description || row.definition.summary}</span>
+                    <button
+                      type="button"
+                      className="table-item-button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onOpenCurrency(row.definition);
+                      }}
+                    >
+                      <span className="table-item-cell">
+                        <ItemIcon
+                          item={{ id: row.currency.id, name: row.currency.name, icon: row.definition.icon }}
+                          showFavoriteBadge={false}
+                        />
+                        <span className="item-copy">
+                          <strong>{row.currency.name}</strong>
+                          <span>{row.description || row.definition.summary}</span>
+                        </span>
                       </span>
-                    </span>
+                    </button>
                   </td>
                   <td>{row.amount.toLocaleString()}</td>
                   <td>{row.displayOrder.toLocaleString()}</td>
@@ -8522,7 +10111,7 @@ function OwnedItemTable({
                     <span className="table-item-cell">
                       <ItemIcon item={row.item ?? { name: "Item" }} />
                       <span className="item-copy">
-                        <strong>{row.item?.name ?? `Item ${row.id}`}</strong>
+                        <ItemGradeName name={row.item?.name ?? `Item ${row.id}`} rarity={row.item?.rarity} />
                         <span>
                           {row.item
                             ? `${row.item.rarity} ${formatItemTypeLabel(row.item.type)}`
@@ -8622,7 +10211,18 @@ function describeOwnedItemSources(row: OwnedItemRow): string {
 }
 
 function formatItemTypeLabel(type: string): string {
-  return type.replace(/([a-z])([A-Z])/g, "$1 $2");
+  const label = type
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return label ? `${label.charAt(0).toUpperCase()}${label.slice(1)}` : "Item";
+}
+
+function ItemGradeName({ name, rarity }: { name: string; rarity?: string }) {
+  const normalizedRarity = rarity?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-") || "basic";
+  return <strong className={`item-grade-name rarity-text-${normalizedRarity}`}>{name}</strong>;
 }
 
 function useRelativeNow(tickMs = 10_000): number {
@@ -9005,7 +10605,7 @@ function WizardVaultPage({
                         <span className="table-item-cell">
                           <ItemIcon item={entry.item ?? { name: "Reward" }} />
                           <span className="item-copy">
-                            <strong>{entry.item?.name ?? `Item ${entry.listing.item_id}`}</strong>
+                            <ItemGradeName name={entry.item?.name ?? `Item ${entry.listing.item_id}`} rarity={entry.item?.rarity} />
                             <span>{entry.listing.item_count.toLocaleString()} per purchase</span>
                           </span>
                         </span>
@@ -10355,8 +11955,8 @@ function ActivityGuidePage({
 }) {
   const activityId = activePage.replace(/^activity:/, "");
   const guide = ACTIVITY_GUIDES[activityId] ?? ACTIVITY_GUIDES["open-world-meta-event-trains"];
-  const [selectedMetaName, setSelectedMetaName] = useState(META_FARM_ESTIMATES[0]?.name ?? "");
-  const selectedMetaEstimate = getMetaEstimateByName(selectedMetaName) ?? META_FARM_ESTIMATES[0] ?? null;
+  const [selectedMetaName, setSelectedMetaName] = useState<string | null>(META_FARM_ESTIMATES[0]?.name ?? null);
+  const selectedMetaEstimate = selectedMetaName ? getMetaEstimateByName(selectedMetaName) : null;
   const selectedMetaGuide = selectedMetaEstimate ? getMetaEventGuide(selectedMetaEstimate) : null;
   const relatedOptions = REPEATABLE_EARNING_OPTIONS.filter((option) => {
     return option.title !== guide.title && getActivityIdForSuggestion(option) !== guide.id;
@@ -10412,7 +12012,7 @@ function ActivityGuidePage({
         <MarketSplitHandle />
 
         {selectedMetaGuide ? (
-          <MetaEventDetailPane guide={selectedMetaGuide} maps={maps} />
+          <MetaEventDetailPane guide={selectedMetaGuide} maps={maps} onClose={() => setSelectedMetaName(null)} />
         ) : null}
       </div>
     );
@@ -10867,9 +12467,9 @@ function MarketPage({
                         <span className="table-item-cell">
                           <ItemIcon item={item} />
                           <span className="item-copy">
-                            <strong>{item.name}</strong>
+                            <ItemGradeName name={item.name} rarity={item.rarity} />
                             <span>
-                              {item.rarity} {item.type}
+                              {item.rarity} {formatItemTypeLabel(item.type)}
                             </span>
                           </span>
                         </span>
@@ -11088,9 +12688,11 @@ function MarketAdvancedFilterPanel({
 function MetaEventDetailPane({
   guide,
   maps,
+  onClose,
 }: {
   guide: MetaEventGuide;
   maps: Gw2Map[];
+  onClose: () => void;
 }) {
   return (
     <section className="detail-panel">
@@ -11114,6 +12716,15 @@ function MetaEventDetailPane({
           >
             <ExternalLink />
           </a>
+          <button
+            className="detail-close-button"
+            type="button"
+            onClick={onClose}
+            aria-label="Close meta event details"
+            title="Close meta event details"
+          >
+            <X />
+          </button>
         </section>
 
         <MetaEventGuideSections guide={guide} maps={maps} showMap />
@@ -11686,8 +13297,8 @@ function OpenableBagsPage({
                       <span className="table-item-cell">
                         <ItemIcon item={row.item} />
                         <span className="item-copy">
-                          <strong>{row.item.name}</strong>
-                          <span>{row.item.rarity} {row.item.type}</span>
+                          <ItemGradeName name={row.item.name} rarity={row.item.rarity} />
+                          <span>{row.item.rarity} {formatItemTypeLabel(row.item.type)}</span>
                         </span>
                       </span>
                     </td>
@@ -12426,7 +14037,7 @@ function SlotBagsPage({
                       <span className="table-item-cell">
                         <ItemIcon item={row.item} />
                         <span className="item-copy">
-                          <strong>{row.item.name}</strong>
+                          <ItemGradeName name={row.item.name} rarity={row.item.rarity} />
                           <span>{row.item.rarity} slot bag</span>
                         </span>
                       </span>
@@ -13125,9 +14736,9 @@ function MysticForgePage({
                       <span className="table-item-cell">
                         <ItemIcon item={row.output} />
                         <span className="item-copy">
-                          <strong>{row.output.name}</strong>
+                          <ItemGradeName name={row.output.name} rarity={row.output.rarity} />
                           <span>
-                            {row.output.rarity} {row.output.type}
+                            {row.output.rarity} {formatItemTypeLabel(row.output.type)}
                             {row.guide.recipe.output_item_count > 1
                               ? ` · Crafts ${row.guide.recipe.output_item_count.toLocaleString()}`
                               : ""}
@@ -13375,9 +14986,9 @@ function CraftProfitTable({
                   <span className="table-item-cell">
                     <ItemIcon item={opportunity.output} />
                     <span className="item-copy">
-                      <strong>{opportunity.output.name}</strong>
+                      <ItemGradeName name={opportunity.output.name} rarity={opportunity.output.rarity} />
                       <span>
-                        {opportunity.output.rarity} {opportunity.output.type} · {getRecipeSourceLabel(opportunity.recipe)}
+                        {opportunity.output.rarity} {formatItemTypeLabel(opportunity.output.type)} · {getRecipeSourceLabel(opportunity.recipe)}
                       </span>
                     </span>
                   </span>
@@ -14229,7 +15840,7 @@ function LegendaryReadinessPage({
                               <span className="table-item-cell">
                                 <ItemIcon item={entry.item} />
                                 <span className="item-copy">
-                                  <strong>{entry.item.name}</strong>
+                                  <ItemGradeName name={entry.item.name} rarity={entry.item.rarity} />
                                   <span>{entry.item.type}</span>
                                 </span>
                               </span>
@@ -14294,7 +15905,7 @@ function LegendaryReadinessPage({
                               <span className="table-item-cell">
                                 <ItemIcon item={entry.item} />
                                 <span className="item-copy">
-                                  <strong>{entry.item.name}</strong>
+                                  <ItemGradeName name={entry.item.name} rarity={entry.item.rarity} />
                                   <span>{entry.item.type}</span>
                                 </span>
                               </span>
@@ -14886,8 +16497,8 @@ function SnipingPage({
                             <span className="table-item-cell">
                               <ItemIcon item={row.item} />
                               <span className="item-copy">
-                                <strong>{row.item.name}</strong>
-                                <span>{row.item.rarity} {row.item.type}</span>
+                                <ItemGradeName name={row.item.name} rarity={row.item.rarity} />
+                                <span>{row.item.rarity} {formatItemTypeLabel(row.item.type)}</span>
                               </span>
                             </span>
                           </td>
@@ -15159,8 +16770,8 @@ function SalvagingPage({
                         <span className="table-item-cell">
                           <ItemIcon item={row.quote.item ?? { name: row.name }} />
                           <span className="item-copy">
-                            <strong>{row.quote.item?.name ?? row.name}</strong>
-                            <span>{row.quote.item ? `${row.quote.item.rarity} ${row.quote.item.type}` : "Not in loaded market"}</span>
+                            <ItemGradeName name={row.quote.item?.name ?? row.name} rarity={row.quote.item?.rarity} />
+                            <span>{row.quote.item ? `${row.quote.item.rarity} ${formatItemTypeLabel(row.quote.item.type)}` : "Not in loaded market"}</span>
                           </span>
                         </span>
                       </td>
@@ -15216,8 +16827,8 @@ function SalvagingPage({
                         <span className="table-item-cell">
                           <ItemIcon item={row.item} />
                           <span className="item-copy">
-                            <strong>{row.item.name}</strong>
-                            <span>{row.item.rarity} {row.item.type}</span>
+                            <ItemGradeName name={row.item.name} rarity={row.item.rarity} />
+                            <span>{row.item.rarity} {formatItemTypeLabel(row.item.type)}</span>
                           </span>
                         </span>
                       </td>
@@ -15458,7 +17069,10 @@ function UnidentifiedGearPage({
                       <span className="table-item-cell">
                         <ItemIcon item={row.detailItem ?? { name: row.definition.label }} />
                         <span className="item-copy">
-                          <strong>{row.detailItem?.name ?? row.definition.label}</strong>
+                          <ItemGradeName
+                            name={row.detailItem?.name ?? row.definition.label}
+                            rarity={row.detailItem?.rarity}
+                          />
                           <span>{row.definition.tier} unidentified gear</span>
                         </span>
                       </span>
@@ -15891,7 +17505,7 @@ function GatheringPage({
                       <span className="table-item-cell">
                         <ItemIcon item={row.marketItem} />
                         <span className="item-copy">
-                          <strong>{row.marketItem.name}</strong>
+                          <ItemGradeName name={row.marketItem.name} rarity={row.marketItem.rarity} />
                           <span>{row.source.nodes.slice(0, 2).join(", ")}{row.source.nodes.length > 2 ? ` +${row.source.nodes.length - 2}` : ""}</span>
                         </span>
                       </span>
@@ -16351,8 +17965,8 @@ function SalvageProfilePanel({
                         <span className="table-item-cell">
                           <ItemIcon item={quote.item ?? { name: output.name }} />
                           <span className="item-copy">
-                            <strong>{quote.item?.name ?? output.name}</strong>
-                            <span>{quote.item ? `${quote.item.rarity} ${quote.item.type}` : "Item not resolved yet"}</span>
+                            <ItemGradeName name={quote.item?.name ?? output.name} rarity={quote.item?.rarity} />
+                            <span>{quote.item ? `${quote.item.rarity} ${formatItemTypeLabel(quote.item.type)}` : "Item not resolved yet"}</span>
                           </span>
                         </span>
                       </td>
@@ -16596,7 +18210,7 @@ function SalvageSimulator({
               <span className="loot-item">
                 <ItemIcon item={detailItem} />
                 <span>
-                  <strong>{row.quote.item?.name ?? row.output.name}</strong>
+                  <ItemGradeName name={row.quote.item?.name ?? row.output.name} rarity={row.quote.item?.rarity} />
                   <small>{row.output.note ?? "Estimated salvage output"}</small>
                 </span>
               </span>
@@ -18001,8 +19615,8 @@ function FarmingCalculatorPage({
                         <span className="table-item-cell">
                           <ItemIcon item={craft.output} />
                           <span className="item-copy">
-                            <strong>{craft.output.name}</strong>
-                            <span>{craft.output.rarity} {craft.output.type}</span>
+                            <ItemGradeName name={craft.output.name} rarity={craft.output.rarity} />
+                            <span>{craft.output.rarity} {formatItemTypeLabel(craft.output.type)}</span>
                           </span>
                         </span>
                       </td>
@@ -18105,6 +19719,8 @@ function FarmTrackerPage({
   const [trackLootEnabled, setTrackLootEnabled] = useState(() => readFarmTrackerTrackLootEnabled());
   const [autoTrackEnabled, setAutoTrackEnabled] = useState(() => readFarmTrackerAutoTrackEnabled());
   const [trackerItems, setTrackerItems] = useState<Map<number, Gw2Item>>(new Map());
+  const [sessionName, setSessionName] = useState("");
+  const [sessionHistory, setSessionHistory] = useState<FarmSessionRecord[]>(() => readFarmSessionHistory());
   const characters = accountSnapshot?.characters ?? [];
 
   useEffect(() => {
@@ -18320,6 +19936,44 @@ function FarmTrackerPage({
     setRevision((current) => current + 1);
   }
 
+  function archiveTrackerSession() {
+    if (!trackerState || gainedRows.length === 0) {
+      return;
+    }
+
+    const endedAt = Date.now();
+    const record: FarmSessionRecord = {
+      id: createPlanningId("farm"),
+      name: sessionName.trim() || `${mode === "account" ? "Account" : selectedCharacter} farm`,
+      scope: scopeKey,
+      startedAt: trackerState.startedAt,
+      endedAt,
+      activeDurationMs: Math.max(1, trackingElapsedMs),
+      totalValue,
+      totalItems,
+      removedItems: totalRemovedItems,
+      items: sortedGainedRows.slice(0, 60).map((row) => ({
+        itemId: row.id,
+        name: row.item?.name ?? `Item ${row.id}`,
+        icon: row.item?.icon,
+        rarity: row.item?.rarity,
+        count: row.count,
+        value: row.value,
+      })),
+    };
+    const nextHistory = [record, ...sessionHistory].slice(0, 100);
+    setSessionHistory(nextHistory);
+    writeFarmSessionHistory(nextHistory);
+    setSessionName("");
+    resetTracker();
+  }
+
+  function removeFarmSession(sessionId: string) {
+    const nextHistory = sessionHistory.filter((session) => session.id !== sessionId);
+    setSessionHistory(nextHistory);
+    writeFarmSessionHistory(nextHistory);
+  }
+
   function toggleTrackLoot() {
     setTrackLootEnabled((current) => {
       const next = !current;
@@ -18410,6 +20064,10 @@ function FarmTrackerPage({
                 {analysisState === "loading" ? <Loader2 className="spin" /> : <RefreshCcw />}
                 <span>{refreshCooldownMs > 0 ? `Refresh in ${formatMarketScanCooldown(refreshCooldownMs)}` : "Refresh API"}</span>
               </button>
+              <button className="icon-button primary" onClick={archiveTrackerSession} disabled={!gainedRows.length}>
+                <CheckCircle2 />
+                <span>Save Session</span>
+              </button>
               <button className="icon-button primary" onClick={resetTracker}>
                 <X />
                 <span>Reset</span>
@@ -18418,6 +20076,10 @@ function FarmTrackerPage({
           </section>
 
           <section className="surface farm-tracker-controls">
+            <label>
+              Session name
+              <input value={sessionName} onChange={(event) => setSessionName(event.target.value)} placeholder="e.g. Dragonfall train" />
+            </label>
             <label>
               Scope
               <select value={mode} onChange={(event) => setMode(event.target.value as FarmTrackerMode)}>
@@ -18505,7 +20167,7 @@ function FarmTrackerPage({
                           <span className="table-item-cell">
                             <ItemIcon item={row.item ?? { name: "Item" }} />
                             <span className="item-copy">
-                              <strong>{row.item?.name ?? `Item ${row.id}`}</strong>
+                              <ItemGradeName name={row.item?.name ?? `Item ${row.id}`} rarity={row.item?.rarity} />
                               <span>{row.item?.rarity ?? "Tracked item"}</span>
                             </span>
                           </span>
@@ -18539,6 +20201,53 @@ function FarmTrackerPage({
                       : "Turn Track Loot on to resume automatic snapshots."}
                 </p>
               </div>
+            )}
+          </section>
+
+          <section className="surface farm-session-history">
+            <div className="section-title">
+              <Clock />
+              <h3>Session History</h3>
+            </div>
+            {sessionHistory.length ? (
+              <div className="farm-session-list">
+                {sessionHistory.map((session) => {
+                  const hourlyValue = session.activeDurationMs > 0
+                    ? Math.round(session.totalValue / (session.activeDurationMs / 3_600_000))
+                    : 0;
+                  return (
+                    <article key={session.id}>
+                      <div className="farm-session-summary">
+                        <span>
+                          <strong>{session.name}</strong>
+                          <small>{new Date(session.endedAt).toLocaleString()} · {formatTimerDuration(session.activeDurationMs)}</small>
+                        </span>
+                        <span><small>Total value</small><strong><Money value={session.totalValue} /></strong></span>
+                        <span><small>Per hour</small><strong><Money value={hourlyValue} /></strong></span>
+                        <span><small>Items</small><strong>{session.totalItems.toLocaleString()}</strong></span>
+                        <button type="button" className="icon-button compact danger" onClick={() => removeFarmSession(session.id)} title="Delete saved session"><X /></button>
+                      </div>
+                      <div className="farm-session-items">
+                        {session.items.slice(0, 8).map((entry) => (
+                          <button
+                            key={entry.itemId}
+                            type="button"
+                            onClick={() => {
+                              const resolved = catalog.find((item) => item.id === entry.itemId) ?? accountItems.get(entry.itemId) ?? getStoredItem(entry.itemId);
+                              if (resolved) onSelectItem(resolved);
+                            }}
+                          >
+                            <ItemIcon item={{ id: entry.itemId, name: entry.name, icon: entry.icon }} />
+                            <span><ItemGradeName name={entry.name} rarity={entry.rarity} /><small>{entry.count.toLocaleString()} · <Money value={entry.value} /></small></span>
+                          </button>
+                        ))}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="muted-copy">Save a completed tracker run to compare duration, total value, gold per hour, and top drops over time.</p>
             )}
           </section>
         </div>
@@ -19385,8 +21094,8 @@ function CategoryPage({
                           <span className="table-item-cell">
                             <ItemIcon item={row.item ?? { name: row.name }} />
                             <span className="item-copy">
-                              <strong>{row.item?.name ?? row.name}</strong>
-                              <span>{row.item ? `${row.item.rarity} ${row.item.type}` : "Market item"}</span>
+                              <ItemGradeName name={row.item?.name ?? row.name} rarity={row.item?.rarity} />
+                              <span>{row.item ? `${row.item.rarity} ${formatItemTypeLabel(row.item.type)}` : "Market item"}</span>
                             </span>
                           </span>
                         </td>
@@ -19603,7 +21312,7 @@ function GuideResourceHubPage({
                             onOpenGuideResource(item, resource);
                           }}
                         >
-                          <strong>{resource.name}</strong>
+                          <ItemGradeName name={resource.name} rarity={item.rarity} />
                           <span>{resource.map}</span>
                         </button>
                       </td>
@@ -19713,7 +21422,7 @@ function GuideCurrencyDetailPane({
       <div className="item-detail guide-currency-detail">
         <section className="item-title-row guide-currency-detail-header">
           <span className="currency-detail-icon">
-            <img src={currency.icon} alt="" loading="lazy" />
+            <img src={currency.icon} alt="" loading="eager" />
           </span>
           <div>
             <span className="rarity rarity-basic">Currency</span>
@@ -20288,8 +21997,8 @@ function GuideRewardPanel({
               <button type="button" onClick={() => item && onOpenItem(item)} disabled={!item}>
                 <ItemIcon item={item ?? { name: reward.name, icon: reward.icon }} />
                 <span>
-                  <strong>{reward.name}</strong>
-                  <small>{item ? `${item.rarity} ${item.type}` : "Guide reward"}</small>
+                  <ItemGradeName name={reward.name} rarity={item?.rarity} />
+                  <small>{item ? `${item.rarity} ${formatItemTypeLabel(item.type)}` : "Guide reward"}</small>
                 </span>
               </button>
               <p>{reward.detail}</p>
@@ -20335,8 +22044,8 @@ function GuideResourcePanel({
                 <button type="button" onClick={() => onOpenItem(item)}>
                   <ItemIcon item={item} />
                   <span>
-                    <strong>{resource.name}</strong>
-                    <small>{item.chat_link ?? `${item.rarity} ${item.type}`}</small>
+                    <ItemGradeName name={resource.name} rarity={item.rarity} />
+                    <small>{item.chat_link ?? `${item.rarity} ${formatItemTypeLabel(item.type)}`}</small>
                   </span>
                 </button>
                 <a href={resource.wikiUrl} target="_blank" rel="noreferrer" aria-label={`${resource.name} wiki source`}>
@@ -20524,9 +22233,9 @@ function GuideStoresPanel({
                             <span className="table-item-cell">
                               <ItemIcon item={displayItem} />
                               <span className="item-copy">
-                                <strong>{label}</strong>
+                                <ItemGradeName name={label} rarity={displayItem.rarity} />
                                 <span>
-                                  {storedItem ? `${storedItem.rarity} ${storedItem.type}` : "Local guide item"}
+                                  {storedItem ? `${storedItem.rarity} ${formatItemTypeLabel(storedItem.type)}` : "Local guide item"}
                                 </span>
                               </span>
                             </span>
@@ -21928,9 +23637,11 @@ function normalizeMapName(value: string): string {
 function ItemIcon({
   item,
   showFavoriteBadge = true,
+  priority = false,
 }: {
   item: { id?: number; name: string; icon?: string };
   showFavoriteBadge?: boolean;
+  priority?: boolean;
 }) {
   const { isFavoriteItem } = useFavoriteItems();
   const [iconFailed, setIconFailed] = useState(false);
@@ -21950,7 +23661,7 @@ function ItemIcon({
           className="item-icon"
           src={iconUrl}
           alt=""
-          loading="lazy"
+          loading={priority ? "eager" : "lazy"}
           onError={() => setIconFailed(true)}
         />
       ) : (
@@ -22009,6 +23720,7 @@ function ItemDetail({
   onOpenCurrency?: (currency: GuideCurrencyDefinition) => void;
 }) {
   const { isFavoriteItem, toggleFavoriteItem } = useFavoriteItems();
+  const { addGoal, getGoalForItem } = useProjectGoals();
   const topBuy = listings?.buys?.[0];
   const topSell = listings?.sells?.[0];
   const isTradable = hasTradingPostPrice(item);
@@ -22023,6 +23735,7 @@ function ItemDetail({
   const [selectedRecipeIndex, setSelectedRecipeIndex] = useState(0);
   const canFavoriteItem = Number.isInteger(item.id) && item.id !== 0;
   const isFavorite = isFavoriteItem(item);
+  const projectGoal = getGoalForItem(item.id);
   const resolvedGuideResource = findGuideResourceForItem(item, guideResource);
   const netSpread = getMarketNetSpread(item);
 
@@ -22074,14 +23787,25 @@ function ItemDetail({
   return (
     <div className="item-detail">
       <section className={`item-title-row ${canFavoriteItem ? "" : "no-favorite"}`}>
-        <ItemIcon item={item} />
+        <ItemIcon item={item} priority />
         <div>
           <span className={`rarity rarity-${item.rarity.toLowerCase()}`}>{item.rarity}</span>
           <h2>{item.name}</h2>
           <p>
-            {item.type} - Level {item.level || "Any"}
+            {formatItemTypeLabel(item.type)} - Level {item.level || "Any"}
           </p>
         </div>
+        {canFavoriteItem ? (
+          <button
+            className={`detail-goal-button ${projectGoal ? "active" : ""}`}
+            type="button"
+            onClick={() => addGoal(item)}
+            aria-label={projectGoal ? "Already in Goals and Projects" : "Add to Goals and Projects"}
+            title={projectGoal ? "Already in Goals and Projects" : "Add to Goals and Projects"}
+          >
+            <Target />
+          </button>
+        ) : null}
         {canFavoriteItem ? (
           <button
             className={`detail-favorite-button ${isFavorite ? "active" : ""}`}
@@ -22325,8 +24049,8 @@ function TeachesRecipePanel({
         >
           <ItemIcon item={taughtItem ?? { name: unlock.title }} />
           <span className="item-copy">
-            <strong>{unlock.title}</strong>
-            <span>{taughtItem ? `${taughtItem.rarity} ${taughtItem.type}` : "Wiki recipe unlock"}</span>
+            <ItemGradeName name={unlock.title} rarity={taughtItem?.rarity} />
+            <span>{taughtItem ? `${taughtItem.rarity} ${formatItemTypeLabel(taughtItem.type)}` : "Wiki recipe unlock"}</span>
           </span>
         </button>
         <a href={unlock.url} target="_blank" rel="noreferrer">
@@ -24956,7 +26680,10 @@ function ContainerSimulator({
                   <span className="loot-item">
                     <ItemIcon item={row.detailItem} />
                     <span>
-                      <strong>{row.marketItem?.name ?? row.drop.officialName ?? row.drop.name}</strong>
+                      <ItemGradeName
+                        name={row.marketItem?.name ?? row.drop.officialName ?? row.drop.name}
+                        rarity={row.marketItem?.rarity}
+                      />
                       <small>
                         {row.drop.quantityMin === row.drop.quantityMax
                           ? `${formatDropAverage(row.drop.quantityMin)} per open`
@@ -25177,7 +26904,10 @@ function RecipeIngredientRow({
     <div className="ingredient-row">
       <ItemIcon item={ingredient.item ?? { name: "Ingredient" }} />
       <div className="ingredient-copy">
-        <strong>{ingredient.item?.name ?? `Item ${ingredient.item_id}`}</strong>
+        <ItemGradeName
+          name={ingredient.item?.name ?? `Item ${ingredient.item_id}`}
+          rarity={ingredient.item?.rarity}
+        />
         <small>
           {ingredient.count.toLocaleString()} needed -{" "}
           {ownedCount.toLocaleString()} owned
@@ -25677,7 +27407,7 @@ function RecipeSummaryRow({
       <div className="recipe-summary-main">
         <ItemIcon item={outputItem ?? { name: outputName }} />
         <span className="item-copy">
-          <strong>{outputName}</strong>
+          <ItemGradeName name={outputName} rarity={outputItem?.rarity} />
           <span>
             {sourceLabel}
             {guide.recipe.min_rating ? ` - Rating ${guide.recipe.min_rating}` : ""}
@@ -26421,7 +28151,7 @@ function IngredientMindMap({
                     aria-label={`${node.item.name}. Click for quick info. Double-click or press Enter to open the detail page.`}
                   >
                     <ItemIcon item={node.item} />
-                    <strong>{node.item.name}</strong>
+                    <ItemGradeName name={node.item.name} rarity={node.item.rarity} />
                     <span className="node-required-count">
                       {node.requiredCount.toLocaleString()} {node.depth === 0 ? "crafted" : "needed"}
                     </span>
@@ -26985,9 +28715,9 @@ function NodeInfoWindow({
       <div className="node-info-head">
         <ItemIcon item={item} />
         <div>
-          <strong>{item.name}</strong>
+          <ItemGradeName name={item.name} rarity={item.rarity} />
           <span>
-            {item.rarity} {item.type}
+            {item.rarity} {formatItemTypeLabel(item.type)}
           </span>
         </div>
       </div>

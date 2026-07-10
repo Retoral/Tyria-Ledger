@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld("gw2Desktop", {
   openUpdateDownload: (updateInfo) => ipcRenderer.invoke("updates:open-download", updateInfo),
   getStartupSettings: () => ipcRenderer.invoke("startup:get"),
   setStartupSettings: (settings) => ipcRenderer.invoke("startup:set", settings),
+  showNotification: (notification) => ipcRenderer.invoke("notification:show", notification),
   onNavigateHistory: (callback) => {
     const listener = (_event, direction) => callback(direction);
     ipcRenderer.on("navigation:history", listener);

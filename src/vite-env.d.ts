@@ -140,6 +140,7 @@ declare global {
       openUpdateDownload: (updateInfo: DesktopUpdateCheckResult) => Promise<DesktopOpenUpdateResult>;
       getStartupSettings: () => Promise<DesktopStartupSettings>;
       setStartupSettings: (settings: { openAtLogin: boolean }) => Promise<DesktopStartupSettings>;
+      showNotification: (notification: { title: string; body: string }) => Promise<boolean>;
       onNavigateHistory: (callback: (direction: "back" | "forward") => void) => () => void;
     };
   }
