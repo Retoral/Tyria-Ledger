@@ -1,6 +1,6 @@
 {
   "name": "tyria-ledger",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Desktop Guild Wars 2 Trading Post and crafting companion.",
   "main": "electron/main.cjs",
@@ -15,6 +15,7 @@
     "package": "npm run build && electron-builder --dir",
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:win": "npm run build && electron-builder --win",
+    "data:wiki-fishing": "node scripts/fetch-gw2-fishing-data.mjs",
     "data:wiki-map-points": "node scripts/fetch-gw2-wiki-map-points.mjs",
     "release:github": "node scripts/release-github.cjs",
     "release:github:dry": "node scripts/release-github.cjs --dry-run"

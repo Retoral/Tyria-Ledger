@@ -149,7 +149,14 @@ function getReleaseNotes() {
   return [
     `Tyria Ledger ${version}`,
     "",
-    "Desktop Guild Wars 2 Trading Post, crafting, gathering, and account companion.",
+    "This patch expands account planning, acquisition guidance, and Fishing workflows.",
+    "",
+    "Highlights:",
+    "- Account-aware build goals and equipment comparison.",
+    "- Improved daily planning, acquisition guidance, craft maps, and item detail behavior.",
+    "- A complete Fishing guide with mastery and Fishing Power recommendations.",
+    "- A locally stored directory of 287 fish with locations, holes, bait, time, and power requirements.",
+    "- Ranked Fishing training, collection, and gold routes based on account progress.",
     "",
     "This release includes macOS Intel, macOS Apple Silicon, Windows installer, and Windows portable builds.",
   ].join("\n");

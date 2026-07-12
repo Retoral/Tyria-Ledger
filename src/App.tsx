@@ -58,6 +58,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import fishingLocationData from "./data/gw2FishingLocations.json";
 import { findGw2WikiMapPointByChatLink, findGw2WikiMapPointByName, findNearestGw2WikiWaypoint } from "./data/gw2WikiMapPoints";
 import {
   createPlanningId,
@@ -88,8 +89,10 @@ import {
   analyzeAccount,
   checkApiStatuses,
   ensureCommercePricesForItems,
+  getCachedRecipeGuidesForOutput,
   getStoredItem,
   getStoredItemByName,
+  getStoredItems,
   getStoredPrice,
   hydrateTradingPostCatalogCache,
   loadAchievementCatalog,
@@ -99,6 +102,7 @@ import {
   loadGatheringLocations,
   loadAccountSnapshot,
   loadHighValueCrafts,
+  loadItemStats,
   loadItems,
   loadListings,
   loadMaps,
@@ -146,6 +150,7 @@ import type {
   Gw2Achievement,
   Gw2Currency,
   Gw2Item,
+  Gw2ItemStat,
   Gw2Map,
   Gw2Recipe,
   ItemTransactions,
@@ -189,6 +194,11 @@ interface GoldSuggestion {
   valueCoin?: number;
   speed: SpeedLabel;
   source: "Personal" | "General";
+  page?: ActivePage;
+  itemName?: string;
+  confidence?: "Exact" | "Account" | "Estimated" | "Reference";
+  priority?: number;
+  targetGoalId?: string;
 }
 
 interface NavItem {
@@ -322,6 +332,11 @@ interface GuideCurrencyDefinition {
   relatedGuides?: Array<{ label: string; page: ActivePage; detail: string }>;
 }
 
+interface CurrencyStoreMatch {
+  store: GuideStore;
+  item: GuideStoreItem;
+}
+
 interface GuideDefinition {
   title: string;
   summary: string;
@@ -372,6 +387,7 @@ interface MetaEventGuide {
   locations: GuideLocation[];
   rewards: GuideReward[];
   sources: GuideSourceLink[];
+  coverage: "Complete" | "Reference";
   relatedPageIds?: ActivePage[];
 }
 
@@ -387,6 +403,15 @@ interface MetaScheduleDefinition {
   offsetMinutesUtc?: number;
   mode: "fixed" | "continuous" | "instance";
   note: string;
+}
+
+type MetaOpportunitySort = "time" | "profit";
+
+interface MetaOpportunity {
+  event: MetaScheduleDefinition;
+  timing: ReturnType<typeof getMetaTiming>;
+  estimate: MetaFarmEstimate | null;
+  averageGoldPerHour: number;
 }
 
 const META_SCHEDULES: MetaScheduleDefinition[] = [
@@ -1250,6 +1275,14 @@ interface ActivityValueItem {
   name: string;
   source: string;
   note: string;
+  itemId?: number;
+  icon?: string;
+  description?: string;
+  type?: string;
+  rarity?: string;
+  level?: number;
+  vendorValue?: number;
+  chatLink?: string;
 }
 
 interface ActivityValueDefinition {
@@ -1348,8 +1381,59 @@ interface FishingRouteInfo {
   expansion: string;
   bait: string;
   fishingPower: string;
+  recommendedPower: number;
+  stage: "Learn" | "Build" | "Farm";
   map: string;
   valueFocus: string;
+  strategy: string;
+}
+
+interface FishingMasteryTierInfo {
+  tier: number;
+  name: string;
+  experience: number;
+  masteryPoints: number;
+  fishingPower: number;
+  benefit: string;
+  efficientUse: string;
+}
+
+interface FishingPowerTarget {
+  label: string;
+  map: string;
+  power: number;
+  note: string;
+}
+
+interface FishingLocationEntry {
+  name: string;
+  rarity: string;
+  location: string;
+  holes: string[];
+  bait: string;
+  time: string;
+  fishingPower: number;
+  collection: string;
+  icon: string;
+  wikiUrl: string;
+}
+
+interface FishingSpotGuide {
+  id: string;
+  name: string;
+  map: string;
+  area: string;
+  requiredPower: number;
+  minimumMasteryTier: number;
+  purpose: "Training" | "Collection" | "Gold";
+  valueRank: number;
+  holes: string;
+  bait: string;
+  time: string;
+  targets: string[];
+  valueFocus: string;
+  access: string;
+  wikiUrl: string;
 }
 
 const GLOBAL_MARKET_SCOPE_ID = "global";
@@ -3672,12 +3756,80 @@ const ACTIVITY_VALUE_DEFINITIONS: Record<string, ActivityValueDefinition> = {
     title: "Fishing Value Items",
     summary: "Fishing value is mostly high-grade fish conversion, ambergris, and fillets.",
     items: [
-      { name: "Chunk of Ancient Ambergris", source: "Legendary fish conversion", note: "One of the most important fishing value outputs." },
-      { name: "Flawless Fish Fillet", source: "Fish processing", note: "Used in ascended food and fishing-related crafting." },
-      { name: "Fine Fish Fillet", source: "Fish processing", note: "Lower-tier fillet value depends on food demand." },
-      { name: "Fabulous Fish", source: "Fishing", note: "Often better converted through the right vendor route." },
-      { name: "Flavorful Fish", source: "Fishing", note: "Route value depends on fishing hole and time window." },
-      { name: "Mackerel", source: "Bait and catch routing", note: "Useful bait/catch item to check before longer routes." },
+      {
+        name: "Chunk of Ancient Ambergris",
+        source: "Legendary fish conversion",
+        note: "Core End of Dragons legendary material; compare the daily fish exchange before selling.",
+        itemId: 96347,
+        icon: "https://render.guildwars2.com/file/C113C406281D94BB560701DF350BCA9AF592AFE9/2597025.png",
+        description: "Used in the crafting of End of Dragons legendary items.",
+        type: "CraftingMaterial",
+        rarity: "Exotic",
+        level: 0,
+        vendorValue: 64,
+        chatLink: "[&AgFbeAEA]",
+      },
+      {
+        name: "Flawless Fish Fillet",
+        source: "Ascended fish conversion",
+        note: "Used in ascended food and high-tier fishing-related crafting.",
+        itemId: 95673,
+        icon: "https://render.guildwars2.com/file/4D779C211845066A3AEB18EBA64BB231A9F00F03/2594828.png",
+        type: "CraftingMaterial",
+        rarity: "Ascended",
+        level: 80,
+        vendorValue: 0,
+        chatLink: "[&AgG5dQEA]",
+      },
+      {
+        name: "Fine Fish Fillet",
+        source: "Fine fish conversion",
+        note: "Entry-level fillet used by Chef recipes; value follows food demand.",
+        itemId: 96762,
+        icon: "https://render.guildwars2.com/file/7B6CF5C9923AD4E8C76AED444E9C5A15BA2CB6B9/2594829.png",
+        type: "CraftingMaterial",
+        rarity: "Fine",
+        level: 35,
+        vendorValue: 0,
+        chatLink: "[&AgH6eQEA]",
+      },
+      {
+        name: "Fabulous Fish Fillet",
+        source: "Masterwork fish conversion",
+        note: "Used in food recipes or exchanged upward through fishmonger conversion routes.",
+        itemId: 97690,
+        icon: "https://render.guildwars2.com/file/6E3DFD60991F245407769947F14BD5E6A330DAF2/2594826.png",
+        type: "CraftingMaterial",
+        rarity: "Masterwork",
+        level: 50,
+        vendorValue: 0,
+        chatLink: "[&AgGafQEA]",
+      },
+      {
+        name: "Flavorful Fish Fillet",
+        source: "Rare fish conversion",
+        note: "Used in higher-tier food recipes and fishmonger conversion routes.",
+        itemId: 96943,
+        icon: "https://render.guildwars2.com/file/D4AAF271369F309BDD1363A2C64C79725B0131F5/2594830.png",
+        type: "CraftingMaterial",
+        rarity: "Rare",
+        level: 65,
+        vendorValue: 0,
+        chatLink: "[&AgGvegEA]",
+      },
+      {
+        name: "Mackerel",
+        source: "Open saltwater at dusk or dawn",
+        note: "Account-bound +150 Fishing Power bait for specific big-game fish.",
+        itemId: 95943,
+        icon: "https://render.guildwars2.com/file/E2467CC80F1F601EBCF6E4E54FB3939A6F016A9F/2594639.png",
+        description: "A saltwater baitfish perfect for catching big game fish, most commonly found in open water at dusk or dawn.",
+        type: "Gathering",
+        rarity: "Fine",
+        level: 0,
+        vendorValue: 0,
+        chatLink: "[&AgHHdgEA]",
+      },
     ],
   },
   salvaging: {
@@ -3743,28 +3895,207 @@ const ACTIVITY_VALUE_DEFINITIONS: Record<string, ActivityValueDefinition> = {
 
 const FISHING_ROUTE_INFO: FishingRouteInfo[] = [
   {
-    name: "Canthan ambergris route",
+    name: "Seitung training circuit",
     expansion: "End of Dragons",
-    bait: "Use the bait required by the target legendary fish; carry a mixed bait stack before route start.",
-    fishingPower: "575+ comfortable, 650+ preferred",
-    map: "Seitung Province / New Kaineng / Echovald / Dragon's End",
-    valueFocus: "Legendary fish turn-ins, Chunk of Ancient Ambergris, fillets",
-  },
-  {
-    name: "Open water fillet route",
-    expansion: "End of Dragons",
-    bait: "Any route-appropriate bait; prioritize stocked vendors before leaving a hub.",
-    fishingPower: "400+ workable, higher is smoother",
+    bait: "Standard 100-power bait; switch only when a collection fish requires a favored bait.",
+    fishingPower: "150 target",
+    recommendedPower: 150,
+    stage: "Learn",
     map: "Seitung Province",
-    valueFocus: "Fine and flawless fillets with low setup time",
+    valueFocus: "Fishing mastery XP, basic collections, route practice",
+    strategy: "Move between marked fishing holes near Village Waypoint and Haiju Lagoon. Fishing Hole Master triples fishing XP from holes.",
   },
   {
-    name: "Daily collection fishing",
-    expansion: "End of Dragons and later maps",
-    bait: "Match bait to the achievement or collection target before starting.",
-    fishingPower: "As high as available; food, lure, skiff stacks",
-    map: "Route depends on collection",
-    valueFocus: "Account progress first, sellable fish value second",
+    name: "Canthan collection circuit",
+    expansion: "End of Dragons",
+    bait: "Carry the favored bait shown by each collection fish; keep a 100-power lure equipped.",
+    fishingPower: "250-400 workable",
+    recommendedPower: 300,
+    stage: "Build",
+    map: "Seitung Province / New Kaineng / Echovald / Dragon's End",
+    valueFocus: "Regional collections, mastery points, fish fillets",
+    strategy: "Finish one regional collection at a time. Match map, fishing-hole type, bait, and day/night window before moving.",
+  },
+  {
+    name: "Ambergris and legendary fish route",
+    expansion: "End of Dragons and open-world regions",
+    bait: "Use the exact favored bait for the target legendary or daily fish; carry Mackerel only when its catch table needs it.",
+    fishingPower: "575+ typical; 650+ for harder regions",
+    recommendedPower: 575,
+    stage: "Farm",
+    map: "Regional collections and the current Daily Catch",
+    valueFocus: "Chunk of Ancient Ambergris, legendary fish, flawless fillets",
+    strategy: "Build Fishing Party stacks on one skiff and one map, then target the correct holes and time window. Check Daily Catch before consuming rare fish.",
+  },
+];
+
+const FISHING_MASTERY_TIERS: FishingMasteryTierInfo[] = [
+  {
+    tier: 1,
+    name: "Fishing Hole Master",
+    experience: 381_000,
+    masteryPoints: 2,
+    fishingPower: 20,
+    benefit: "Faster bites at fishing holes and triple fishing XP from those holes.",
+    efficientUse: "Train this first, then level the remaining track by rotating actual fishing holes instead of open water.",
+  },
+  {
+    tier: 2,
+    name: "Angler Sense",
+    experience: 635_000,
+    masteryPoints: 3,
+    fishingPower: 20,
+    benefit: "Detects nearby fishing holes and marks them on the map.",
+    efficientUse: "Use it while moving between holes so travel time does not erase the XP advantage from Fishing Hole Master.",
+  },
+  {
+    tier: 3,
+    name: "Fishing on a Full Tank",
+    experience: 1_016_000,
+    masteryPoints: 4,
+    fishingPower: 20,
+    benefit: "Adds 100 Fishing Power while Nourished, in addition to the tier's 20 base power.",
+    efficientUse: "Keep any nourishment active; use 150-power fishing food when targeting difficult or rare fish.",
+  },
+  {
+    tier: 4,
+    name: "Master Caster",
+    experience: 1_524_000,
+    masteryPoints: 5,
+    fishingPower: 20,
+    benefit: "Increases maximum casting range by 50%.",
+    efficientUse: "Anchor the skiff where several holes are reachable and cast without repeatedly repositioning.",
+  },
+  {
+    tier: 5,
+    name: "Local Legend",
+    experience: 2_159_000,
+    masteryPoints: 6,
+    fishingPower: 20,
+    benefit: "Unlocks exclusive selections from Canthan fishmongers and fishing merchants.",
+    efficientUse: "Finish the track before committing to collection-heavy and vendor-driven fishing routes.",
+  },
+];
+
+const FISHING_POWER_TARGETS: FishingPowerTarget[] = [
+  { label: "Seitung shore holes", map: "Seitung Province", power: 150, note: "Best beginner target after unlocking fishing." },
+  { label: "Canthan open water", map: "New Kaineng / Echovald / Dragon's End", power: 250, note: "Covers most early Canthan open-water practice." },
+  { label: "Kryta open water", map: "Kryta", power: 300, note: "Comfortable first core-region collection target." },
+  { label: "Ascalon open water", map: "Ascalon", power: 400, note: "Requires a developed mastery and equipment setup." },
+  { label: "Maguuma open water", map: "Maguuma / Heart of Maguuma", power: 450, note: "Use food or Fishing Party stacks if still progressing." },
+  { label: "Crystal Desert open water", map: "Crystal Desert", power: 500, note: "A good benchmark for a complete solo setup." },
+  { label: "Living World Season 4", map: "Istan / Dragonfall / Sandswept", power: 600, note: "Open water starts around 550; many shore holes recommend 600." },
+  { label: "Ruins of Orr shore holes", map: "Ruins of Orr", power: 650, note: "Use full food, lure, bait, and party bonuses." },
+  { label: "Draconis Mons open water", map: "Draconis Mons", power: 700, note: "A high-power destination that benefits strongly from Fishing Party." },
+];
+
+const FISHING_MASTERY_TRACK_ID = 31;
+const FISHING_LOCATION_ENTRIES = fishingLocationData.fish as FishingLocationEntry[];
+const FISHING_LOCATION_OPTIONS = Array.from(new Set(FISHING_LOCATION_ENTRIES.map((fish) => fish.location)))
+  .sort((left, right) => left.localeCompare(right));
+
+const FISHING_SPOT_GUIDES: FishingSpotGuide[] = [
+  {
+    id: "seitung-training",
+    name: "Seitung hole circuit",
+    map: "Seitung Province",
+    area: "Seitung Harbor, Village Waypoint, and Haiju Lagoon",
+    requiredPower: 200,
+    minimumMasteryTier: 1,
+    purpose: "Training",
+    valueRank: 1,
+    holes: "Shore Fish and Offshore Fish",
+    bait: "Shrimplings for shore targets; Sardines offshore",
+    time: "Any; split day and night only for collection targets",
+    targets: ["Fugu Fish", "Sailfish", "Sunfish"],
+    valueFocus: "Fast mastery XP from holes, regional collections, and first-time ambergris rewards.",
+    access: "End of Dragons and Fishing Hole Master",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Seitung_Province_Fisher",
+  },
+  {
+    id: "kaineng-legendary",
+    name: "Kaineng coastal and channel loop",
+    map: "New Kaineng City",
+    area: "Outer coast and the city channels",
+    requiredPower: 250,
+    minimumMasteryTier: 2,
+    purpose: "Collection",
+    valueRank: 3,
+    holes: "Coastal Fish and Channel Fish",
+    bait: "Mackerel on the coast; Shrimplings in channels",
+    time: "Any for Bluefin Tuna and Oarfish; daytime adds Swordfish",
+    targets: ["Bluefin Tuna", "Oarfish", "Swordfish"],
+    valueFocus: "Accessible legendary fish, Kaineng collection progress, and ambergris conversion.",
+    access: "End of Dragons",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Kaineng_Fisher",
+  },
+  {
+    id: "kourna-desert",
+    name: "Kourna desert-fish rotation",
+    map: "Domain of Kourna",
+    area: "Eastern Front, Bay of Gandara, and the connected central waters",
+    requiredPower: 550,
+    minimumMasteryTier: 3,
+    purpose: "Gold",
+    valueRank: 6,
+    holes: "Desert Fish",
+    bait: "Scorpions for Vundu and Marbled Lungfish; Mackerel for Kaluga",
+    time: "Any; daytime also adds Giant Paddlefish",
+    targets: ["Vundu", "Kaluga", "Giant Paddlefish", "Marbled Lungfish"],
+    valueFocus: "Dense repeatable holes and multiple legendary or ascended targets for ambergris and flawless fillets.",
+    access: "Living World Season 4: Long Live the Lich",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Desert_Fish",
+  },
+  {
+    id: "desert-isles",
+    name: "Desert Isles legendary circuit",
+    map: "Domain of Istan, Sandswept Isles, or Dragonfall",
+    area: "Shoreline by day, offshore nodes by night",
+    requiredPower: 650,
+    minimumMasteryTier: 4,
+    purpose: "Gold",
+    valueRank: 4,
+    holes: "Shore Fish and Offshore Fish",
+    bait: "Fish Eggs",
+    time: "Daytime for Beluga; nighttime for Dandan",
+    targets: ["Beluga", "Dandan"],
+    valueFocus: "Legendary fish conversion while progressing the repeatable Desert Isles collection.",
+    access: "Living World Season 4 map access",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Desert_Isles_Fisher",
+  },
+  {
+    id: "inner-nayos",
+    name: "Inner Nayos dream-fish loop",
+    map: "Inner Nayos",
+    area: "Dream Fish and Nayosian Fish nodes after opening the map routes",
+    requiredPower: 650,
+    minimumMasteryTier: 5,
+    purpose: "Gold",
+    valueRank: 5,
+    holes: "Dream Fish and Nayosian Fish",
+    bait: "Glow Worms for Three-Eyed Carp; match bait when targeting other legendary fish",
+    time: "Nighttime is the strongest targeted window",
+    targets: ["Three-Eyed Carp", "Maddened Mackerel", "Empress Fish"],
+    valueFocus: "High-end legendary and ascended fish with ambergris-focused conversion.",
+    access: "Secrets of the Obscure and Inner Nayos access",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Horn_of_Maguuma_Fisher",
+  },
+  {
+    id: "orr-offshore",
+    name: "Orrian offshore circuit",
+    map: "Ruins of Orr",
+    area: "Offshore nodes across the Orrian coast",
+    requiredPower: 700,
+    minimumMasteryTier: 5,
+    purpose: "Gold",
+    valueRank: 4,
+    holes: "Offshore Fish",
+    bait: "Leeches for Benthic Behemoth; Sardines at night for Shipwreck Moray",
+    time: "Any for Benthic Behemoth; nighttime adds Shipwreck Moray",
+    targets: ["Benthic Behemoth", "Shipwreck Moray"],
+    valueFocus: "Legendary catches and Orrian collection rewards at a demanding power threshold.",
+    access: "Core Tyria plus End of Dragons Fishing mastery",
+    wikiUrl: "https://wiki.guildwars2.com/wiki/Orrian_Fisher",
   },
 ];
 
@@ -4192,6 +4523,15 @@ const META_FARM_ESTIMATES: MetaFarmEstimate[] = [
     wikiUrl: "https://wiki.guildwars2.com/wiki/Mount_Maelstrom",
   },
 ];
+
+const META_SCHEDULE_ESTIMATE_NAMES: Record<string, string> = {
+  palawadan: "Domain of Istan Palawadan",
+  "thunderhead-keep": "Thunderhead Peaks oil meta",
+  "oil-floes": "Thunderhead Peaks oil meta",
+  dragonfall: "Dragonfall",
+  "great-hall": "Domain of Istan Palawadan",
+  drizzlewood: "Drizzlewood Coast north/south",
+};
 
 const META_MAP_CENTER_COORDS: Record<string, [number, number]> = {
   "Drizzlewood Coast": [51216, 20049],
@@ -5339,6 +5679,7 @@ function App() {
   const [apiKeyRemembered, setApiKeyRemembered] = useState(false);
   const [accountSnapshot, setAccountSnapshot] = useState<AccountSnapshot | null>(null);
   const [accountItems, setAccountItems] = useState<Map<number, Gw2Item>>(new Map());
+  const [accountItemStats, setAccountItemStats] = useState<Map<number, Gw2ItemStat>>(new Map());
   const [analysis, setAnalysis] = useState<AccountAnalysis | null>(null);
   const [analysisState, setAnalysisState] = useState<LoadState>("idle");
   const [apiStatuses, setApiStatuses] = useState<ApiStatusResult[]>([]);
@@ -5365,6 +5706,8 @@ function App() {
   const [projectGoals, setProjectGoals] = useState<ProjectGoal[]>(() => readProjectGoals());
   const [buildGoals, setBuildGoals] = useState<BuildGoal[]>(() => readBuildGoals());
   const [priceAlerts, setPriceAlerts] = useState<PriceAlertRule[]>(() => readPriceAlerts());
+  const [requestedProjectGoalId, setRequestedProjectGoalId] = useState<string | null>(null);
+  const [requestedVaultObjectiveId, setRequestedVaultObjectiveId] = useState<number | null>(null);
   const activePage = pageHistory[pageHistoryIndex] ?? "account";
   const canNavigateBack = detailHistoryIndex > 0 || pageHistoryIndex > 0;
   const canNavigateForward =
@@ -5452,9 +5795,25 @@ function App() {
         return goal;
       },
       addBuildGoal: (build) => {
+        const equipment = build.equipment
+          .filter((slot) => slot.slot !== "__empty__" && (slot.itemId || slot.item?.id || slot.stat || slot.slot !== "Equipment"))
+          .map((slot) => ({
+            slot: slot.slot,
+            stat: slot.stat,
+            itemId: slot.itemId ?? slot.item?.id,
+            itemName: slot.item?.name,
+            icon: slot.item?.icon,
+            rarity: slot.item?.rarity,
+            itemType: slot.item?.type,
+            attributeNames: slot.attributeCombination?.attributes.map((attribute) => attribute.name) ?? [],
+            attributes: (slot.attributeBonuses ?? slot.attributeCombination?.attributes ?? []).map((attribute) => ({
+              name: attribute.name,
+              value: attribute.value,
+            })),
+          }));
         const existing = buildGoals.find((goal) => goal.buildId === build.summary.id);
         if (existing) {
-          const updated = { ...existing, status: "active" as const, updatedAt: Date.now() };
+          const updated = { ...existing, equipment, status: "active" as const, updatedAt: Date.now() };
           setBuildGoals((current) => {
             const next = current.map((goal) => goal.id === existing.id ? updated : goal);
             writeBuildGoals(next);
@@ -5476,18 +5835,7 @@ function App() {
           eliteSpec: build.summary.eliteSpec,
           status: "active",
           note: "",
-          equipment: build.equipment
-            .filter((slot) => slot.slot !== "__empty__" && (slot.itemId || slot.item?.id || slot.stat || slot.slot !== "Equipment"))
-            .map((slot) => ({
-              slot: slot.slot,
-              stat: slot.stat,
-              itemId: slot.itemId ?? slot.item?.id,
-              itemName: slot.item?.name,
-              icon: slot.item?.icon,
-              rarity: slot.item?.rarity,
-              itemType: slot.item?.type,
-              attributeNames: slot.attributeCombination?.attributes.map((attribute) => attribute.name) ?? [],
-            })),
+          equipment,
           createdAt: now,
           updatedAt: now,
         };
@@ -5702,26 +6050,37 @@ function App() {
   useEffect(() => {
     if (!accountSnapshot) {
       setAccountItems(new Map());
+      setAccountItemStats(new Map());
       return;
     }
 
     let ignore = false;
     const ids = new Set(accountSnapshot.holdings.keys());
+    const statIds = new Set<number>();
     accountSnapshot.characters.forEach((character) => {
       const equipmentSets = character.equipment_tabs?.map((tab) => tab.equipment) ?? [character.equipment ?? []];
       equipmentSets.flat().forEach((slot) => {
         ids.add(slot.id);
+        if (slot.stats?.id) statIds.add(slot.stats.id);
         slot.upgrades?.forEach((id) => ids.add(id));
         slot.infusions?.forEach((id) => ids.add(id));
       });
     });
 
-    loadItems(Array.from(ids)).then((items) => {
+    loadItems(Array.from(ids)).then(async (items) => {
+      items.forEach((item) => {
+        const infixUpgrade = item.details?.infix_upgrade;
+        if (infixUpgrade && typeof infixUpgrade === "object" && "id" in infixUpgrade && typeof infixUpgrade.id === "number") {
+          statIds.add(infixUpgrade.id);
+        }
+      });
+      const stats = await loadItemStats(Array.from(statIds)).catch(() => []);
       if (ignore) {
         return;
       }
 
       setAccountItems(new Map(items.map((item) => [item.id, item])));
+      setAccountItemStats(new Map(stats.map((stat) => [stat.id, stat])));
     });
 
     return () => {
@@ -6927,6 +7286,7 @@ function App() {
           apiStatuses={apiStatuses}
           apiStatusState={apiStatusState}
           catalog={catalog}
+          currencies={currencies}
           dataImports={dataImports}
           marketLoadState={loadState}
           startupSettings={startupSettings}
@@ -6935,6 +7295,11 @@ function App() {
           onApiKeyChange={setApiKey}
           onForgetApiKey={forgetApiKey}
           onOpenActivity={openActivityGuide}
+          onOpenPage={navigateToPage}
+          onOpenProject={(goalId) => {
+            setRequestedProjectGoalId(goalId);
+            navigateToPage("projects");
+          }}
           onOpenItemSearch={openItemSearch}
           onLoadMarket={loadCatalog}
           onRefreshApiStatuses={() => refreshApiStatuses()}
@@ -6971,6 +7336,14 @@ function App() {
           apiKey={apiKey}
           accountSnapshot={accountSnapshot}
           onOpenPage={navigateToPage}
+          onOpenProject={(goalId) => {
+            setRequestedProjectGoalId(goalId);
+            navigateToPage("projects");
+          }}
+          onOpenVaultObjective={(objectiveId) => {
+            setRequestedVaultObjectiveId(objectiveId);
+            navigateToPage("wizard-vault");
+          }}
         />
       );
     }
@@ -6981,6 +7354,9 @@ function App() {
           catalog={catalog}
           accountSnapshot={accountSnapshot}
           accountItems={accountItems}
+          accountItemStats={accountItemStats}
+          requestedGoalId={requestedProjectGoalId}
+          onRequestedGoalHandled={() => setRequestedProjectGoalId(null)}
           onOpenItem={(item) => {
             selectDetailItem(buildMarketItemForDetail(item));
             navigateToPage("market", { preserveSelectedItem: true });
@@ -7056,6 +7432,8 @@ function App() {
         <WizardVaultPage
           apiKey={apiKey}
           apiKeyRemembered={apiKeyRemembered}
+          requestedObjectiveId={requestedVaultObjectiveId}
+          onRequestedObjectiveHandled={() => setRequestedVaultObjectiveId(null)}
           onOpenItem={(item) => {
             selectDetailItem(buildMarketItemForDetail(item));
             navigateToPage("market", { preserveSelectedItem: true });
@@ -7183,6 +7561,7 @@ function App() {
       return (
         <AcquisitionExplorerPage
           catalog={catalog}
+          accountItems={accountItems}
           loadState={loadState}
           selectedItem={selectedItem}
           recipes={recipes}
@@ -7614,12 +7993,18 @@ function ProjectsPage({
   catalog,
   accountSnapshot,
   accountItems,
+  accountItemStats,
+  requestedGoalId,
+  onRequestedGoalHandled,
   onOpenItem,
   onOpenExplorer,
 }: {
   catalog: MarketItem[];
   accountSnapshot: AccountSnapshot | null;
   accountItems: Map<number, Gw2Item>;
+  accountItemStats: Map<number, Gw2ItemStat>;
+  requestedGoalId?: string | null;
+  onRequestedGoalHandled?: () => void;
   onOpenItem: (item: Gw2Item) => void;
   onOpenExplorer: (item: Gw2Item) => void;
 }) {
@@ -7664,6 +8049,16 @@ function ProjectsPage({
       setSelectedGoalId(buildGoals[0]?.id ?? goals[0]?.id ?? null);
     }
   }, [buildGoals, goals, selectedGoalId]);
+
+  useEffect(() => {
+    if (
+      requestedGoalId &&
+      [...buildGoals, ...goals].some((goal) => goal.id === requestedGoalId)
+    ) {
+      setSelectedGoalId(requestedGoalId);
+      onRequestedGoalHandled?.();
+    }
+  }, [buildGoals, goals, onRequestedGoalHandled, requestedGoalId]);
 
   const hasSelectedGoal = Boolean(selectedGoal || selectedBuildGoal);
 
@@ -7734,7 +8129,7 @@ function ProjectsPage({
           {filteredGoals.length || filteredBuildGoals.length ? (
             <div className="project-list">
               {filteredBuildGoals.map((goal) => {
-                const summary = summarizeBuildGoalEquipment(goal, accountSnapshot, accountItems);
+                const summary = summarizeBuildGoalEquipment(goal, accountSnapshot, accountItems, accountItemStats);
                 return (
                   <button
                     key={goal.id}
@@ -7790,8 +8185,10 @@ function ProjectsPage({
         <section className="detail-panel project-detail-panel">
           <BuildGoalDetail
             goal={selectedBuildGoal}
+            catalog={catalog}
             accountSnapshot={accountSnapshot}
             accountItems={accountItems}
+            accountItemStats={accountItemStats}
             onUpdate={(updates) => updateBuildGoal(selectedBuildGoal.id, updates)}
             onRemove={() => removeBuildGoal(selectedBuildGoal.id)}
             onOpenItem={onOpenItem}
@@ -7823,6 +8220,10 @@ interface BuildEquipmentComparison {
   state: BuildEquipmentMatchState;
   actual?: AccountEquipmentSlot;
   actualItem?: Gw2Item;
+  desiredAffix?: string;
+  desiredAttributes: Array<{ name: string; value?: number }>;
+  actualAffix?: string;
+  actualAttributes: Array<{ name: string; value: number }>;
   detail: string;
 }
 
@@ -7870,12 +8271,130 @@ function getBuildSlotQuantity(slot: BuildGoal["equipment"][number]): number {
   return match ? Math.max(1, Number(match[1])) : 1;
 }
 
-function matchesDesiredAttributes(desired: BuildGoal["equipment"][number], actual: AccountEquipmentSlot): boolean {
-  if (!desired.attributeNames.length) {
-    return true;
+const EQUIPMENT_ATTRIBUTE_LABELS: Record<string, string> = {
+  agonyduration: "Agony Duration",
+  boonduration: "Concentration",
+  concentration: "Concentration",
+  conditiondamage: "Condition Damage",
+  conditionduration: "Expertise",
+  critdamage: "Ferocity",
+  expertise: "Expertise",
+  ferocity: "Ferocity",
+  healing: "Healing Power",
+  healingpower: "Healing Power",
+  power: "Power",
+  precision: "Precision",
+  toughness: "Toughness",
+  vitality: "Vitality",
+};
+
+function normalizeEquipmentAttribute(value: string): string {
+  const normalized = normalizeEquipmentWord(value);
+  if (normalized === "conditionduration") return "expertise";
+  if (normalized === "boonduration") return "concentration";
+  if (normalized === "critdamage") return "ferocity";
+  if (normalized === "healing") return "healingpower";
+  return normalized;
+}
+
+function formatEquipmentAttribute(value: string): string {
+  const normalized = normalizeEquipmentWord(value);
+  return EQUIPMENT_ATTRIBUTE_LABELS[normalized] ?? value.replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+
+function normalizeEquipmentAffix(value?: string): string {
+  return normalizeEquipmentWord(value?.replace(/[’']s\b/gi, ""));
+}
+
+function getItemInfixUpgrade(item?: Gw2Item | null): Record<string, unknown> | null {
+  const infixUpgrade = item?.details?.infix_upgrade;
+  return infixUpgrade && typeof infixUpgrade === "object" ? infixUpgrade as Record<string, unknown> : null;
+}
+
+function getEquipmentStatId(actual: AccountEquipmentSlot, actualItem?: Gw2Item): number | null {
+  if (actual.stats?.id) return actual.stats.id;
+  const id = getItemInfixUpgrade(actualItem)?.id;
+  return typeof id === "number" ? id : null;
+}
+
+function getActualEquipmentAffix(
+  actual: AccountEquipmentSlot,
+  actualItem: Gw2Item | undefined,
+  itemStats: Map<number, Gw2ItemStat>,
+): string | undefined {
+  const statId = getEquipmentStatId(actual, actualItem);
+  return statId ? itemStats.get(statId)?.name : undefined;
+}
+
+function getStaticEquipmentAttributes(item?: Gw2Item | null): Array<{ name: string; value: number }> {
+  const attributes = getItemInfixUpgrade(item)?.attributes;
+  if (!Array.isArray(attributes)) return [];
+  return attributes.flatMap((attribute) => {
+    if (!attribute || typeof attribute !== "object") return [];
+    const row = attribute as Record<string, unknown>;
+    const name = typeof row.attribute === "string" ? row.attribute : typeof row.name === "string" ? row.name : null;
+    const value = typeof row.modifier === "number" ? row.modifier : typeof row.value === "number" ? row.value : null;
+    return name && value !== null ? [{ name: formatEquipmentAttribute(name), value }] : [];
+  });
+}
+
+function getActualEquipmentAttributes(
+  actual: AccountEquipmentSlot,
+  actualItem?: Gw2Item,
+): Array<{ name: string; value: number }> {
+  const reported = Object.entries(actual.stats?.attributes ?? {}).map(([name, value]) => ({
+    name: formatEquipmentAttribute(name),
+    value,
+  }));
+  return reported.length ? reported : getStaticEquipmentAttributes(actualItem);
+}
+
+function getDesiredEquipmentAttributes(
+  desired: BuildGoal["equipment"][number],
+  desiredItem?: Gw2Item | null,
+): Array<{ name: string; value?: number }> {
+  const attributes: Array<{ name: string; value?: number }> = desired.attributes?.length
+    ? desired.attributes
+    : desired.attributeNames.map((name) => ({ name }));
+  const staticValues = new Map(
+    getStaticEquipmentAttributes(desiredItem).map((attribute) => [normalizeEquipmentAttribute(attribute.name), attribute.value]),
+  );
+  return attributes.map((attribute) => ({
+    ...attribute,
+    name: formatEquipmentAttribute(attribute.name),
+    value: attribute.value ?? staticValues.get(normalizeEquipmentAttribute(attribute.name)),
+  }));
+}
+
+function getDesiredEquipmentAffix(desired: BuildGoal["equipment"][number]): string | undefined {
+  const value = desired.stat?.trim();
+  return value && !/^x\s*\d+$/i.test(value) ? value : undefined;
+}
+
+function isAffixEquipmentSlot(desired: BuildGoal["equipment"][number]): boolean {
+  if (isBuildUpgradeSlot(desired)) return false;
+  const normalized = normalizeEquipmentWord(desired.slot);
+  return !/relic|aquaticheadgear/.test(normalized) && Boolean(getDesiredEquipmentAffix(desired) || desired.attributeNames.length);
+}
+
+function matchesDesiredAffix(
+  desired: BuildGoal["equipment"][number],
+  actual: AccountEquipmentSlot,
+  actualItem: Gw2Item | undefined,
+  itemStats: Map<number, Gw2ItemStat>,
+): boolean {
+  const desiredAffix = getDesiredEquipmentAffix(desired);
+  const actualAffix = getActualEquipmentAffix(actual, actualItem, itemStats);
+  if (desiredAffix && actualAffix) {
+    return normalizeEquipmentAffix(desiredAffix) === normalizeEquipmentAffix(actualAffix);
   }
-  const actualAttributes = new Set(Object.keys(actual.stats?.attributes ?? {}).map(normalizeEquipmentWord));
-  return desired.attributeNames.every((attribute) => actualAttributes.has(normalizeEquipmentWord(attribute)));
+
+  const desiredAttributes = getDesiredEquipmentAttributes(desired);
+  if (!desiredAttributes.length) return false;
+  const actualAttributes = new Set(
+    getActualEquipmentAttributes(actual, actualItem).map((attribute) => normalizeEquipmentAttribute(attribute.name)),
+  );
+  return desiredAttributes.every((attribute) => actualAttributes.has(normalizeEquipmentAttribute(attribute.name)));
 }
 
 function getBuildGoalDesiredItem(
@@ -7900,15 +8419,36 @@ function compareBuildGoalEquipment(
   goal: BuildGoal,
   accountSnapshot: AccountSnapshot | null,
   accountItems: Map<number, Gw2Item>,
+  itemStats: Map<number, Gw2ItemStat>,
 ): BuildEquipmentComparison[] {
   if (!accountSnapshot) {
-    return goal.equipment.map((desired) => ({ desired, state: "missing", detail: "Load an account snapshot to compare this slot." }));
+    return goal.equipment.map((desired) => {
+      const desiredItem = getBuildGoalDesiredItem(desired, accountItems);
+      return {
+        desired,
+        state: "missing",
+        desiredAffix: getDesiredEquipmentAffix(desired),
+        desiredAttributes: getDesiredEquipmentAttributes(desired, desiredItem),
+        actualAttributes: [],
+        detail: "Load an account snapshot to compare this slot.",
+      };
+    });
   }
 
   const matchingProfession = accountSnapshot.characters.filter((character) => character.profession === goal.profession);
   const character = accountSnapshot.characters.find((entry) => entry.name === goal.characterName) ?? matchingProfession[0] ?? accountSnapshot.characters[0];
   if (!character) {
-    return goal.equipment.map((desired) => ({ desired, state: "missing", detail: "No character is available for comparison." }));
+    return goal.equipment.map((desired) => {
+      const desiredItem = getBuildGoalDesiredItem(desired, accountItems);
+      return {
+        desired,
+        state: "missing",
+        desiredAffix: getDesiredEquipmentAffix(desired),
+        desiredAttributes: getDesiredEquipmentAttributes(desired, desiredItem),
+        actualAttributes: [],
+        detail: "No character is available for comparison.",
+      };
+    });
   }
   const tabs = getCharacterEquipmentTabs(character);
   const tab = tabs.find((entry) => entry.tab === goal.equipmentTab) ?? tabs.find((entry) => entry.is_active) ?? tabs[0];
@@ -7922,27 +8462,41 @@ function compareBuildGoalEquipment(
 
   return goal.equipment.map((desired) => {
     const desiredItem = getBuildGoalDesiredItem(desired, accountItems);
+    const desiredAffix = getDesiredEquipmentAffix(desired);
+    const desiredAttributes = getDesiredEquipmentAttributes(desired, desiredItem);
+    const comparisonBase = { desired, desiredAffix, desiredAttributes };
     const quantity = getBuildSlotQuantity(desired);
     if (isBuildUpgradeSlot(desired)) {
       if (desired.itemId && (upgradeCounts.get(desired.itemId) ?? 0) >= quantity) {
-        return { desired, state: "exact", actualItem: desiredItem ?? undefined, detail: `${quantity} equipped in this template.` };
+        return { ...comparisonBase, state: "exact", actualItem: desiredItem ?? undefined, actualAttributes: [], detail: `${quantity} equipped in this template.` };
       }
       if (desired.itemId && (accountSnapshot.holdings.get(desired.itemId) ?? 0) >= quantity) {
-        return { desired, state: "owned", actualItem: desiredItem ?? undefined, detail: `${quantity} owned elsewhere on the account.` };
+        return { ...comparisonBase, state: "owned", actualItem: desiredItem ?? undefined, actualAttributes: [], detail: `${quantity} owned elsewhere on the account.` };
       }
-      return { desired, state: "missing", actualItem: desiredItem ?? undefined, detail: desired.itemId ? `${quantity} required.` : "Recommended upgrade is not confirmed on this template." };
+      return { ...comparisonBase, state: "missing", actualItem: desiredItem ?? undefined, actualAttributes: [], detail: desired.itemId ? `${quantity} required.` : "Recommended upgrade is not confirmed on this template." };
     }
 
+    const affixEquipment = isAffixEquipmentSlot(desired);
     const exactIndex = desired.itemId
       ? actualEquipment.findIndex((slot, index) => {
-          const hasReportedAttributes = Object.keys(slot.stats?.attributes ?? {}).length > 0;
-          return !usedSlots.has(index) && slot.id === desired.itemId && (!hasReportedAttributes || matchesDesiredAttributes(desired, slot));
+          if (usedSlots.has(index) || slot.id !== desired.itemId) return false;
+          const actualItem = accountItems.get(slot.id);
+          return !affixEquipment || matchesDesiredAffix(desired, slot, actualItem, itemStats);
         })
       : -1;
     if (exactIndex >= 0) {
       usedSlots.add(exactIndex);
       const actual = actualEquipment[exactIndex];
-      return { desired, state: "exact", actual, actualItem: accountItems.get(actual.id), detail: "Exact recommended item equipped." };
+      const actualItem = accountItems.get(actual.id);
+      return {
+        ...comparisonBase,
+        state: "exact",
+        actual,
+        actualItem,
+        actualAffix: getActualEquipmentAffix(actual, actualItem, itemStats),
+        actualAttributes: getActualEquipmentAttributes(actual, actualItem),
+        detail: affixEquipment ? "Recommended item and prefix equipped." : "Exact recommended item equipped.",
+      };
     }
 
     const slotPattern = getDesiredEquipmentSlotPattern(desired.slot);
@@ -7957,56 +8511,115 @@ function compareBuildGoalEquipment(
       if (isWeaponRecommendation && desiredType && actualType && !desiredType.includes(actualType) && !actualType.includes(desiredType)) {
         return false;
       }
-      return matchesDesiredAttributes(desired, slot);
+      return affixEquipment && matchesDesiredAffix(desired, slot, actualItem, itemStats);
     });
     if (compatibleIndex >= 0) {
       usedSlots.add(compatibleIndex);
       const actual = actualEquipment[compatibleIndex];
+      const actualItem = accountItems.get(actual.id);
       return {
-        desired,
-        state: desired.itemId ? "compatible" : "compatible",
+        ...comparisonBase,
+        state: "compatible",
         actual,
-        actualItem: accountItems.get(actual.id),
-        detail: desired.stat ? `Compatible ${desired.stat} attributes equipped.` : "Compatible equipment occupies this slot.",
+        actualItem,
+        actualAffix: getActualEquipmentAffix(actual, actualItem, itemStats),
+        actualAttributes: getActualEquipmentAttributes(actual, actualItem),
+        detail: desiredAffix ? `Matching ${desiredAffix} prefix equipped.` : "Matching attributes equipped.",
       };
     }
 
     if (desired.itemId && (accountSnapshot.holdings.get(desired.itemId) ?? 0) >= quantity) {
-      return { desired, state: "owned", actualItem: desiredItem ?? undefined, detail: "Recommended item is owned elsewhere on the account." };
+      return { ...comparisonBase, state: "owned", actualItem: desiredItem ?? undefined, actualAttributes: [], detail: "Recommended item is owned elsewhere on the account." };
     }
 
     const occupiedIndex = actualEquipment.findIndex((slot, index) => !usedSlots.has(index) && Boolean(slotPattern?.test(slot.slot)));
     const actual = occupiedIndex >= 0 ? actualEquipment[occupiedIndex] : undefined;
+    const actualItem = actual ? accountItems.get(actual.id) : undefined;
     if (occupiedIndex >= 0) usedSlots.add(occupiedIndex);
     return {
-      desired,
+      ...comparisonBase,
       state: "missing",
       actual,
-      actualItem: actual ? accountItems.get(actual.id) : undefined,
-      detail: actual ? "This slot is occupied, but the item or attributes do not match." : "Nothing matching this recommendation is equipped or owned.",
+      actualItem,
+      actualAffix: actual ? getActualEquipmentAffix(actual, actualItem, itemStats) : undefined,
+      actualAttributes: actual ? getActualEquipmentAttributes(actual, actualItem) : [],
+      detail: actual
+        ? affixEquipment
+          ? `This slot is occupied, but its ${getActualEquipmentAffix(actual, actualItem, itemStats) ?? "unknown"} prefix does not match.`
+          : "This slot is occupied, but the required item does not match."
+        : "Nothing matching this recommendation is equipped or owned.",
     };
   });
 }
 
-function summarizeBuildGoalEquipment(goal: BuildGoal, accountSnapshot: AccountSnapshot | null, accountItems: Map<number, Gw2Item>) {
-  const comparisons = compareBuildGoalEquipment(goal, accountSnapshot, accountItems);
+function summarizeBuildGoalEquipment(
+  goal: BuildGoal,
+  accountSnapshot: AccountSnapshot | null,
+  accountItems: Map<number, Gw2Item>,
+  itemStats: Map<number, Gw2ItemStat>,
+) {
+  const comparisons = compareBuildGoalEquipment(goal, accountSnapshot, accountItems, itemStats);
   const ready = comparisons.filter((entry) => entry.state !== "missing").length;
   const total = comparisons.length;
   return { ready, total, percent: total ? Math.round((ready / total) * 100) : 0 };
 }
 
+function findCheapestCompatibleItem(
+  desired: BuildGoal["equipment"][number],
+  catalog: MarketItem[],
+): MarketItem | null {
+  if (!isAffixEquipmentSlot(desired)) return null;
+  const desiredNames = new Set(getDesiredEquipmentAttributes(desired).map((attribute) => normalizeEquipmentAttribute(attribute.name)));
+  const desiredSlot = normalizeEquipmentWord(desired.slot);
+  return catalog
+    .filter((item) => {
+      if (!item.price.sells.unit_price || (desired.itemType && item.type !== desired.itemType)) return false;
+      const itemType = normalizeEquipmentWord(String(item.details?.type ?? ""));
+      if (/weapon|axe|torch|pistol|sword|dagger|mace|staff|rifle|bow|focus|shield|warhorn|scepter|greatsword|hammer/.test(desiredSlot)) {
+        const requestedWeapon = desiredSlot.replace(/^weapon/, "");
+        if (requestedWeapon && itemType && !requestedWeapon.includes(itemType) && !itemType.includes(requestedWeapon)) return false;
+      }
+      const attributes = new Set(getStaticEquipmentAttributes(item).map((attribute) => normalizeEquipmentAttribute(attribute.name)));
+      return desiredNames.size > 0 && Array.from(desiredNames).every((name) => attributes.has(name));
+    })
+    .sort((left, right) => left.price.sells.unit_price - right.price.sells.unit_price)[0] ?? null;
+}
+
+function EquipmentAttributeList({
+  attributes,
+  tone = "desired",
+}: {
+  attributes: Array<{ name: string; value?: number }>;
+  tone?: "desired" | "current";
+}) {
+  if (!attributes.length) return null;
+  return (
+    <span className={`build-goal-attribute-list ${tone}`}>
+      {attributes.map((attribute) => (
+        <span key={`${attribute.name}-${attribute.value ?? "unknown"}`}>
+          {typeof attribute.value === "number" ? `+${attribute.value.toLocaleString()} ` : ""}{attribute.name}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function BuildGoalDetail({
   goal,
+  catalog,
   accountSnapshot,
   accountItems,
+  accountItemStats,
   onUpdate,
   onRemove,
   onOpenItem,
   onAddItemGoal,
 }: {
   goal: BuildGoal;
+  catalog: MarketItem[];
   accountSnapshot: AccountSnapshot | null;
   accountItems: Map<number, Gw2Item>;
+  accountItemStats: Map<number, Gw2ItemStat>;
   onUpdate: (updates: Partial<Pick<BuildGoal, "status" | "note" | "characterName" | "equipmentTab">>) => void;
   onRemove: () => void;
   onOpenItem: (item: Gw2Item) => void;
@@ -8017,14 +8630,55 @@ function BuildGoalDetail({
   const selectedCharacter = characters.find((character) => character.name === goal.characterName) ?? characters[0] ?? null;
   const tabs = selectedCharacter ? getCharacterEquipmentTabs(selectedCharacter) : [];
   const selectedTab = tabs.find((tab) => tab.tab === goal.equipmentTab) ?? tabs.find((tab) => tab.is_active) ?? tabs[0] ?? null;
-  const effectiveGoal = { ...goal, characterName: selectedCharacter?.name, equipmentTab: selectedTab?.tab };
-  const comparisons = compareBuildGoalEquipment(effectiveGoal, accountSnapshot, accountItems);
+  const effectiveGoal = useMemo(
+    () => ({ ...goal, characterName: selectedCharacter?.name, equipmentTab: selectedTab?.tab }),
+    [goal, selectedCharacter?.name, selectedTab?.tab],
+  );
+  const comparisons = useMemo(
+    () => compareBuildGoalEquipment(effectiveGoal, accountSnapshot, accountItems, accountItemStats),
+    [accountItemStats, accountItems, accountSnapshot, effectiveGoal],
+  );
   const counts = {
     exact: comparisons.filter((entry) => entry.state === "exact").length,
     compatible: comparisons.filter((entry) => entry.state === "compatible").length,
     owned: comparisons.filter((entry) => entry.state === "owned").length,
     missing: comparisons.filter((entry) => entry.state === "missing").length,
   };
+  const attributeTotals = comparisons.reduce(
+    (totals, comparison) => {
+      comparison.desiredAttributes.forEach((attribute) => {
+        if (typeof attribute.value === "number") totals.desired.set(attribute.name, (totals.desired.get(attribute.name) ?? 0) + attribute.value);
+      });
+      comparison.actualAttributes.forEach((attribute) => {
+        totals.actual.set(attribute.name, (totals.actual.get(attribute.name) ?? 0) + attribute.value);
+      });
+      return totals;
+    },
+    { desired: new Map<string, number>(), actual: new Map<string, number>() },
+  );
+  const attributeNames = Array.from(new Set([...attributeTotals.desired.keys(), ...attributeTotals.actual.keys()]))
+    .sort((left, right) => (attributeTotals.desired.get(right) ?? 0) - (attributeTotals.desired.get(left) ?? 0));
+  const missingProjectItems = comparisons
+    .filter((comparison) => comparison.state === "missing")
+    .map((comparison) => ({ comparison, item: getBuildGoalDesiredItem(comparison.desired, accountItems) }))
+    .filter((entry): entry is { comparison: BuildEquipmentComparison; item: Gw2Item } => Boolean(entry.item));
+  const missingProjectTargets = Array.from(
+    missingProjectItems.reduce((targets, { comparison, item }) => {
+      const current = targets.get(item.id);
+      const quantity = getBuildSlotQuantity(comparison.desired);
+      targets.set(item.id, { item, quantity: (current?.quantity ?? 0) + quantity });
+      return targets;
+    }, new Map<number, { item: Gw2Item; quantity: number }>()).values(),
+  );
+  const compatibleAlternatives = useMemo(() => {
+    const matches = new Map<number, MarketItem>();
+    comparisons.forEach((comparison, index) => {
+      if (comparison.state !== "missing") return;
+      const match = findCheapestCompatibleItem(comparison.desired, catalog);
+      if (match) matches.set(index, match);
+    });
+    return matches;
+  }, [catalog, comparisons]);
 
   return (
     <div className="project-detail build-goal-detail">
@@ -8035,6 +8689,11 @@ function BuildGoalDetail({
           <p>{goal.profession}{goal.eliteSpec ? ` · ${goal.eliteSpec}` : ""} · {goal.section}</p>
         </div>
         <div className="project-detail-actions">
+          {missingProjectTargets.length ? (
+            <button className="icon-button primary" type="button" onClick={() => missingProjectTargets.forEach(({ item, quantity }) => onAddItemGoal(item, quantity))}>
+              <Target /><span>Add {missingProjectTargets.length} Missing</span>
+            </button>
+          ) : null}
           <a className="icon-button" href={goal.sourceUrl} target="_blank" rel="noreferrer"><ExternalLink /><span>Source</span></a>
           <button className="icon-button danger" type="button" onClick={onRemove}><X /><span>Remove</span></button>
         </div>
@@ -8082,17 +8741,41 @@ function BuildGoalDetail({
       ) : null}
 
       <section className="stat-grid build-goal-stat-grid">
-        <Metric icon={<CheckCircle2 />} label="Exact" value={counts.exact.toLocaleString()} tone="positive" />
-        <Metric icon={<ShieldCheck />} label="Compatible" value={counts.compatible.toLocaleString()} />
+        <Metric icon={<CheckCircle2 />} label="Recommended Item" value={counts.exact.toLocaleString()} tone="positive" />
+        <Metric icon={<ShieldCheck />} label="Matching Prefix" value={counts.compatible.toLocaleString()} />
         <Metric icon={<Backpack />} label="Owned Elsewhere" value={counts.owned.toLocaleString()} />
         <Metric icon={<Target />} label="Missing" value={counts.missing.toLocaleString()} tone={counts.missing ? "negative" : "positive"} />
       </section>
+
+      {attributeNames.length ? (
+        <section className="surface build-goal-attribute-summary">
+          <div className="section-title"><TrendingUp /><h3>Equipment Attribute Totals</h3></div>
+          <div className="build-goal-total-table">
+            <span className="table-heading">Attribute</span><span className="table-heading">Build</span><span className="table-heading">Equipped</span><span className="table-heading">Difference</span>
+            {attributeNames.map((name) => {
+              const desiredValue = attributeTotals.desired.get(name) ?? 0;
+              const actualValue = attributeTotals.actual.get(name) ?? 0;
+              const difference = actualValue - desiredValue;
+              return (
+                <Fragment key={name}>
+                  <strong>{name}</strong>
+                  <span>{desiredValue.toLocaleString()}</span>
+                  <span>{actualValue.toLocaleString()}</span>
+                  <span className={difference >= 0 ? "positive" : "negative"}>{difference > 0 ? "+" : ""}{difference.toLocaleString()}</span>
+                </Fragment>
+              );
+            })}
+          </div>
+          <p className="muted-copy">Build totals use the guide's level-80 item bonuses. Equipped totals use the selected character template reported by the GW2 API.</p>
+        </section>
+      ) : null}
 
       <section className="surface build-goal-comparison-surface">
         <div className="section-title"><ShieldCheck /><h3>Equipment Comparison</h3></div>
         <div className="build-goal-comparison-list">
           {comparisons.map((comparison, index) => {
             const desiredItem = getBuildGoalDesiredItem(comparison.desired, accountItems);
+            const alternative = compatibleAlternatives.get(index);
             return (
               <article key={`${comparison.desired.slot}-${comparison.desired.itemId ?? comparison.desired.stat ?? index}-${index}`} className={`build-goal-comparison-row ${comparison.state}`}>
                 <span className="build-goal-item-icon">
@@ -8100,11 +8783,31 @@ function BuildGoalDetail({
                 </span>
                 <span className="build-goal-slot-copy">
                   <strong>{comparison.desired.itemName ?? `${comparison.desired.slot}${comparison.desired.stat ? ` · ${comparison.desired.stat}` : ""}`}</strong>
-                  <small>{comparison.desired.slot}{comparison.desired.stat ? ` · ${comparison.desired.stat}` : ""}</small>
+                  <small>{comparison.desired.slot}{comparison.desiredAffix ? ` · ${comparison.desiredAffix}` : ""}</small>
+                  <EquipmentAttributeList attributes={comparison.desiredAttributes} />
                 </span>
                 <span className="build-goal-match-copy">
-                  <span className={`build-goal-state ${comparison.state}`}>{comparison.state === "owned" ? "Owned elsewhere" : comparison.state}</span>
-                  <small>{comparison.actualItem ? `Current: ${comparison.actualItem.name} · ` : ""}{comparison.detail}</small>
+                  <span className={`build-goal-state ${comparison.state}`}>
+                    {comparison.state === "exact"
+                      ? "Recommended item"
+                      : comparison.state === "compatible"
+                        ? "Matching prefix"
+                        : comparison.state === "owned"
+                          ? "Owned elsewhere"
+                          : "Missing"}
+                  </span>
+                  <small>
+                    {comparison.actualItem
+                      ? `Current: ${comparison.actualItem.name}${comparison.actualAffix ? ` · ${comparison.actualAffix}` : ""} · `
+                      : ""}
+                    {comparison.detail}
+                  </small>
+                  <EquipmentAttributeList attributes={comparison.actualAttributes} tone="current" />
+                  {alternative ? (
+                    <button type="button" className="build-goal-alternative" onClick={() => onOpenItem(alternative)}>
+                      Cheapest fixed-stat match: <ItemGradeName name={alternative.name} rarity={alternative.rarity} /> · <Money value={alternative.price.sells.unit_price} />
+                    </button>
+                  ) : null}
                 </span>
                 <span className="build-goal-row-actions">
                   {desiredItem ? <button className="icon-button" type="button" onClick={() => onOpenItem(desiredItem)} title="Open item detail"><ExternalLink /></button> : null}
@@ -8400,30 +9103,150 @@ function selectGoalRecipe(recipes: RecipeGuide[], strategy: GoalStrategy): Recip
   })[0];
 }
 
+interface VendorShoppingEntry {
+  itemName: string;
+  quantity: number;
+  store: GuideStore;
+  offer: GuideStoreItem;
+}
+
+function buildVendorShoppingEntries(
+  goals: ProjectGoal[],
+  buildGoals: BuildGoal[],
+  accountSnapshot: AccountSnapshot | null,
+): VendorShoppingEntry[] {
+  const targets = new Map<string, number>();
+  goals.filter((goal) => goal.status === "active").forEach((goal) => {
+    const remaining = Math.max(0, goal.quantity - (accountSnapshot?.holdings.get(goal.itemId) ?? 0));
+    if (remaining > 0) targets.set(normalizeSearchText(goal.itemName), remaining);
+    const recipe = getCachedRecipeGuidesForOutput(goal.itemId, accountSnapshot?.holdings)
+      .sort((left, right) => left.personalCost - right.personalCost)[0];
+    if (recipe && remaining > 0) {
+      const runs = Math.ceil(remaining / Math.max(1, recipe.recipe.output_item_count));
+      recipe.ingredients.forEach((ingredient) => {
+        if (!ingredient.item) return;
+        const required = ingredient.count * runs;
+        const missing = Math.max(0, required - (accountSnapshot?.holdings.get(ingredient.item.id) ?? 0));
+        if (missing > 0) {
+          const key = normalizeSearchText(ingredient.item.name);
+          targets.set(key, Math.max(missing, targets.get(key) ?? 0));
+        }
+      });
+    }
+  });
+  buildGoals.filter((goal) => goal.status === "active").forEach((goal) => {
+    goal.equipment.forEach((slot) => {
+      if (!slot.itemName) return;
+      const quantity = getBuildSlotQuantity(slot);
+      const owned = slot.itemId ? accountSnapshot?.holdings.get(slot.itemId) ?? 0 : 0;
+      if (owned < quantity) targets.set(normalizeSearchText(slot.itemName), Math.max(quantity - owned, targets.get(normalizeSearchText(slot.itemName)) ?? 0));
+    });
+  });
+
+  const entries: VendorShoppingEntry[] = [];
+  Object.values(GUIDE_DEFINITIONS).forEach((guide) => {
+    guide.stores?.forEach((store) => {
+      store.items.forEach((offer) => {
+        const quantity = targets.get(normalizeSearchText(offer.name));
+        if (quantity) entries.push({ itemName: offer.name, quantity, store, offer });
+      });
+    });
+  });
+  return entries.filter(
+    (entry, index, rows) => rows.findIndex((row) => row.itemName === entry.itemName && row.store.name === entry.store.name) === index,
+  );
+}
+
+function MetaOpportunitySortControl({
+  value,
+  onChange,
+}: {
+  value: MetaOpportunitySort;
+  onChange: (value: MetaOpportunitySort) => void;
+}) {
+  return (
+    <div className="meta-opportunity-sort" aria-label="Sort meta opportunities">
+      <button type="button" className={value === "time" ? "active" : ""} onClick={() => onChange("time")}>
+        <Clock />
+        <span>Soonest</span>
+      </button>
+      <button type="button" className={value === "profit" ? "active" : ""} onClick={() => onChange("profit")}>
+        <TrendingUp />
+        <span>Profit</span>
+      </button>
+    </div>
+  );
+}
+
+function MetaOpportunityList({
+  opportunities,
+  now,
+  limit,
+  onOpenPage,
+}: {
+  opportunities: MetaOpportunity[];
+  now: number;
+  limit?: number;
+  onOpenPage: (page: ActivePage) => void;
+}) {
+  return (
+    <div className="meta-opportunity-list">
+      {opportunities.slice(0, limit ?? opportunities.length).map((opportunity) => (
+        <button
+          key={opportunity.event.id}
+          type="button"
+          className={`meta-opportunity-row ${opportunity.timing.active ? "active" : ""}`}
+          onClick={() => onOpenPage(opportunity.event.pageId ?? "meta-train")}
+        >
+          <span className={opportunity.timing.active ? "meta-live-dot active" : "meta-live-dot"} />
+          <span className="meta-opportunity-copy">
+            <strong>{opportunity.event.title}</strong>
+            <small>{opportunity.event.map} · {getMetaOpportunityStatus(opportunity, now)}</small>
+          </span>
+          <span className="meta-opportunity-value">
+            {opportunity.estimate ? (
+              <>
+                <MoneyRange min={opportunity.estimate.goldMin} max={opportunity.estimate.goldMax} />
+                <small>estimated / hour</small>
+              </>
+            ) : (
+              <small>No value estimate</small>
+            )}
+          </span>
+          <ChevronRight />
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function DailyPlannerPage({
   apiKey,
   accountSnapshot,
   onOpenPage,
+  onOpenProject,
+  onOpenVaultObjective,
 }: {
   apiKey: string;
   accountSnapshot: AccountSnapshot | null;
   onOpenPage: (page: ActivePage) => void;
+  onOpenProject: (goalId: string) => void;
+  onOpenVaultObjective: (objectiveId: number) => void;
 }) {
   const { goals, buildGoals } = useProjectGoals();
   const [checks, setChecks] = useState<Set<string>>(() => readDailyChecks());
   const [vault, setVault] = useState<WizardVaultSnapshot | null>(null);
   const [vaultState, setVaultState] = useState<LoadState>("idle");
   const [now, setNow] = useState(Date.now());
+  const [metaSort, setMetaSort] = useState<MetaOpportunitySort>("time");
   const dateKey = getDailyStorageKey(new Date(now));
   const activeGoals = goals.filter((goal) => goal.status === "active");
   const activeBuildGoals = buildGoals.filter((goal) => goal.status === "active");
   const dailyObjectives = vault?.sections.find((section) => section.id === "daily")?.objectives ?? [];
   const incompleteObjectives = dailyObjectives.filter((objective) => !objective.claimed);
-  const upcomingMetas = META_SCHEDULES
-    .filter((event) => event.mode === "fixed")
-    .map((event) => ({ event, timing: getMetaTiming(event, now) }))
-    .sort((left, right) => left.timing.nextStart - right.timing.nextStart)
-    .slice(0, 3);
+  const upcomingMetas = buildMetaOpportunities(now, metaSort);
+  const nextFixedMeta = buildMetaOpportunities(now, "time")
+    .find((opportunity) => opportunity.event.mode === "fixed");
   const projectTasks = activeGoals.slice(0, 5).map((goal) => {
     const owned = accountSnapshot?.holdings.get(goal.itemId) ?? 0;
     const remaining = Math.max(0, goal.quantity - owned);
@@ -8434,6 +9257,7 @@ function DailyPlannerPage({
         ? `${remaining.toLocaleString()} target items remain; open the project for its next material step.`
         : "Target quantity is owned; review and complete the project.",
       page: "projects" as ActivePage,
+      targetGoalId: goal.id,
     };
   });
   const buildTasks = activeBuildGoals.slice(0, 3).map((goal) => ({
@@ -8443,14 +9267,16 @@ function DailyPlannerPage({
       ? `Review the missing equipment on ${goal.characterName}'s selected template.`
       : "Choose a character and equipment template to calculate build readiness.",
     page: "projects" as ActivePage,
+    targetGoalId: goal.id,
   }));
-  const vaultTasks = incompleteObjectives.slice(0, 6).map((objective) => ({
+  const vaultTasks = dailyObjectives.slice(0, 6).map((objective) => ({
     id: `vault:${objective.id}`,
     title: objective.title,
     detail: objective.complete
       ? `${objective.current ?? 0} / ${objective.complete} · ${objective.acclaim} Astral Acclaim`
       : `${objective.acclaim} Astral Acclaim`,
     page: "wizard-vault" as ActivePage,
+    targetObjectiveId: objective.id,
   }));
   const routineTasks = [
     {
@@ -8473,7 +9299,16 @@ function DailyPlannerPage({
     },
   ];
   const allTasks = [...buildTasks, ...projectTasks, ...vaultTasks, ...routineTasks];
-  const completedCount = allTasks.filter((task) => checks.has(task.id)).length;
+  const todaysSessions = readFarmSessionHistory().filter((session) => getDailyStorageKey(new Date(session.endedAt)) === dateKey);
+  const automaticChecks = new Set<string>([
+    ...(accountSnapshot ? ["routine:account"] : []),
+    ...(todaysSessions.length ? ["routine:farm"] : []),
+    ...dailyObjectives.filter((objective) => objective.claimed).map((objective) => `vault:${objective.id}`),
+    ...activeGoals.filter((goal) => (accountSnapshot?.holdings.get(goal.itemId) ?? 0) >= goal.quantity).map((goal) => `goal:${goal.id}`),
+  ]);
+  const isTaskComplete = (taskId: string) => automaticChecks.has(taskId) || checks.has(taskId);
+  const completedCount = allTasks.filter((task) => isTaskComplete(task.id)).length;
+  const shoppingEntries = buildVendorShoppingEntries(goals, buildGoals, accountSnapshot).slice(0, 12);
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -8532,7 +9367,15 @@ function DailyPlannerPage({
         <Metric icon={<CheckCircle2 />} label="Tasks Complete" value={`${completedCount} / ${allTasks.length}`} tone={completedCount === allTasks.length && allTasks.length ? "positive" : "default"} />
         <Metric icon={<Target />} label="Active Projects" value={(activeGoals.length + activeBuildGoals.length).toLocaleString()} />
         <Metric icon={<Coins />} label="Vault Tasks" value={vaultState === "loading" ? "Loading" : incompleteObjectives.length.toLocaleString()} />
-        <Metric icon={<Clock />} label="Next Fixed Meta" value={upcomingMetas[0] ? formatCountdown(upcomingMetas[0].timing.nextStart - now) : "None"} />
+        <Metric
+          icon={<Clock />}
+          label="Next Fixed Meta"
+          value={nextFixedMeta
+            ? nextFixedMeta.timing.active
+              ? "Active now"
+              : formatCountdown(nextFixedMeta.timing.nextStart - now)
+            : "None"}
+        />
       </section>
 
       <div className="daily-planner-grid">
@@ -8542,15 +9385,29 @@ function DailyPlannerPage({
             <h3>Today&apos;s Actions</h3>
           </div>
           {allTasks.map((task) => (
-            <div key={task.id} className={`daily-task-row ${checks.has(task.id) ? "complete" : ""}`}>
-              <button type="button" className="daily-check-button" onClick={() => toggleCheck(task.id)} aria-label={checks.has(task.id) ? `Mark ${task.title} incomplete` : `Mark ${task.title} complete`}>
-                {checks.has(task.id) ? <CheckCircle2 /> : <span />}
+            <div key={task.id} className={`daily-task-row ${isTaskComplete(task.id) ? "complete" : ""}`}>
+              <button type="button" className="daily-check-button" onClick={() => toggleCheck(task.id)} disabled={automaticChecks.has(task.id)} aria-label={isTaskComplete(task.id) ? `Mark ${task.title} incomplete` : `Mark ${task.title} complete`}>
+                {isTaskComplete(task.id) ? <CheckCircle2 /> : <span />}
               </button>
               <span>
                 <strong>{task.title}</strong>
                 <small>{task.detail}</small>
+                {automaticChecks.has(task.id) ? <DataQualityBadge level="Exact" /> : null}
               </span>
-              <button type="button" className="icon-button compact" onClick={() => onOpenPage(task.page)} title={`Open ${task.title}`}>
+              <button
+                type="button"
+                className="icon-button compact"
+                onClick={() => {
+                  if ("targetGoalId" in task && typeof task.targetGoalId === "string") {
+                    onOpenProject(task.targetGoalId);
+                  } else if ("targetObjectiveId" in task && typeof task.targetObjectiveId === "number") {
+                    onOpenVaultObjective(task.targetObjectiveId);
+                  } else {
+                    onOpenPage(task.page);
+                  }
+                }}
+                title={`Open ${task.title}`}
+              >
                 <ChevronRight />
               </button>
             </div>
@@ -8558,30 +9415,36 @@ function DailyPlannerPage({
         </section>
 
         <section className="surface daily-meta-section">
-          <div className="section-title">
-            <Route />
-            <h3>Upcoming Metas</h3>
+          <div className="daily-meta-heading">
+            <div className="section-title">
+              <Route />
+              <h3>Meta Opportunities</h3>
+            </div>
+            <MetaOpportunitySortControl value={metaSort} onChange={setMetaSort} />
           </div>
-          {upcomingMetas.map(({ event, timing }) => (
-            <article key={event.id} className="daily-meta-row">
-              <span className={timing.active ? "meta-live-dot active" : "meta-live-dot"} />
-              <div>
-                <strong>{event.title}</strong>
-                <small>{event.map} · {timing.active ? `${formatCountdown(timing.endAt - now)} remaining` : `starts in ${formatCountdown(timing.nextStart - now)}`}</small>
-              </div>
-              {event.pageId ? (
-                <button type="button" className="icon-button compact" onClick={() => onOpenPage(event.pageId!)} title={`Open ${event.title} guide`}>
-                  <ChevronRight />
-                </button>
-              ) : null}
-            </article>
-          ))}
+          <MetaOpportunityList opportunities={upcomingMetas} now={now} limit={6} onOpenPage={onOpenPage} />
           <button type="button" className="icon-button daily-open-train" onClick={() => onOpenPage("meta-train")}>
             <Route />
             <span>Plan Meta Train</span>
           </button>
         </section>
       </div>
+
+      <section className="surface daily-shopping-section">
+        <div className="section-title"><ShoppingCart /><h3>Vendor Shopping List</h3></div>
+        {shoppingEntries.length ? (
+          <div className="vendor-shopping-list">
+            {shoppingEntries.map((entry) => (
+              <article key={`${entry.store.name}-${entry.itemName}`}>
+                <span><strong>{entry.quantity.toLocaleString()}x {entry.itemName}</strong><small>{entry.store.name} · {entry.store.location}</small></span>
+                <GuideCurrencyValue value={entry.offer.price} />
+                {entry.store.waypoint ? <CopyableChatCode code={entry.store.waypoint} /> : null}
+                <a href={entry.offer.wikiUrl ?? entry.store.url} target="_blank" rel="noreferrer" aria-label={`Open ${entry.itemName} source`}><ExternalLink /></a>
+              </article>
+            ))}
+          </div>
+        ) : <p className="muted-copy">No active project target is sold by a currently modeled guide vendor.</p>}
+      </section>
     </div>
   );
 }
@@ -8628,6 +9491,31 @@ function MetaTrainPlannerPage({ onOpenPage }: { onOpenPage: (page: ActivePage) =
     });
   }
 
+  function optimizeTrain() {
+    const horizon = now + 3 * 60 * 60_000;
+    const fixedCandidates = META_SCHEDULES
+      .filter((event) => event.mode === "fixed")
+      .map((event) => {
+        const timing = getMetaTiming(event, now);
+        return { event, start: timing.active ? timing.previousStart : timing.nextStart, active: timing.active };
+      })
+      .filter((entry) => entry.active || entry.start <= horizon)
+      .sort((left, right) => left.start - right.start);
+    const selected: string[] = [];
+    let availableAt = now - 5 * 60_000;
+    fixedCandidates.forEach(({ event, start, active }) => {
+      const effectiveStart = active ? now : start;
+      if (effectiveStart >= availableAt) {
+        selected.push(event.id);
+        availableAt = effectiveStart + event.durationMinutes * 60_000 + 5 * 60_000;
+      }
+    });
+    const selectedSet = new Set(selected);
+    const remainder = META_SCHEDULES.map((event) => event.id).filter((id) => !selectedSet.has(id));
+    const order = [...selected, ...remainder];
+    setStops(order.map((eventId, index) => ({ eventId, enabled: selectedSet.has(eventId), order: index })));
+  }
+
   return (
     <div className="focused-page meta-train-page">
       <section className="page-header">
@@ -8643,6 +9531,10 @@ function MetaTrainPlannerPage({ onOpenPage }: { onOpenPage: (page: ActivePage) =
             <small>{Intl.DateTimeFormat().resolvedOptions().timeZone}</small>
           </span>
         </div>
+        <button type="button" className="icon-button primary" onClick={optimizeTrain} title="Build a conflict-free train for the next three hours">
+          <Route />
+          <span>Optimize Next 3 Hours</span>
+        </button>
       </section>
 
       <section className="surface meta-train-timeline">
@@ -8735,6 +9627,55 @@ function getMetaTiming(event: MetaScheduleDefinition, now: number) {
   const active = now >= previousStart && now < endAt;
   const nextStart = active ? previousStart : previousStart + event.cadenceMinutes * minuteMs;
   return { active, previousStart, nextStart, endAt };
+}
+
+function buildMetaOpportunities(now: number, sort: MetaOpportunitySort): MetaOpportunity[] {
+  const opportunities = META_SCHEDULES.map((event) => {
+    const estimateName = META_SCHEDULE_ESTIMATE_NAMES[event.id];
+    const estimate = estimateName
+      ? META_FARM_ESTIMATES.find((entry) => entry.name === estimateName) ?? null
+      : null;
+    return {
+      event,
+      timing: getMetaTiming(event, now),
+      estimate,
+      averageGoldPerHour: estimate ? (estimate.goldMin + estimate.goldMax) / 2 : 0,
+    };
+  });
+
+  return opportunities.sort((left, right) => {
+    if (sort === "profit") {
+      return (
+        right.averageGoldPerHour - left.averageGoldPerHour ||
+        getMetaOpportunityTimeScore(left, now) - getMetaOpportunityTimeScore(right, now)
+      );
+    }
+
+    return (
+      getMetaOpportunityTimeScore(left, now) - getMetaOpportunityTimeScore(right, now) ||
+      right.averageGoldPerHour - left.averageGoldPerHour
+    );
+  });
+}
+
+function getMetaOpportunityTimeScore(opportunity: MetaOpportunity, now: number): number {
+  if (opportunity.timing.active) return now - 1;
+  if (opportunity.event.mode === "fixed") return opportunity.timing.nextStart;
+  if (opportunity.event.mode === "continuous") return Number.MAX_SAFE_INTEGER - 1;
+  return Number.MAX_SAFE_INTEGER;
+}
+
+function getMetaOpportunityStatus(opportunity: MetaOpportunity, now: number): string {
+  if (opportunity.timing.active) {
+    return `Active now · ${formatCountdown(opportunity.timing.endAt - now)} left`;
+  }
+  if (opportunity.event.mode === "fixed") {
+    return `Starts ${formatClockTime(opportunity.timing.nextStart)} · in ${formatCountdown(opportunity.timing.nextStart - now)}`;
+  }
+  if (opportunity.event.mode === "continuous") {
+    return "Continuous route · join an active commander map";
+  }
+  return "Instance-driven · check LFG and map state";
 }
 
 function getMetaScheduleConflictIds(
@@ -9036,6 +9977,7 @@ async function showDesktopNotification(title: string, body: string): Promise<boo
 
 function AcquisitionExplorerPage({
   catalog,
+  accountItems,
   loadState,
   selectedItem,
   recipes,
@@ -9046,6 +9988,7 @@ function AcquisitionExplorerPage({
   onClose,
 }: {
   catalog: MarketItem[];
+  accountItems: Map<number, Gw2Item>;
   loadState: LoadState;
   selectedItem: MarketItem | null;
   recipes: RecipeGuide[];
@@ -9059,15 +10002,23 @@ function AcquisitionExplorerPage({
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const goalIds = useMemo(() => new Set(goals.map((goal) => goal.itemId)), [goals]);
+  const searchableItems = useMemo(() => {
+    const byId = new Map<number, MarketItem>();
+    catalog.forEach((item) => byId.set(item.id, item));
+    [...getStoredItems(), ...accountItems.values()].forEach((item) => {
+      if (!byId.has(item.id)) byId.set(item.id, buildMarketItemForDetail(item));
+    });
+    return Array.from(byId.values());
+  }, [accountItems, catalog, loadState]);
   const visibleItems = useMemo(() => {
     const normalized = deferredQuery.trim().toLowerCase();
     if (!normalized) {
-      return catalog.filter((item) => goalIds.has(item.id)).slice(0, 120);
+      return searchableItems.filter((item) => goalIds.has(item.id)).slice(0, 120);
     }
-    return catalog
+    return searchableItems
       .filter((item) => `${item.name} ${item.rarity} ${item.type}`.toLowerCase().includes(normalized))
       .slice(0, 160);
-  }, [catalog, deferredQuery, goalIds]);
+  }, [deferredQuery, goalIds, searchableItems]);
 
   return (
     <div className={`market-workspace acquisition-explorer-workspace ${selectedItem ? "" : "detail-closed"}`}>
@@ -9076,7 +10027,7 @@ function AcquisitionExplorerPage({
           <div>
             <span className="eyebrow">Universal Item Routes</span>
             <h2>Acquisition Explorer</h2>
-            <p>Trace crafted, Mystic Forged, vendor, market, and account-owned paths through one recursive dependency map.</p>
+            <p>Trace market, account-bound, vendor, crafted, and Mystic Forged items from the complete local item cache.</p>
           </div>
           {!catalog.length ? (
             <button type="button" className="icon-button primary" onClick={onLoadMarket} disabled={loadState === "loading"}>
@@ -9642,6 +10593,7 @@ function AccountDashboard({
   apiStatuses,
   apiStatusState,
   catalog,
+  currencies,
   dataImports,
   marketLoadState,
   startupSettings,
@@ -9650,6 +10602,8 @@ function AccountDashboard({
   onApiKeyChange,
   onForgetApiKey,
   onOpenActivity,
+  onOpenPage,
+  onOpenProject,
   onOpenItemSearch,
   onLoadMarket,
   onRefreshApiStatuses,
@@ -9665,6 +10619,7 @@ function AccountDashboard({
   apiStatuses: ApiStatusResult[];
   apiStatusState: LoadState;
   catalog: MarketItem[];
+  currencies: Gw2Currency[];
   dataImports: DataImportRow[];
   marketLoadState: LoadState;
   startupSettings: StartupSettings | null;
@@ -9673,12 +10628,18 @@ function AccountDashboard({
   onApiKeyChange: (value: string) => void;
   onForgetApiKey: () => void;
   onOpenActivity: (suggestion: GoldSuggestion) => void;
+  onOpenPage: (page: ActivePage) => void;
+  onOpenProject: (goalId: string) => void;
   onOpenItemSearch: (itemName: string) => void;
   onLoadMarket: () => void;
   onRefreshApiStatuses: () => void;
   onSaveApiKey: () => void;
   onStartupOpenAtLoginChange: (openAtLogin: boolean) => void;
 }) {
+  const { goals, buildGoals } = useProjectGoals();
+  const now = useRelativeNow(30_000);
+  const [metaSort, setMetaSort] = useState<MetaOpportunitySort>("time");
+  const metaOpportunities = useMemo(() => buildMetaOpportunities(now, metaSort), [metaSort, now]);
   const holdingRows = useMemo(() => {
     if (!accountSnapshot) {
       return [];
@@ -9694,6 +10655,7 @@ function AccountDashboard({
           id,
           count,
           item,
+          price,
           value,
         };
       })
@@ -9705,7 +10667,69 @@ function AccountDashboard({
   const totalStacks = accountSnapshot
     ? Array.from(accountSnapshot.holdings.values()).reduce((sum, count) => sum + count, 0)
     : 0;
-  const suggestions = buildGoldSuggestions(analysis);
+  const suggestions = useMemo(() => {
+    if (!accountSnapshot) return [];
+
+    const projectActions: GoldSuggestion[] = goals
+      .filter((goal) => goal.status === "active")
+      .map((goal) => {
+        const owned = accountSnapshot.holdings.get(goal.itemId) ?? 0;
+        const remaining = Math.max(0, goal.quantity - owned);
+        return {
+          title: remaining ? `Continue ${goal.itemName}` : `Complete ${goal.itemName}`,
+          detail: remaining
+            ? `${remaining.toLocaleString()} still required for this active project.`
+            : "The target quantity is owned and the project is ready for review.",
+          value: remaining ? `${Math.round((owned / Math.max(1, goal.quantity)) * 100)}% ready` : "Ready",
+          speed: remaining ? "Fast" : "Quickest",
+          source: "Personal",
+          page: "projects",
+          confidence: "Exact",
+          priority: 0,
+          targetGoalId: goal.id,
+        };
+      });
+    const buildActions: GoldSuggestion[] = buildGoals
+      .filter((goal) => goal.status === "active")
+      .slice(0, 3)
+      .map((goal) => ({
+        title: `Review ${goal.title}`,
+        detail: goal.characterName
+          ? `Compare ${goal.characterName}'s selected equipment template with this build.`
+          : "Choose a character and equipment template to calculate the missing gear.",
+        value: "Build goal",
+        speed: "Fast",
+        source: "Personal",
+        page: "projects",
+        confidence: "Account",
+        priority: 1,
+        targetGoalId: goal.id,
+      }));
+    const walletAmounts = new Map(accountSnapshot.wallet.map((entry) => [entry.id, entry.value]));
+    const currencyActions: GoldSuggestion[] = buildCurrencyRows(currencies, walletAmounts)
+      .filter((row) => row.amount > 0 && (row.definition.vendors?.length || row.definition.relatedGuides?.length))
+      .sort((left, right) => right.amount - left.amount)
+      .slice(0, 3)
+      .map((row) => ({
+        title: `Review ${row.currency.name}`,
+        detail: `${row.amount.toLocaleString()} held; check known vendors, project use, and conversion routes.`,
+        value: "Currency",
+        speed: "Moderate",
+        source: "Personal",
+        page: "currencies",
+        confidence: "Account",
+        priority: 2,
+      }));
+
+    return [...projectActions, ...buildActions, ...currencyActions, ...buildGoldSuggestions(analysis)]
+      .filter((suggestion, index, entries) => entries.findIndex((entry) => entry.title === suggestion.title) === index)
+      .sort((left, right) =>
+        (left.priority ?? 10) - (right.priority ?? 10) ||
+        SPEED_ORDER[left.speed] - SPEED_ORDER[right.speed] ||
+        (right.valueCoin ?? 0) - (left.valueCoin ?? 0),
+      )
+      .slice(0, 20);
+  }, [accountSnapshot, analysis, buildGoals, currencies, goals]);
 
   return (
     <div className="account-page">
@@ -9781,17 +10805,22 @@ function AccountDashboard({
         <div className="surface suggestions-panel">
           <div className="section-title">
             <TrendingUp />
-            <h3>Gold Options</h3>
+            <h3>Recommended Next Actions</h3>
           </div>
           {analysisState === "loading" ? (
             <SkeletonRows />
           ) : (
-            <div className="earning-list">
+            suggestions.length ? <div className="earning-list">
               {suggestions.slice(0, 20).map((suggestion, index) => (
                 <button
                   key={`${suggestion.title}-${index}`}
                   className="earning-row"
-                  onClick={() => onOpenActivity(suggestion)}
+                  onClick={() => {
+                    if (suggestion.targetGoalId) onOpenProject(suggestion.targetGoalId);
+                    else if (suggestion.page) onOpenPage(suggestion.page);
+                    else if (suggestion.itemName) onOpenItemSearch(suggestion.itemName);
+                    else onOpenActivity(suggestion);
+                  }}
                 >
                   <span className={`speed-badge speed-${suggestion.speed.toLowerCase()}`}>
                     {suggestion.speed}
@@ -9799,6 +10828,7 @@ function AccountDashboard({
                   <div>
                     <strong>{suggestion.title}</strong>
                     <span>{suggestion.detail}</span>
+                    <DataQualityBadge level={suggestion.confidence ?? (suggestion.source === "Personal" ? "Account" : "Reference")} />
                   </div>
                   <strong>
                     {suggestion.valueCoin !== undefined ? (
@@ -9811,14 +10841,35 @@ function AccountDashboard({
                   </strong>
                 </button>
               ))}
-            </div>
+            </div> : (
+              <div className="empty-detail inline-empty">
+                <ShieldCheck />
+                <h2>Load account data for recommendations</h2>
+                <p>This panel ranks real projects, valuable holdings, currencies, and unlocked crafts after an account scan.</p>
+              </div>
+            )
           )}
+          <div className="dashboard-meta-opportunities">
+            <div className="dashboard-meta-heading">
+              <div>
+                <strong>Meta Opportunities</strong>
+                <small>Public schedule with general gold-per-hour estimates.</small>
+              </div>
+              <MetaOpportunitySortControl value={metaSort} onChange={setMetaSort} />
+            </div>
+            <MetaOpportunityList
+              opportunities={metaOpportunities}
+              now={now}
+              limit={6}
+              onOpenPage={onOpenPage}
+            />
+          </div>
         </div>
 
         <div className="surface holdings-panel">
           <div className="section-title">
             <Boxes />
-            <h3>Items</h3>
+            <h3>Valuable Holdings</h3>
           </div>
           {accountSnapshot ? (
             <div className="holding-list">
@@ -9831,7 +10882,12 @@ function AccountDashboard({
                   <ItemIcon item={row.item ?? { name: "Item" }} />
                   <div>
                     <ItemGradeName name={row.item?.name ?? `Item ${row.id}`} rarity={row.item?.rarity} />
-                    <span>{row.count.toLocaleString()} owned</span>
+                    <span>
+                      {row.count.toLocaleString()} owned
+                      {row.price
+                        ? ` · ${row.price.buys.quantity < 5 || row.price.sells.quantity < 5 ? "Thin market" : "Active market"}`
+                        : " · Market unavailable"}
+                    </span>
                   </div>
                   <strong>{row.value ? <Money value={row.value} /> : "-"}</strong>
                 </button>
@@ -10460,6 +11516,24 @@ function buildCurrencyGuideDefinition(currency: Gw2Currency, amount?: number): G
   };
 }
 
+function getKnownCurrencyStoreMatches(currencyName: string): CurrencyStoreMatch[] {
+  const normalizedCurrency = normalizeSearchText(currencyName);
+  const matches: CurrencyStoreMatch[] = [];
+  Object.values(GUIDE_DEFINITIONS).forEach((guide) => {
+    guide.stores?.forEach((store) => {
+      store.items.forEach((item) => {
+        if (normalizeSearchText(item.price).includes(normalizedCurrency)) {
+          matches.push({ store, item });
+        }
+      });
+    });
+  });
+  return matches.filter(
+    (match, index, rows) =>
+      rows.findIndex((row) => row.store.name === match.store.name && row.item.name === match.item.name && row.item.price === match.item.price) === index,
+  );
+}
+
 function getCurrencyMaterialItemId(currencyName: string): number | undefined {
   return (
     GUIDE_PRICE_ITEM_IDS_BY_NAME[normalizeSearchText(currencyName)] ??
@@ -10728,11 +11802,15 @@ function formatMarketScanCooldown(ms: number): string {
 function WizardVaultPage({
   apiKey,
   apiKeyRemembered,
+  requestedObjectiveId,
+  onRequestedObjectiveHandled,
   onOpenItem,
   onProgress,
 }: {
   apiKey: string;
   apiKeyRemembered: boolean;
+  requestedObjectiveId?: number | null;
+  onRequestedObjectiveHandled?: () => void;
   onOpenItem: (item: Gw2Item) => void;
   onProgress: (message: string, done?: number, total?: number) => void;
 }) {
@@ -10814,6 +11892,23 @@ function WizardVaultPage({
 
     setSelectedObjective(filteredObjectives[0] ?? null);
   }, [filteredObjectives, selectedObjective, vault]);
+
+  useEffect(() => {
+    if (!vault || !requestedObjectiveId) {
+      return;
+    }
+
+    for (const section of vault.sections) {
+      const objective = section.objectives.find((entry) => entry.id === requestedObjectiveId);
+      if (objective) {
+        setSectionFilter(section.id);
+        setTrackFilter("all");
+        setSelectedObjective(objective);
+        onRequestedObjectiveHandled?.();
+        return;
+      }
+    }
+  }, [onRequestedObjectiveHandled, requestedObjectiveId, vault]);
 
   useEffect(() => {
     if (!selectedObjective) {
@@ -12253,15 +13348,24 @@ function buildGoldSuggestions(analysis: AccountAnalysis | null): GoldSuggestion[
   }
 
   return analysis.opportunities
+    .filter((opportunity) => {
+      const price = getStoredPrice(opportunity.output.id);
+      return Boolean(price && price.buys.quantity >= 5 && price.sells.quantity >= 5);
+    })
     .map((opportunity) => {
       const speed = getOpportunitySpeed(opportunity);
+      const price = getStoredPrice(opportunity.output.id)!;
       return {
         title: opportunity.output.name,
-        detail: `Craft and sell with ${Math.round(opportunity.ownedCoverage * 100)}% owned coverage.`,
+        detail: `Craft with ${Math.round(opportunity.ownedCoverage * 100)}% owned coverage; market depth is ${price.buys.quantity.toLocaleString()} wanted and ${price.sells.quantity.toLocaleString()} listed.`,
         value: "profit",
         valueCoin: Math.max(0, opportunity.personalProfit),
         speed,
         source: "Personal" as const,
+        page: "profitable-crafts",
+        itemName: opportunity.output.name,
+        confidence: "Account" as const,
+        priority: 3,
       };
     })
     .sort((left, right) => {
@@ -12313,44 +13417,16 @@ function getMetaEventGuide(estimate: MetaFarmEstimate): MetaEventGuide {
     zoom: 7,
   };
 
+  const hasDetailedGuide = Boolean(override.phases?.length && override.preparation?.length);
   return {
     id: getMetaEventGuideId(estimate.name),
     title: estimate.name,
     map: estimate.map,
     expansion: estimate.expansion,
-    summary: override.summary ?? `${estimate.name} is a ${estimate.cadence.toLowerCase()} ${estimate.expansion} route on ${estimate.map}. Use it when the map is active and the rewards match your current account goals.`,
+    summary: override.summary ?? `${estimate.name} currently has schedule, map, and source coverage. A verified phase-by-phase walkthrough has not been added yet.`,
     timing: override.timing ?? `${estimate.cadence}; plan for about ${estimate.duration}.`,
-    preparation: override.preparation ?? [
-      "Check the event timer or LFG before travelling so you do not arrive after the valuable phase starts.",
-      "Bring a build with good cleave, mobility, and crowd control; meta failures usually cost more than small market-price differences.",
-      "Leave bag space, carry salvage kits, and process rewards after the event chain reaches a natural break.",
-    ],
-    phases: override.phases ?? [
-      {
-        title: "Arrive And Organize",
-        objective: "Get into the right map before the reward-heavy phase begins.",
-        details: [
-          "Join a commander or active map when possible.",
-          "Move to the staging waypoint or event area early and read map chat for lane or objective assignments.",
-        ],
-      },
-      {
-        title: "Complete Event Objectives",
-        objective: "Prioritize the mechanics that advance the event chain.",
-        details: [
-          "Tag broadly, revive players, use crowd control on breakbars, and follow commander movement.",
-          "Do not stop to open containers or sell items while the group is moving.",
-        ],
-      },
-      {
-        title: "Loot And Convert",
-        objective: "Turn the completion into usable account or market value.",
-        details: [
-          "Open map chests and containers after the event finishes.",
-          "Separate account-bound currency decisions from liquid gold before selling or converting materials.",
-        ],
-      },
-    ],
+    preparation: override.preparation ?? [],
+    phases: override.phases ?? [],
     locations: override.locations ?? [defaultLocation],
     rewards: override.rewards ?? [
       { name: `${estimate.map} rewards`, detail: estimate.access, wikiUrl: estimate.wikiUrl },
@@ -12371,6 +13447,7 @@ function getMetaEventGuide(estimate: MetaFarmEstimate): MetaEventGuide {
       },
     ],
     relatedPageIds: override.relatedPageIds,
+    coverage: hasDetailedGuide ? "Complete" : "Reference",
   };
 }
 
@@ -13151,6 +14228,9 @@ function MetaEventDetailPane({
             <span className="rarity rarity-basic">{guide.expansion}</span>
             <h2>{guide.title}</h2>
             <p>{guide.summary}</p>
+            <span className={`meta-guide-coverage coverage-${guide.coverage.toLowerCase()}`}>
+              {guide.coverage === "Complete" ? "Detailed guide" : "Reference only"}
+            </span>
           </div>
           <a
             className="detail-wiki-button"
@@ -13201,37 +14281,47 @@ function MetaEventGuideSections({
             <p>{guide.timing}</p>
           </section>
 
-          <section className="guide-detail-section">
-            <h3>Before You Start</h3>
-            <ul className="guide-check-list">
-              {guide.preparation.map((item) => (
-                <li key={item}>
-                  <CheckCircle2 />
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
+          {guide.preparation.length ? (
+            <section className="guide-detail-section">
+              <h3>Before You Start</h3>
+              <ul className="guide-check-list">
+                {guide.preparation.map((item) => (
+                  <li key={item}>
+                    <CheckCircle2 />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
-          <section className="guide-detail-section meta-event-phase-section">
-            <h3>How The Meta Is Done</h3>
-            <div className="guide-phase-list">
-              {guide.phases.map((phase, index) => (
-                <article key={phase.title} className="guide-phase-card">
-                  <span>{index + 1}</span>
-                  <div>
-                    <strong>{phase.title}</strong>
-                    <p>{phase.objective}</p>
-                    <ul>
-                      {phase.details.map((detail) => (
-                        <li key={detail}>{detail}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
+          {guide.phases.length ? (
+            <section className="guide-detail-section meta-event-phase-section">
+              <h3>How The Meta Is Done</h3>
+              <div className="guide-phase-list">
+                {guide.phases.map((phase, index) => (
+                  <article key={phase.title} className="guide-phase-card">
+                    <span>{index + 1}</span>
+                    <div>
+                      <strong>{phase.title}</strong>
+                      <p>{phase.objective}</p>
+                      <ul>
+                        {phase.details.map((detail) => (
+                          <li key={detail}>{detail}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : (
+            <section className="guide-detail-section meta-guide-coverage-warning">
+              <h3>Walkthrough Not Yet Verified</h3>
+              <p>This entry intentionally shows only timing, location, rewards, and sources until a specific phase guide is available.</p>
+              <a href={guide.sources[0]?.url} target="_blank" rel="noreferrer">Open current Wiki walkthrough <ExternalLink /></a>
+            </section>
+          )}
 
           <section className="guide-detail-section">
             <h3>Rewards And Currency</h3>
@@ -15867,6 +16957,7 @@ interface LegendaryReadinessResolvedCost {
   personalCost: number;
   ownedCoverage: number;
   outputValue: number;
+  unpricedMissing: number;
 }
 
 function LegendaryReadinessPage({
@@ -15918,6 +17009,8 @@ function LegendaryReadinessPage({
   const [fullRecipeScanState, setFullRecipeScanState] = useState<LoadState>("idle");
   const [fullRecipeScanProgress, setFullRecipeScanProgress] = useState({ done: 0, total: 0 });
   const fullRecipeScanRunRef = useRef(0);
+  const automaticRecipeScanRunRef = useRef(0);
+  const resolvedCostsRef = useRef<Map<number, LegendaryReadinessResolvedCost>>(new Map());
   const normalizedQuery = query.trim().toLowerCase();
   const activeFilterList = useMemo(() => Array.from(activeFilters), [activeFilters]);
   const activeFilterCount = activeFilters.has("all") ? 0 : activeFilters.size;
@@ -15925,9 +17018,22 @@ function LegendaryReadinessPage({
     () => legendaries.map((entry) => applyLegendaryReadinessResolvedCost(entry, resolvedCosts.get(entry.item.id))),
     [legendaries, resolvedCosts],
   );
+  const commitResolvedCostBatch = useCallback((costs: Map<number, LegendaryReadinessResolvedCost>) => {
+    if (costs.size === 0) {
+      return;
+    }
+    const updated = new Map(resolvedCostsRef.current);
+    costs.forEach((cost, itemId) => updated.set(itemId, cost));
+    resolvedCostsRef.current = updated;
+    setResolvedCosts(updated);
+  }, []);
 
   useEffect(() => {
-    setResolvedCosts(new Map());
+    fullRecipeScanRunRef.current += 1;
+    automaticRecipeScanRunRef.current += 1;
+    const emptyCosts = new Map<number, LegendaryReadinessResolvedCost>();
+    resolvedCostsRef.current = emptyCosts;
+    setResolvedCosts(emptyCosts);
     setFullRecipeScanState("idle");
     setFullRecipeScanProgress({ done: 0, total: 0 });
   }, [accountSnapshot, analysis]);
@@ -16036,7 +17142,8 @@ function LegendaryReadinessPage({
     setFullRecipeScanState("loading");
     let nextIndex = 0;
     let completed = 0;
-    const workerCount = Math.min(3, candidates.length);
+    const workerCount = Math.min(8, candidates.length);
+    const scannedCosts = new Map<number, LegendaryReadinessResolvedCost>();
 
     await Promise.all(
       Array.from({ length: workerCount }, async () => {
@@ -16047,16 +17154,16 @@ function LegendaryReadinessPage({
           try {
             const resolved = await resolveLegendaryReadinessCost(entry, accountSnapshot);
             if (resolved && fullRecipeScanRunRef.current === runId) {
-              setResolvedCosts((current) => {
-                const updated = new Map(current);
-                updated.set(entry.item.id, resolved);
-                return updated;
-              });
+              scannedCosts.set(entry.item.id, resolved);
             }
           } finally {
             if (fullRecipeScanRunRef.current === runId) {
               completed += 1;
-              setFullRecipeScanProgress({ done: completed, total: candidates.length });
+              if (completed % 8 === 0 || completed === candidates.length) {
+                commitResolvedCostBatch(scannedCosts);
+                scannedCosts.clear();
+                setFullRecipeScanProgress({ done: completed, total: candidates.length });
+              }
             }
           }
         }
@@ -16064,23 +17171,29 @@ function LegendaryReadinessPage({
     );
 
     if (fullRecipeScanRunRef.current === runId) {
+      commitResolvedCostBatch(scannedCosts);
       setFullRecipeScanState("ready");
     }
-  }, [accountSnapshot, fullRecipeScanState, legendaries]);
+  }, [accountSnapshot, commitResolvedCostBatch, fullRecipeScanState, legendaries]);
 
   useEffect(() => {
-    if (!accountSnapshot || filteredActionableLegendaries.length === 0) {
+    if (!accountSnapshot || legendaries.length === 0 || fullRecipeScanState === "loading") {
       return;
     }
 
-    let cancelled = false;
-    const candidates = filteredActionableLegendaries
-      .slice(0, 72)
-      .filter((entry) => entry.recipe.ingredients.length > 0 && !resolvedCosts.has(entry.item.id));
+    const runId = automaticRecipeScanRunRef.current + 1;
+    automaticRecipeScanRunRef.current = runId;
+    const candidates = legendaries.filter(
+      (entry) =>
+        entry.recipe.ingredients.length > 0 &&
+        !isExternalLegendaryReadinessEntry(entry) &&
+        !resolvedCostsRef.current.has(entry.item.id),
+    );
 
     if (selectedItem) {
-      const selectedEntry = filteredActionableLegendaries.find((entry) => entry.item.id === selectedItem.id);
-      if (selectedEntry && !resolvedCosts.has(selectedEntry.item.id)) {
+      const selectedEntry = candidates.find((entry) => entry.item.id === selectedItem.id);
+      if (selectedEntry) {
+        candidates.splice(candidates.indexOf(selectedEntry), 1);
         candidates.unshift(selectedEntry);
       }
     }
@@ -16096,41 +17209,42 @@ function LegendaryReadinessPage({
     setResolvingCostCount(uniqueCandidates.length);
     void (async () => {
       let nextIndex = 0;
-      const workerCount = Math.min(2, uniqueCandidates.length);
+      let completed = 0;
+      const workerCount = Math.min(8, uniqueCandidates.length);
+      const scannedCosts = new Map<number, LegendaryReadinessResolvedCost>();
 
       await Promise.all(
         Array.from({ length: workerCount }, async () => {
-          while (!cancelled && nextIndex < uniqueCandidates.length) {
+          while (automaticRecipeScanRunRef.current === runId && nextIndex < uniqueCandidates.length) {
             const entry = uniqueCandidates[nextIndex];
             nextIndex += 1;
             const resolved = await resolveLegendaryReadinessCost(entry, accountSnapshot).catch(() => null);
-            if (!resolved || cancelled) {
-              continue;
+            if (resolved && automaticRecipeScanRunRef.current === runId) {
+              scannedCosts.set(entry.item.id, resolved);
             }
-
-            setResolvedCosts((current) => {
-              if (current.has(entry.item.id)) {
-                return current;
-              }
-
-              const updated = new Map(current);
-              updated.set(entry.item.id, resolved);
-              return updated;
-            });
+            completed += 1;
+            if (completed % 8 === 0 || completed === uniqueCandidates.length) {
+              commitResolvedCostBatch(scannedCosts);
+              scannedCosts.clear();
+              setResolvingCostCount(Math.max(0, uniqueCandidates.length - completed));
+            }
           }
         }),
       );
 
-      if (!cancelled) {
+      if (automaticRecipeScanRunRef.current === runId) {
+        commitResolvedCostBatch(scannedCosts);
         setResolvingCostCount(0);
       }
     })();
 
     return () => {
-      cancelled = true;
+      if (automaticRecipeScanRunRef.current === runId) {
+        automaticRecipeScanRunRef.current += 1;
+      }
       setResolvingCostCount(0);
     };
-  }, [accountSnapshot, filteredActionableLegendaries, resolvedCosts, selectedItem]);
+  }, [accountSnapshot, commitResolvedCostBatch, fullRecipeScanState, legendaries]);
 
   if (!accountSnapshot) {
     return (
@@ -16240,7 +17354,7 @@ function LegendaryReadinessPage({
                   </small>
                 ) : resolvingCostCount > 0 ? (
                   <small className="legendary-cost-state">
-                    Resolving detailed recipe prices for {resolvingCostCount.toLocaleString()} visible routes...
+                    Resolving complete dependency trees for {resolvingCostCount.toLocaleString()} routes...
                   </small>
                 ) : null}
               </div>
@@ -16268,8 +17382,10 @@ function LegendaryReadinessPage({
                         </tr>
                       </thead>
                       <tbody>
-                        {sortedLegendaries.map((entry) => (
-                          <tr
+                        {sortedLegendaries.map((entry) => {
+                          const resolvedCost = resolvedCosts.get(entry.item.id);
+                          const hasResolvedCost = Boolean(resolvedCost);
+                          return <tr
                             key={`${entry.recipe.id}-${entry.item.id}`}
                             className={selectedItem?.id === entry.item.id ? "selected-row" : ""}
                             onClick={() => onSelectItem(entry.item)}
@@ -16291,19 +17407,27 @@ function LegendaryReadinessPage({
                                 </span>
                               </span>
                             </td>
-                            <td>{Math.round(entry.ownedCoverage * 100)}%</td>
-                            <td><Money value={entry.personalCost} /></td>
-                            <td>{entry.outputValue > 0 ? <Money value={entry.marketCost} /> : <span className="muted-copy">-</span>}</td>
+                            <td>{hasResolvedCost ? `${Math.round(entry.ownedCoverage * 100)}%` : <span className="muted-copy">Calculating</span>}</td>
+                            <td>
+                              {resolvedCost?.unpricedMissing
+                                ? <span className="muted-copy" title={`${resolvedCost.unpricedMissing.toLocaleString()} unpriced or account-bound requirements remain`}>Account-bound items remain</span>
+                                : hasResolvedCost
+                                  ? <Money value={entry.personalCost} />
+                                  : <span className="muted-copy">Calculating</span>}
+                            </td>
+                            <td>{hasResolvedCost && entry.outputValue > 0 ? <Money value={entry.marketCost} /> : <span className="muted-copy">{hasResolvedCost ? "-" : "Calculating"}</span>}</td>
                             <td>{entry.recipeUnlocked ? "Unlocked" : "Recipe locked"}</td>
                             <td>
-                              {entry.recipeUnlocked && entry.ownedCoverage >= 0.75
+                              {!hasResolvedCost
+                                ? <span className="muted-copy">Calculating</span>
+                                : entry.recipeUnlocked && entry.ownedCoverage >= 0.75
                                 ? "Quickest"
                                 : entry.ownedCoverage >= 0.4
                                   ? "Medium"
                                   : "Long-term"}
                             </td>
                           </tr>
-                        ))}
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -16523,7 +17647,7 @@ async function resolveLegendaryReadinessCost(
     return null;
   }
 
-  const guides = await loadRecipesForOutput(entry.item.id, accountSnapshot.holdings);
+  const guides = await loadCraftRecipeGuides(entry.item.id, accountSnapshot.holdings);
   const guide =
     guides.find((candidate) => candidate.recipe.id === entry.recipe.id) ??
     selectBestRecipeGuide(guides, accountSnapshot);
@@ -16532,63 +17656,156 @@ async function resolveLegendaryReadinessCost(
   }
 
   const nestedRecipes = await loadNestedCraftRecipes(guide, accountSnapshot);
-  const marketCost = getDeepRecipeCost(guide, nestedRecipes, null, 1, new Set([entry.item.id]));
-  const personalCost = getDeepRecipeCost(guide, nestedRecipes, accountSnapshot, 1, new Set([entry.item.id]));
+  const marketEvaluation = evaluateDeepRecipeCost(
+    guide,
+    nestedRecipes,
+    null,
+    1,
+    new Set([entry.item.id]),
+  );
+  const ownsOutput = (accountSnapshot.holdings.get(entry.item.id) ?? 0) >= 1;
+  const personalEvaluation = ownsOutput
+    ? { cost: 0, complete: true, unknownRequired: 0, unknownMissing: 0 }
+    : evaluateDeepRecipeCost(
+        guide,
+        nestedRecipes,
+        accountSnapshot,
+        1,
+        new Set([entry.item.id]),
+        new Map(accountSnapshot.holdings),
+      );
+  const marketCost = marketEvaluation.cost;
+  const personalCost = personalEvaluation.cost;
   const outputValue = guide.outputValue || entry.outputValue;
-  const ownedCoverage = marketCost > 0
+  const pricedCoverage = marketCost > 0
     ? Math.max(0, Math.min(1, 1 - personalCost / marketCost))
+    : 1;
+  const unknownCoverage = marketEvaluation.unknownRequired > 0
+    ? Math.max(
+        0,
+        Math.min(1, 1 - personalEvaluation.unknownMissing / marketEvaluation.unknownRequired),
+      )
+    : 1;
+  const ownedCoverage = ownsOutput
+    ? 1
+    : marketCost > 0 || marketEvaluation.unknownRequired > 0
+    ? Math.min(pricedCoverage, unknownCoverage)
     : entry.ownedCoverage;
 
   return {
-    marketCost: marketCost || guide.marketCost || entry.marketCost,
-    personalCost: personalCost || guide.personalCost || entry.personalCost,
+    marketCost: marketCost > 0 ? marketCost : guide.marketCost || entry.marketCost,
+    personalCost,
     ownedCoverage,
     outputValue,
+    unpricedMissing: personalEvaluation.unknownMissing,
   };
 }
 
-function getDeepRecipeCost(
+interface DeepRecipeCostEvaluation {
+  cost: number;
+  complete: boolean;
+  unknownRequired: number;
+  unknownMissing: number;
+}
+
+function evaluateDeepRecipeCost(
   guide: RecipeGuide,
   nestedRecipes: Map<number, RecipeGuide[]>,
   accountSnapshot: AccountSnapshot | null,
   requiredOutputCount: number,
   path: Set<number>,
-): number {
+  availableHoldings?: Map<number, number>,
+): DeepRecipeCostEvaluation {
   const recipeRuns = Math.max(
     1,
     Math.ceil(requiredOutputCount / Math.max(1, guide.recipe.output_item_count)),
   );
 
-  return guide.ingredients.reduce((sum, ingredient) => {
+  return guide.ingredients.reduce<DeepRecipeCostEvaluation>((total, ingredient) => {
     const requiredCount = ingredient.count * recipeRuns;
-    const ownedCount = accountSnapshot?.holdings.get(ingredient.item_id) ?? 0;
-    const neededCount = accountSnapshot ? Math.max(0, requiredCount - ownedCount) : requiredCount;
+    const ownedCount = accountSnapshot
+      ? Math.min(requiredCount, availableHoldings?.get(ingredient.item_id) ?? 0)
+      : 0;
+    if (ownedCount > 0 && availableHoldings) {
+      availableHoldings.set(
+        ingredient.item_id,
+        Math.max(0, (availableHoldings.get(ingredient.item_id) ?? 0) - ownedCount),
+      );
+    }
+    const neededCount = Math.max(0, requiredCount - ownedCount);
     if (neededCount <= 0) {
-      return sum;
+      return total;
     }
 
     const marketUnitCost = getIngredientMarketUnitCost(ingredient);
     const marketCost = marketUnitCost > 0 ? marketUnitCost * neededCount : Number.POSITIVE_INFINITY;
-    const childGuide = !path.has(ingredient.item_id)
+    const childGuideCandidate = !path.has(ingredient.item_id)
       ? selectBestRecipeGuide(nestedRecipes.get(ingredient.item_id) ?? [], accountSnapshot)
       : null;
-    const craftCost = childGuide
-      ? getDeepRecipeCost(
+    const childGuide = childGuideCandidate?.recipe.ingredients.length
+      ? childGuideCandidate
+      : null;
+    const childHoldings = availableHoldings ? new Map(availableHoldings) : undefined;
+    const craftEvaluation = childGuide
+      ? evaluateDeepRecipeCost(
           childGuide,
           nestedRecipes,
           accountSnapshot,
           neededCount,
           new Set([...path, ingredient.item_id]),
+          childHoldings,
         )
-      : Number.POSITIVE_INFINITY;
-    const bestCost = Math.min(marketCost, craftCost);
+      : null;
+    const useCraftRoute = Boolean(
+      craftEvaluation?.complete &&
+      (!Number.isFinite(marketCost) || craftEvaluation.cost < marketCost),
+    );
 
-    if (Number.isFinite(bestCost)) {
-      return sum + bestCost;
+    if (useCraftRoute && craftEvaluation) {
+      if (availableHoldings && childHoldings) {
+        availableHoldings.clear();
+        childHoldings.forEach((count, itemId) => availableHoldings.set(itemId, count));
+      }
+      return {
+        cost: total.cost + craftEvaluation.cost,
+        complete: total.complete && craftEvaluation.complete,
+        unknownRequired: total.unknownRequired + craftEvaluation.unknownRequired,
+        unknownMissing: total.unknownMissing + craftEvaluation.unknownMissing,
+      };
     }
 
-    return sum;
-  }, 0);
+    if (Number.isFinite(marketCost)) {
+      return {
+        ...total,
+        cost: total.cost + marketCost,
+      };
+    }
+
+    if (craftEvaluation) {
+      if (availableHoldings && childHoldings) {
+        availableHoldings.clear();
+        childHoldings.forEach((count, itemId) => availableHoldings.set(itemId, count));
+      }
+      return {
+        cost: total.cost + craftEvaluation.cost,
+        complete: false,
+        unknownRequired: total.unknownRequired + craftEvaluation.unknownRequired,
+        unknownMissing: total.unknownMissing + craftEvaluation.unknownMissing,
+      };
+    }
+
+    return {
+      cost: total.cost,
+      complete: false,
+      unknownRequired: total.unknownRequired + requiredCount,
+      unknownMissing: total.unknownMissing + neededCount,
+    };
+  }, {
+    cost: 0,
+    complete: true,
+    unknownRequired: 0,
+    unknownMissing: 0,
+  });
 }
 
 function getIngredientMarketUnitCost(ingredient: RecipeGuide["ingredients"][number]): number {
@@ -21231,6 +22448,553 @@ function getLocalDateKey(): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+function FishingPage({
+  catalog,
+  accountSnapshot,
+  detailPane,
+  onLoadMarket,
+  onOpenItem,
+  onOpenPage,
+}: {
+  catalog: MarketItem[];
+  accountSnapshot: AccountSnapshot | null;
+  detailPane: ReactNode;
+  onLoadMarket: () => void;
+  onOpenItem: (item: Gw2Item) => void;
+  onOpenPage: (page: ActivePage) => void;
+}) {
+  const accountMasteryTier = Math.min(
+    5,
+    Math.max(0, accountSnapshot?.masteries.find((mastery) => mastery.id === FISHING_MASTERY_TRACK_ID)?.level ?? 0),
+  );
+  const hasAccountMasteryData = Boolean(accountSnapshot?.masteries.length);
+  const [masteryTier, setMasteryTier] = useState(accountMasteryTier);
+  const [baitPower, setBaitPower] = useState(100);
+  const [lurePower, setLurePower] = useState(50);
+  const [foodPower, setFoodPower] = useState(0);
+  const [partyPower, setPartyPower] = useState(0);
+  const [hasFishingTips, setHasFishingTips] = useState(false);
+  const [targetIndex, setTargetIndex] = useState(0);
+  const [fishQuery, setFishQuery] = useState("");
+  const [fishLocation, setFishLocation] = useState("all");
+  const [fishTime, setFishTime] = useState("all");
+  const [showReadyFishOnly, setShowReadyFishOnly] = useState(false);
+  const [visibleFishCount, setVisibleFishCount] = useState(18);
+  const deferredFishQuery = useDeferredValue(fishQuery);
+  const target = FISHING_POWER_TARGETS[targetIndex] ?? FISHING_POWER_TARGETS[0];
+  const masteryPower = masteryTier * 20;
+  const fullTankPower = masteryTier >= 3 && foodPower > 0 ? 100 : 0;
+  const tipsPower = hasFishingTips ? 50 : 0;
+  const totalPower = 25 + masteryPower + baitPower + lurePower + foodPower + fullTankPower + partyPower + tipsPower;
+  const powerDifference = totalPower - target.power;
+  const powerPercent = Math.min(100, Math.round((totalPower / Math.max(1, target.power)) * 100));
+  const totalMasteryExperience = FISHING_MASTERY_TIERS.reduce((sum, tier) => sum + tier.experience, 0);
+  const totalMasteryPoints = FISHING_MASTERY_TIERS.reduce((sum, tier) => sum + tier.masteryPoints, 0);
+  const spotRecommendations = useMemo(
+    () => FISHING_SPOT_GUIDES.map((spot) => ({
+      ...spot,
+      powerGap: Math.max(0, spot.requiredPower - totalPower),
+      masteryGap: Math.max(0, spot.minimumMasteryTier - masteryTier),
+      ready: totalPower >= spot.requiredPower && masteryTier >= spot.minimumMasteryTier,
+    })).sort((left, right) => {
+      if (left.ready !== right.ready) return left.ready ? -1 : 1;
+      if (left.ready && right.ready) return right.valueRank - left.valueRank;
+      return left.masteryGap - right.masteryGap || left.powerGap - right.powerGap || right.valueRank - left.valueRank;
+    }),
+    [masteryTier, totalPower],
+  );
+  const bestReadySpot = spotRecommendations.find((spot) => spot.ready && spot.purpose === "Gold")
+    ?? spotRecommendations.find((spot) => spot.ready);
+  const nextSpot = spotRecommendations.find((spot) => !spot.ready);
+  const filteredFish = useMemo(() => {
+    const query = normalizeSearchText(deferredFishQuery);
+    const rarityWeight: Record<string, number> = {
+      Legendary: 7,
+      Ascended: 6,
+      Exotic: 5,
+      Rare: 4,
+      Masterwork: 3,
+      Fine: 2,
+      Basic: 1,
+    };
+
+    return FISHING_LOCATION_ENTRIES.filter((fish) => {
+      const ready = fish.fishingPower > 0 && fish.fishingPower <= totalPower;
+      const matchesQuery = !query || normalizeSearchText([
+        fish.name,
+        fish.location,
+        fish.holes.join(" "),
+        fish.bait,
+        fish.collection,
+      ].join(" ")).includes(query);
+      const matchesLocation = fishLocation === "all" || fish.location === fishLocation;
+      const matchesTime = fishTime === "all" || fish.time.toLowerCase().includes(fishTime);
+      return matchesQuery && matchesLocation && matchesTime && (!showReadyFishOnly || ready);
+    }).sort((left, right) => {
+      const leftReady = left.fishingPower > 0 && left.fishingPower <= totalPower;
+      const rightReady = right.fishingPower > 0 && right.fishingPower <= totalPower;
+      if (leftReady !== rightReady) return leftReady ? -1 : 1;
+      if (Boolean(left.fishingPower) !== Boolean(right.fishingPower)) return left.fishingPower ? -1 : 1;
+      return (rarityWeight[right.rarity] ?? 0) - (rarityWeight[left.rarity] ?? 0)
+        || left.fishingPower - right.fishingPower
+        || left.name.localeCompare(right.name);
+    });
+  }, [deferredFishQuery, fishLocation, fishTime, showReadyFishOnly, totalPower]);
+  const valueRows = ACTIVITY_VALUE_DEFINITIONS.fishing.items.map((entry) => {
+    const item = resolveActivityValueItem(entry, catalog);
+    const price = item ? getStoredPrice(item.id) : undefined;
+    return {
+      ...entry,
+      item,
+      value: price?.buys.unit_price || price?.sells.unit_price || 0,
+    };
+  }).sort((left, right) => right.value - left.value || left.name.localeCompare(right.name));
+
+  useEffect(() => {
+    if (hasAccountMasteryData) {
+      setMasteryTier(accountMasteryTier);
+    }
+  }, [accountMasteryTier, hasAccountMasteryData]);
+
+  useEffect(() => {
+    setVisibleFishCount(18);
+  }, [deferredFishQuery, fishLocation, fishTime, showReadyFishOnly]);
+
+  function selectFishingPowerTarget(requiredPower: number) {
+    const closestIndex = FISHING_POWER_TARGETS.reduce((bestIndex, entry, index) => {
+      const currentDistance = Math.abs(FISHING_POWER_TARGETS[bestIndex].power - requiredPower);
+      const nextDistance = Math.abs(entry.power - requiredPower);
+      return nextDistance < currentDistance ? index : bestIndex;
+    }, 0);
+    setTargetIndex(closestIndex);
+  }
+
+  const content = (
+    <div className="fishing-page">
+      <section className="page-header fishing-page-header">
+        <div>
+          <span className="eyebrow">End of Dragons Mastery</span>
+          <h2>Fishing</h2>
+          <p>Build Fishing Power, train the mastery efficiently, and match every target fish to its map, hole, bait, and time window.</p>
+        </div>
+        <div className="page-actions">
+          <button type="button" className="icon-button" onClick={() => onOpenPage("farming-tracker")}>
+            <ListChecks />
+            <span>Track Session</span>
+          </button>
+          <a className="icon-button" href="https://wiki.guildwars2.com/wiki/Fishing" target="_blank" rel="noreferrer">
+            <ExternalLink />
+            <span>Wiki</span>
+          </a>
+        </div>
+      </section>
+
+      <section className="stat-grid fishing-stat-grid">
+        <Metric
+          icon={<BookOpen />}
+          label="Mastery Track"
+          value={hasAccountMasteryData ? `${accountMasteryTier}/5 trained` : "5 tiers"}
+          tone={hasAccountMasteryData ? "positive" : undefined}
+        />
+        <Metric icon={<TrendingUp />} label="Mastery XP" value={totalMasteryExperience.toLocaleString()} />
+        <Metric icon={<Target />} label="Mastery Points" value={totalMasteryPoints.toLocaleString()} />
+        <Metric icon={<Fish />} label="Typical Solo Power" value="575" tone="positive" />
+      </section>
+
+      <section className="fishing-learning-grid">
+        <div className="surface fishing-progression-panel">
+          <div className="section-title">
+            <TrendingUp />
+            <div>
+              <h3>Mastery Progression</h3>
+              <p>
+                Fishing is leveled through the End of Dragons mastery track, not a crafting-style skill level.
+                {hasAccountMasteryData ? ` Account progress is synced at tier ${accountMasteryTier}.` : " Load an account to sync trained tiers."}
+              </p>
+            </div>
+          </div>
+          <div className="fishing-unlock-note">
+            <span>Start</span>
+            <div>
+              <strong>Complete “Old Friends”</strong>
+              <small>The first End of Dragons story chapter unlocks fishing account-wide and opens the mastery track.</small>
+            </div>
+          </div>
+          <div className="fishing-mastery-list">
+            {FISHING_MASTERY_TIERS.map((tier) => {
+              const trained = masteryTier >= tier.tier;
+              return (
+                <button
+                  key={tier.tier}
+                  type="button"
+                  className={trained ? "trained" : ""}
+                  onClick={() => setMasteryTier(tier.tier)}
+                  aria-pressed={trained}
+                >
+                  <span className="fishing-tier-index">{tier.tier}</span>
+                  <span className="fishing-tier-copy">
+                    <strong>{tier.name}</strong>
+                    <small>{tier.experience.toLocaleString()} XP · {tier.masteryPoints} mastery points · +{tier.fishingPower} power</small>
+                    <span>{tier.benefit}</span>
+                    <em>{tier.efficientUse}</em>
+                  </span>
+                  {trained ? <CheckCircle2 /> : null}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="surface fishing-power-panel">
+          <div className="section-title">
+            <SlidersHorizontal />
+            <div>
+              <h3>Fishing Power</h3>
+              <p>Model the setup you can equip before choosing a route.</p>
+            </div>
+          </div>
+          <div className="fishing-power-result">
+            <span>
+              <small>Current setup</small>
+              <strong>{totalPower.toLocaleString()}</strong>
+            </span>
+            <span className={powerDifference >= 0 ? "ready" : "short"}>
+              {powerDifference >= 0 ? `${powerDifference.toLocaleString()} above target` : `${Math.abs(powerDifference).toLocaleString()} below target`}
+            </span>
+          </div>
+          <div className="fishing-power-track" aria-label={`${powerPercent}% of target Fishing Power`}>
+            <span style={{ width: `${powerPercent}%` }} />
+          </div>
+          <label className="fishing-control-field">
+            <span>Target water</span>
+            <select aria-label="Target water" value={targetIndex} onChange={(event) => setTargetIndex(Number(event.target.value))}>
+              {FISHING_POWER_TARGETS.map((entry, index) => (
+                <option key={entry.label} value={index}>{entry.label} · {entry.power}</option>
+              ))}
+            </select>
+            <small>{target.map} · {target.note}</small>
+          </label>
+          <div className="fishing-power-controls">
+            <label className="fishing-control-field">
+              <span>Fishing mastery</span>
+              <select aria-label="Fishing mastery" value={masteryTier} onChange={(event) => setMasteryTier(Number(event.target.value))}>
+                <option value={0}>Not trained · +0</option>
+                {FISHING_MASTERY_TIERS.map((tier) => <option key={tier.tier} value={tier.tier}>Tier {tier.tier} · +{tier.tier * 20}</option>)}
+              </select>
+            </label>
+            <label className="fishing-control-field">
+              <span>Bait</span>
+              <select aria-label="Bait" value={baitPower} onChange={(event) => setBaitPower(Number(event.target.value))}>
+                <option value={0}>None · +0</option>
+                <option value={75}>Haiju Minnow · +75</option>
+                <option value={100}>Standard bait · +100</option>
+                <option value={150}>Mackerel · +150</option>
+              </select>
+            </label>
+            <label className="fishing-control-field">
+              <span>Lure</span>
+              <select aria-label="Lure" value={lurePower} onChange={(event) => setLurePower(Number(event.target.value))}>
+                <option value={0}>None · +0</option>
+                <option value={50}>Wooden · +50</option>
+                <option value={75}>Antique · +75</option>
+                <option value={100}>100-power lure · +100</option>
+              </select>
+            </label>
+            <label className="fishing-control-field">
+              <span>Fishing food</span>
+              <select aria-label="Fishing food" value={foodPower} onChange={(event) => setFoodPower(Number(event.target.value))}>
+                <option value={0}>No fishing food · +0</option>
+                <option value={150}>Fishing food · +150</option>
+              </select>
+            </label>
+            <label className="fishing-control-field">
+              <span>Fishing Party</span>
+              <select aria-label="Fishing Party" value={partyPower} onChange={(event) => setPartyPower(Number(event.target.value))}>
+                <option value={0}>No stacks · +0</option>
+                <option value={50}>Tier I · +50</option>
+                <option value={100}>Tier II · +100</option>
+                <option value={150}>Tier III · +150</option>
+                <option value={200}>Tier IV · +200</option>
+                <option value={250}>Tier V · +250</option>
+                <option value={300}>Tier VI · +300</option>
+              </select>
+            </label>
+            <label className="fishing-toggle-field">
+              <input type="checkbox" checked={hasFishingTips} onChange={(event) => setHasFishingTips(event.target.checked)} />
+              <span>
+                <strong>Tips on Fishing</strong>
+                <small>Temporary +50 Fishing Power effect</small>
+              </span>
+            </label>
+          </div>
+          <div className="fishing-power-breakdown">
+            <span>Rod <strong>25</strong></span>
+            <span>Mastery <strong>{masteryPower}</strong></span>
+            <span>Bait <strong>{baitPower}</strong></span>
+            <span>Lure <strong>{lurePower}</strong></span>
+            <span>Food <strong>{foodPower}</strong></span>
+            <span>Full Tank <strong>{fullTankPower}</strong></span>
+            <span>Party <strong>{partyPower}</strong></span>
+            <span>Tips <strong>{tipsPower}</strong></span>
+          </div>
+        </div>
+      </section>
+
+      <section className="surface fishing-recommendations-panel">
+        <div className="fishing-recommendations-heading">
+          <div className="section-title">
+            <MapPinned />
+            <div>
+              <h3>Recommended Fishing Spots</h3>
+              <p>Ranked against the mastery tier and Fishing Power currently selected above.</p>
+            </div>
+          </div>
+          <a className="icon-button" href="https://wiki.guildwars2.com/wiki/Daily_Catch" target="_blank" rel="noreferrer">
+            <CalendarDays />
+            <span>Daily Catch</span>
+          </a>
+        </div>
+
+        <div className="fishing-progress-summary">
+          <article className={bestReadySpot ? "ready" : "locked"}>
+            <CheckCircle2 />
+            <span>
+              <small>Best ready now</small>
+              <strong>{bestReadySpot?.name ?? "Train Fishing Hole Master"}</strong>
+              <em>{bestReadySpot ? `${bestReadySpot.map} · ${bestReadySpot.requiredPower} power` : "Tier 1 unlocks the first efficient hole circuit."}</em>
+            </span>
+          </article>
+          <article className={nextSpot ? "next" : "ready"}>
+            <Target />
+            <span>
+              <small>{nextSpot ? "Next practical upgrade" : "All listed routes ready"}</small>
+              <strong>{nextSpot?.name ?? "Choose the route you enjoy"}</strong>
+              <em>
+                {nextSpot
+                  ? [nextSpot.masteryGap ? `${nextSpot.masteryGap} mastery tier${nextSpot.masteryGap === 1 ? "" : "s"}` : "", nextSpot.powerGap ? `${nextSpot.powerGap} power` : ""].filter(Boolean).join(" + ")
+                  : "Your selected setup meets every listed threshold."}
+              </em>
+            </span>
+          </article>
+        </div>
+
+        <div className="fishing-spot-grid">
+          {spotRecommendations.map((spot, index) => (
+            <article key={spot.id} className={spot.ready ? "ready" : "locked"}>
+              <header>
+                <span className={`fishing-purpose purpose-${spot.purpose.toLowerCase()}`}>{spot.purpose}</span>
+                <span className={`fishing-readiness ${spot.ready ? "ready" : "locked"}`}>
+                  {spot.ready
+                    ? index === 0 ? "Recommended now" : "Ready"
+                    : spot.masteryGap ? `Needs tier ${spot.minimumMasteryTier}` : `${spot.powerGap} power short`}
+                </span>
+              </header>
+              <div className="fishing-spot-title">
+                <MapPin />
+                <span><strong>{spot.name}</strong><small>{spot.map} · {spot.area}</small></span>
+              </div>
+              <dl>
+                <div><dt>Power</dt><dd>{spot.requiredPower}</dd></div>
+                <div><dt>Holes</dt><dd>{spot.holes}</dd></div>
+                <div><dt>Bait</dt><dd>{spot.bait}</dd></div>
+                <div><dt>Time</dt><dd>{spot.time}</dd></div>
+              </dl>
+              <div className="fishing-target-fish" aria-label="Target fish">
+                {spot.targets.map((fish) => <span key={fish}><Fish />{fish}</span>)}
+              </div>
+              <p>{spot.valueFocus}</p>
+              <small className="fishing-access-note">Requires: {spot.access}</small>
+              <footer>
+                <button type="button" onClick={() => selectFishingPowerTarget(spot.requiredPower)}>
+                  <SlidersHorizontal />
+                  Set power target
+                </button>
+                <a href={spot.wikiUrl} target="_blank" rel="noreferrer" aria-label={`Open ${spot.name} guide`} title={`Open ${spot.name} guide`}>
+                  <ExternalLink />
+                </a>
+              </footer>
+            </article>
+          ))}
+        </div>
+
+        <div className="fishing-profit-note">
+          <Coins />
+          <span>
+            <strong>Gold routes are market- and RNG-sensitive.</strong>
+            <small>Prioritize Daily Catch exchanges first, then legendary fish for Ancient Ambergris. Stay on one map and skiff long enough to preserve Fishing Party stacks.</small>
+          </span>
+        </div>
+      </section>
+
+      <section className="surface fishing-directory-panel">
+        <div className="section-title">
+          <Search />
+          <div>
+            <h3>Fish Location Directory</h3>
+            <p>{FISHING_LOCATION_ENTRIES.length.toLocaleString()} locally stored Wiki records. Search by fish, region, hole, bait, or collection.</p>
+          </div>
+        </div>
+        <div className="fishing-directory-controls">
+          <label className="fishing-search-field">
+            <Search />
+            <input value={fishQuery} onChange={(event) => setFishQuery(event.target.value)} placeholder="Search fish, bait, hole, collection" />
+          </label>
+          <label>
+            <span>Location</span>
+            <select value={fishLocation} onChange={(event) => setFishLocation(event.target.value)}>
+              <option value="all">All locations</option>
+              {FISHING_LOCATION_OPTIONS.map((location) => <option key={location} value={location}>{location}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Time</span>
+            <select value={fishTime} onChange={(event) => setFishTime(event.target.value)}>
+              <option value="all">Any time</option>
+              <option value="daytime">Daytime</option>
+              <option value="nighttime">Nighttime</option>
+              <option value="dawn">Dawn</option>
+              <option value="dusk">Dusk</option>
+            </select>
+          </label>
+          <label className="fishing-ready-toggle">
+            <input type="checkbox" checked={showReadyFishOnly} onChange={(event) => setShowReadyFishOnly(event.target.checked)} />
+            <span>Only fish within {totalPower} power</span>
+          </label>
+        </div>
+        <div className="fishing-directory-summary">
+          <span><strong>{filteredFish.length.toLocaleString()}</strong> matching fish</span>
+          <span><CheckCircle2 /><strong>{filteredFish.filter((fish) => fish.fishingPower > 0 && fish.fishingPower <= totalPower).length.toLocaleString()}</strong> within current power</span>
+        </div>
+        <div className="fishing-directory-table">
+          <div className="fishing-directory-header" aria-hidden="true">
+            <span>Fish</span><span>Location / Hole</span><span>Bait / Time</span><span>Power</span><span />
+          </div>
+          {filteredFish.slice(0, visibleFishCount).map((fish) => {
+            const knownPower = fish.fishingPower > 0;
+            const ready = knownPower && fish.fishingPower <= totalPower;
+            return (
+              <article key={`${fish.name}-${fish.location}-${fish.holes.join("-")}`} className={ready ? "ready" : knownPower ? "locked" : "unknown"}>
+                <span className="fishing-fish-name">
+                  {fish.icon ? <img src={fish.icon} alt="" loading="lazy" /> : <span className="fishing-fish-fallback"><Fish /></span>}
+                  <span><ItemGradeName name={fish.name} rarity={fish.rarity} /><small>{fish.rarity} · {fish.collection || "Open-world fish"}</small></span>
+                </span>
+                <span><strong>{fish.location}</strong><small>{fish.holes.join(", ") || "Open Water"}</small></span>
+                <span><strong>{fish.bait}</strong><small>{fish.time}</small></span>
+                <span className={ready ? "ready" : knownPower ? "locked" : "unknown"}>
+                  <strong>{fish.fishingPower || "Varies"}</strong>
+                  <small>{ready ? "Ready" : knownPower ? `${fish.fishingPower - totalPower} short` : "Check hole"}</small>
+                </span>
+                <a href={fish.wikiUrl} target="_blank" rel="noreferrer" aria-label={`Open ${fish.name} wiki page`} title={`Open ${fish.name} wiki page`}><ExternalLink /></a>
+              </article>
+            );
+          })}
+        </div>
+        {visibleFishCount < filteredFish.length ? (
+          <button type="button" className="fishing-load-more" onClick={() => setVisibleFishCount((count) => count + 24)}>
+            <Plus />
+            Show more fish
+          </button>
+        ) : null}
+        {!filteredFish.length ? <div className="empty-state compact"><Search /><strong>No fish match these filters.</strong></div> : null}
+      </section>
+
+      <section className="surface fishing-technique-panel">
+        <div className="section-title"><Fish /><h3>How To Fish Reliably</h3></div>
+        <div className="fishing-technique-steps">
+          {[
+            ["Prepare", "Equip bait and a lure in Hero panel → Equipment → Fishing. Carry the favored bait for the fish you want."],
+            ["Cast", "Use Start Fishing, then Cast Line into the named fishing hole. Open water has a different catch table."],
+            ["Hook", "Use Set Hook when the red exclamation mark, splash, or sound cue appears."],
+            ["Reel", "Use Reel In Left and Reel In Right to keep the orange bracket over the moving green marker until the progress bar fills."],
+          ].map(([title, detail], index) => (
+            <article key={title}>
+              <span>{index + 1}</span>
+              <div><strong>{title}</strong><p>{detail}</p></div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="fishing-route-layout">
+        <div className="surface fishing-route-panel">
+          <div className="section-title"><Route /><h3>Efficient Route Progression</h3></div>
+          <div className="fishing-route-list">
+            {FISHING_ROUTE_INFO.map((route) => (
+              <article key={route.name}>
+                <span className={`fishing-stage stage-${route.stage.toLowerCase()}`}>{route.stage}</span>
+                <div>
+                  <strong>{route.name}</strong>
+                  <small>{route.expansion} · {route.map} · {route.fishingPower}</small>
+                  <p>{route.strategy}</p>
+                  <dl>
+                    <div><dt>Bait</dt><dd>{route.bait}</dd></div>
+                    <div><dt>Goal</dt><dd>{route.valueFocus}</dd></div>
+                  </dl>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+
+        <div className="surface fishing-efficiency-panel">
+          <div className="section-title"><CheckCircle2 /><h3>Efficiency Rules</h3></div>
+          <ul className="guide-check-list">
+            <li><CheckCircle2 /><span>Select the Fishing mastery track before the session so End of Dragons mastery XP fills the progression you intend to train.</span></li>
+            <li><CheckCircle2 /><span>Fish from marked holes after Tier 1: they bite faster and award triple fishing XP. Open water is for fish that specifically require it.</span></li>
+            <li><CheckCircle2 /><span>Check all four requirements before traveling: region, fishing-hole type, favored bait, and day/night window. Dawn and dusk count as both day and night.</span></li>
+            <li><CheckCircle2 /><span>Stay on one map and skiff while building Fishing Party. The stack is tied to the skiff and does not survive changing map instances.</span></li>
+            <li><CheckCircle2 /><span>Use the hook-color warning: green meets the recommendation, yellow is slightly low, and red means the catch will be substantially harder.</span></li>
+            <li><CheckCircle2 /><span>Check Daily Catch before consuming rare fish. Eligible fish can be exchanged for Ancient Ambergris or Flawless Fish Fillets.</span></li>
+            <li><CheckCircle2 /><span>Deposit fillets and ambergris regularly, but retain collection targets and the fish requested by the current daily fishmonger.</span></li>
+            <li><CheckCircle2 /><span>Fishing-rod skins are cosmetic. Power comes from the fixed rod bonus, mastery tiers, bait, lure, nourishment, Fishing Party, and temporary effects.</span></li>
+          </ul>
+        </div>
+      </section>
+
+      <section className="surface fishing-value-panel">
+        <div className="fishing-value-heading">
+          <div className="section-title"><Coins /><h3>Fishing Value</h3></div>
+          {valueRows.every((row) => row.value <= 0) ? (
+            <button type="button" className="icon-button" onClick={onLoadMarket}><RefreshCcw /><span>Load Market</span></button>
+          ) : null}
+        </div>
+        <div className="fishing-value-list">
+          {valueRows.map((row) => (
+            <button key={row.name} type="button" disabled={!row.item} onClick={() => row.item && onOpenItem(row.item)}>
+              <ItemIcon item={row.item ?? { name: row.name }} />
+              <span><ItemGradeName name={row.item?.name ?? row.name} rarity={row.item?.rarity} /><small>{row.source}</small></span>
+              <span>{row.value ? <Money value={row.value} /> : "Load market"}<small>{row.note}</small></span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="surface fishing-sources-panel">
+        <div className="section-title"><BookOpen /><h3>Sources</h3></div>
+        <div className="fishing-source-links">
+          <a href="https://wiki.guildwars2.com/wiki/Fishing" target="_blank" rel="noreferrer"><strong>Fishing</strong><span>Unlock, controls, preparation, holes, and mastery track.</span><ExternalLink /></a>
+          <a href="https://wiki.guildwars2.com/wiki/Fishing_Power" target="_blank" rel="noreferrer"><strong>Fishing Power</strong><span>Power sources, typical setup, maximum setup, and difficulty indicators.</span><ExternalLink /></a>
+          <a href="https://wiki.guildwars2.com/wiki/Fishing_Party" target="_blank" rel="noreferrer"><strong>Fishing Party</strong><span>Stack thresholds, skiff behavior, and power bonuses.</span><ExternalLink /></a>
+          <a href="https://wiki.guildwars2.com/wiki/Daily_Catch" target="_blank" rel="noreferrer"><strong>Daily Catch</strong><span>Current fishmonger exchanges for ambergris and fillets.</span><ExternalLink /></a>
+          <a href={fishingLocationData.source} target="_blank" rel="noreferrer"><strong>List of Fish</strong><span>Location, hole, bait, time, rarity, and Fishing Power records used by the directory.</span><ExternalLink /></a>
+        </div>
+      </section>
+    </div>
+  );
+
+  return (
+    <div className="category-page">
+      {detailPane ? (
+        <section className="market-workspace guide-category-detail-workspace">
+          <aside className="market-panel guide-category-left-panel">{content}</aside>
+          <MarketSplitHandle />
+          {detailPane}
+        </section>
+      ) : content}
+    </div>
+  );
+}
+
 function CategoryPage({
   activePage,
   catalog,
@@ -21315,20 +23079,6 @@ function CategoryPage({
       notes: (left, right) => compareStringValue(left.note, right.note),
     },
   );
-  const { sortedRows: sortedFishingRoutes, renderHeader: renderFishingHeader } = useSortableRows<
-    FishingRouteInfo,
-    "route" | "bait" | "power" | "map" | "value"
-  >(
-    FISHING_ROUTE_INFO,
-    { key: "route", direction: "asc" },
-    {
-      route: (left, right) => compareStringValue(left.name, right.name),
-      bait: (left, right) => compareStringValue(left.bait, right.bait),
-      power: (left, right) => compareStringValue(left.fishingPower, right.fishingPower),
-      map: (left, right) => compareStringValue(`${left.expansion} ${left.map}`, `${right.expansion} ${right.map}`),
-      value: (left, right) => compareStringValue(left.valueFocus, right.valueFocus),
-    },
-  );
   const suggestions = REPEATABLE_EARNING_OPTIONS.filter((option) => {
     const text = `${option.title} ${option.detail}`.toLowerCase();
 
@@ -21369,6 +23119,19 @@ function CategoryPage({
       onOpenCurrency={onOpenGuideCurrency}
     />
   ) : null;
+
+  if (activePage === "fishing") {
+    return (
+      <FishingPage
+        catalog={catalog}
+        accountSnapshot={accountSnapshot}
+        detailPane={detailPane}
+        onLoadMarket={onLoadMarket}
+        onOpenItem={onSelectInlineDetail}
+        onOpenPage={onOpenPage}
+      />
+    );
+  }
 
   if (guide.resourceHub && guide.resources?.length) {
     return (
@@ -21584,39 +23347,6 @@ function CategoryPage({
               </button>
             </div>
           )}
-        </section>
-      ) : null}
-
-      {isGuideFamily(activePage, "fishing") || activePage === "fishing" ? (
-        <section className="surface activity-value-panel">
-          <div className="section-title">
-            <BookOpen />
-            <h3>Fishing Requirements</h3>
-          </div>
-          <div className="craft-table-wrap">
-            <table className="craft-profit-table">
-              <thead>
-                <tr>
-                  {renderFishingHeader("route", "Route")}
-                  {renderFishingHeader("bait", "Bait")}
-                  {renderFishingHeader("power", "Fishing Power")}
-                  {renderFishingHeader("map", "Expansion / Map")}
-                  {renderFishingHeader("value", "Value Focus")}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedFishingRoutes.map((route) => (
-                  <tr key={route.name}>
-                    <td>{route.name}</td>
-                    <td>{route.bait}</td>
-                    <td>{route.fishingPower}</td>
-                    <td>{route.expansion} · {route.map}</td>
-                    <td>{route.valueFocus}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </section>
       ) : null}
 
@@ -21840,9 +23570,29 @@ function GuideCurrencyDetailPane({
   onOpenDetail?: (item: Gw2Item) => void;
   onOpenPage?: (page: ActivePage) => void;
 }) {
+  const { goals } = useProjectGoals();
   const [usedInRecipes, setUsedInRecipes] = useState<RecipeGuide[]>([]);
   const [recipeState, setRecipeState] = useState<LoadState>("idle");
+  const [showAllStoreStock, setShowAllStoreStock] = useState(false);
   const currencyItemId = currency.itemId ?? getCurrencyMaterialItemId(currency.name);
+  const knownStoreMatches = useMemo(() => getKnownCurrencyStoreMatches(currency.name), [currency.name]);
+  const reservedForProjects = useMemo(() => {
+    if (!currencyItemId) return 0;
+    return goals
+      .filter((goal) => goal.status === "active")
+      .reduce((total, goal) => {
+        const guide = usedInRecipes.find((entry) => entry.recipe.output_item_id === goal.itemId);
+        const ingredient = guide?.recipe.ingredients.find((entry) => entry.item_id === currencyItemId);
+        if (!guide || !ingredient) return total;
+        const ownedOutput = accountSnapshot?.holdings.get(goal.itemId) ?? 0;
+        const remainingOutput = Math.max(0, goal.quantity - ownedOutput);
+        const runs = Math.ceil(remainingOutput / Math.max(1, guide.recipe.output_item_count));
+        return total + ingredient.count * runs;
+      }, 0);
+  }, [accountSnapshot, currencyItemId, goals, usedInRecipes]);
+  const safeToSpend = typeof currency.amount === "number"
+    ? Math.max(0, currency.amount - reservedForProjects)
+    : null;
 
   useEffect(() => {
     if (!currencyItemId) {
@@ -21914,8 +23664,16 @@ function GuideCurrencyDetailPane({
             <h3>Currency Guide</h3>
           </div>
           <div className="guide-resource-detail-grid">
+            {typeof currency.amount === "number" ? (
+              <section className="currency-reserve-summary">
+                <Metric icon={<WalletIcon />} label="Balance" value={currency.amount.toLocaleString()} />
+                <Metric icon={<Target />} label="Project Reserve" value={reservedForProjects.toLocaleString()} tone={reservedForProjects ? "default" : "muted"} />
+                <Metric icon={<CheckCircle2 />} label="Safe To Spend" value={(safeToSpend ?? 0).toLocaleString()} tone="positive" />
+              </section>
+            ) : null}
             <section className="guide-detail-section">
               <h3>How To Get</h3>
+              <DataQualityBadge level={GUIDE_CURRENCY_DEFINITIONS[currency.name] ? "Reference" : "Estimated"} />
               <ul className="guide-check-list">
                 {currency.acquisition.map((item) => (
                   <li key={item}>
@@ -21970,6 +23728,30 @@ function GuideCurrencyDetailPane({
                     </article>
                   ))}
                 </div>
+              </section>
+            ) : null}
+
+            {knownStoreMatches.length ? (
+              <section className="guide-detail-section currency-store-stock-section">
+                <h3>Known Store Stock</h3>
+                <div className="currency-store-stock-list">
+                  {(showAllStoreStock ? knownStoreMatches : knownStoreMatches.slice(0, 12)).map(({ store, item }) => (
+                    <article key={`${store.name}-${item.name}-${item.price}`}>
+                      <span>
+                        <strong>{item.name}</strong>
+                        <small>{store.name} · {store.location}</small>
+                      </span>
+                      <GuideCurrencyValue value={item.price} />
+                      {store.waypoint ? <CopyableChatCode code={store.waypoint} /> : null}
+                      <a href={item.wikiUrl ?? store.url} target="_blank" rel="noreferrer" aria-label={`Open ${item.name} source`}><ExternalLink /></a>
+                    </article>
+                  ))}
+                </div>
+                {knownStoreMatches.length > 12 ? (
+                  <button type="button" className="load-more-button currency-stock-toggle" onClick={() => setShowAllStoreStock((current) => !current)}>
+                    <ShoppingCart /><span>{showAllStoreStock ? "Show fewer items" : `Show all ${knownStoreMatches.length.toLocaleString()} items`}</span>
+                  </button>
+                ) : null}
               </section>
             ) : null}
 
@@ -23476,6 +25258,32 @@ function findMarketItemByName(catalog: MarketItem[], name: string): MarketItem |
   return catalog.find((item) => normalizeSearchText(item.name) === normalized);
 }
 
+function resolveActivityValueItem(entry: ActivityValueItem, catalog: MarketItem[]): Gw2Item | undefined {
+  const resolved =
+    (entry.itemId ? catalog.find((item) => item.id === entry.itemId) ?? getStoredItem(entry.itemId) : undefined) ??
+    findMarketItemByName(catalog, entry.name) ??
+    getStoredItemByName(entry.name);
+
+  if (resolved || !entry.itemId) {
+    return resolved;
+  }
+
+  return {
+    id: entry.itemId,
+    chat_link: entry.chatLink,
+    name: entry.name,
+    icon: entry.icon,
+    description: entry.description,
+    type: entry.type ?? "CraftingMaterial",
+    rarity: entry.rarity ?? "Basic",
+    level: entry.level ?? 0,
+    vendor_value: entry.vendorValue ?? 0,
+    flags: [],
+    game_types: ["Pve"],
+    restrictions: [],
+  };
+}
+
 function findGuideResourceForItem(item: Gw2Item, explicitResource?: GuideResource | null): GuideResource | null {
   if (explicitResource) {
     return explicitResource;
@@ -24775,6 +26583,10 @@ function SellerPrice({ value, count = 1 }: { value: number; count?: number }) {
       <FeeNote fee={getTradingPostFee(value, count)} />
     </span>
   );
+}
+
+function DataQualityBadge({ level }: { level: "Exact" | "Account" | "Estimated" | "Reference" }) {
+  return <span className={`data-quality-badge quality-${level.toLowerCase()}`}>{level}</span>;
 }
 
 function Metric({
@@ -28226,6 +30038,8 @@ function IngredientMindMap({
   const [isMapPanning, setIsMapPanning] = useState(false);
   const [mapViewportSize, setMapViewportSize] = useState({ width: 0, height: 0 });
   const mapViewportRef = useRef<HTMLDivElement | null>(null);
+  const centeredLayoutIdentityRef = useRef<string | null>(null);
+  const pendingBranchFocusRef = useRef<string | null>(null);
   const mapDragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -28301,11 +30115,26 @@ function IngredientMindMap({
       return;
     }
 
-    setMapPan(centerCraftMapPan(layout, {
+    const viewportSize = {
       width: viewport.width,
       height: viewport.height,
-    }));
-  }, [layout, visibleNodeKey]);
+    };
+    const pendingBranchKey = pendingBranchFocusRef.current;
+    if (pendingBranchKey) {
+      pendingBranchFocusRef.current = null;
+      setMapPan(focusCraftMapBranchPan(layout, pendingBranchKey, viewportSize));
+      return;
+    }
+
+    const layoutIdentity = `${item.id}:${recipe?.recipe.id ?? "none"}`;
+    if (centeredLayoutIdentityRef.current !== layoutIdentity) {
+      centeredLayoutIdentityRef.current = layoutIdentity;
+      setMapPan(centerCraftMapPan(layout, viewportSize));
+      return;
+    }
+
+    setMapPan((current) => clampCraftMapPan(current, layout, viewportSize));
+  }, [item.id, layout, recipe?.recipe.id, visibleNodeKey]);
 
   useLayoutEffect(() => {
     const viewport = mapViewportRef.current;
@@ -28413,6 +30242,7 @@ function IngredientMindMap({
 
   const toggleNodeBranch = (node: PositionedCraftMapNode) => {
     const isCollapsed = isCraftMapNodeCollapsed(node, collapsedNodeKeys, expandedNodeKeys);
+    pendingBranchFocusRef.current = node.key;
     setCollapsedNodeKeys((current) => {
       const next = new Set(current);
       if (isCollapsed) {
@@ -28586,7 +30416,7 @@ function IngredientMindMap({
                     className={`map-node ${node.depth === 0 ? "output-node" : "ingredient-node"} ${
                       node.recipe ? "craftable-node" : ""
                     }`}
-                    style={{ left: node.x, top: node.y }}
+                    style={{ left: node.x, top: node.y, width: node.width }}
                     onClick={() => setSelectedNode(node)}
                     onDoubleClick={(event) => {
                       event.preventDefault();
@@ -28692,8 +30522,9 @@ function getCraftMapRecipeOptionTitle(guide: RecipeGuide, index: number): string
 
 const CRAFT_MAP_MAX_DEPTH = 5;
 const CRAFT_MAP_RECIPE_LOAD_CONCURRENCY = 6;
-const CRAFT_MAP_NODE_WIDTH = 154;
-const CRAFT_MAP_NODE_HEIGHT = 122;
+const CRAFT_MAP_NODE_MIN_WIDTH = 154;
+const CRAFT_MAP_NODE_MAX_WIDTH = 230;
+const CRAFT_MAP_NODE_HEIGHT = 136;
 const CRAFT_MAP_NODE_VERTICAL_EXTRA = 32;
 const CRAFT_MAP_MIN_VISIBLE_PIXELS = 120;
 
@@ -28711,6 +30542,7 @@ interface CraftMapTreeNode {
 interface PositionedCraftMapNode extends CraftMapTreeNode {
   x: number;
   y: number;
+  width: number;
 }
 
 interface CraftMapConnector {
@@ -28735,6 +30567,45 @@ interface CraftRecipeQueueEntry {
   itemId: number;
   depth: number;
   path: Set<number>;
+}
+
+const EMPTY_CRAFT_HOLDINGS = new Map<number, number>();
+const craftRecipeGuidePromiseCache = new WeakMap<
+  Map<number, number>,
+  Map<number, Promise<RecipeGuide[]>>
+>();
+const nestedCraftRecipePromiseCache = new WeakMap<
+  Map<number, number>,
+  Map<string, Promise<Map<number, RecipeGuide[]>>>
+>();
+
+function loadCraftRecipeGuides(
+  itemId: number,
+  holdings: Map<number, number> | undefined,
+): Promise<RecipeGuide[]> {
+  const holdingsKey = holdings ?? EMPTY_CRAFT_HOLDINGS;
+  let accountCache = craftRecipeGuidePromiseCache.get(holdingsKey);
+  if (!accountCache) {
+    accountCache = new Map();
+    craftRecipeGuidePromiseCache.set(holdingsKey, accountCache);
+  }
+
+  const cachedPromise = accountCache.get(itemId);
+  if (cachedPromise) {
+    return cachedPromise;
+  }
+
+  const promise = Promise.resolve()
+    .then(() => {
+      const cachedGuides = getCachedRecipeGuidesForOutput(itemId, holdingsKey);
+      return cachedGuides.length ? cachedGuides : loadRecipesForOutput(itemId, holdingsKey);
+    })
+    .catch((error) => {
+      accountCache?.delete(itemId);
+      throw error;
+    });
+  accountCache.set(itemId, promise);
+  return promise;
 }
 
 function buildCraftMapTree(
@@ -28827,6 +30698,31 @@ async function loadNestedCraftRecipes(
   accountSnapshot: AccountSnapshot | null,
 ): Promise<Map<number, RecipeGuide[]>> {
   const holdings = accountSnapshot?.holdings;
+  const holdingsKey = holdings ?? EMPTY_CRAFT_HOLDINGS;
+  let accountCache = nestedCraftRecipePromiseCache.get(holdingsKey);
+  if (!accountCache) {
+    accountCache = new Map();
+    nestedCraftRecipePromiseCache.set(holdingsKey, accountCache);
+  }
+  const cacheKey = `${rootRecipe.recipe.id}:${rootRecipe.recipe.output_item_id ?? 0}`;
+  const cachedPromise = accountCache.get(cacheKey);
+  if (cachedPromise) {
+    return cachedPromise;
+  }
+
+  const promise = loadNestedCraftRecipesUncached(rootRecipe, accountSnapshot).catch((error) => {
+    accountCache?.delete(cacheKey);
+    throw error;
+  });
+  accountCache.set(cacheKey, promise);
+  return promise;
+}
+
+async function loadNestedCraftRecipesUncached(
+  rootRecipe: RecipeGuide,
+  accountSnapshot: AccountSnapshot | null,
+): Promise<Map<number, RecipeGuide[]>> {
+  const holdings = accountSnapshot?.holdings;
   const loadedRecipes = new Map<number, RecipeGuide[]>();
   let currentLevel: CraftRecipeQueueEntry[] = rootRecipe.ingredients.map((ingredient) => ({
     itemId: ingredient.item_id,
@@ -28898,7 +30794,7 @@ async function loadCraftMapRecipeBatch(
         const index = nextIndex;
         nextIndex += 1;
         const entry = entries[index];
-        const guides = await loadRecipesForOutput(entry.itemId, holdings).catch(() => []);
+        const guides = await loadCraftRecipeGuides(entry.itemId, holdings).catch(() => []);
         results[index] = { entry, guides };
       }
     }),
@@ -28934,17 +30830,6 @@ function isCraftMapNodeCollapsed(
   return node.depth > 0 && !expandedNodeKeys.has(node.key);
 }
 
-function countCraftMapLeaves(
-  node: CraftMapTreeNode,
-  isCollapsed: (node: CraftMapTreeNode) => boolean,
-): number {
-  if (node.children.length === 0 || isCollapsed(node)) {
-    return 1;
-  }
-
-  return node.children.reduce((sum, child) => sum + countCraftMapLeaves(child, isCollapsed), 0);
-}
-
 function getCraftMapDepth(
   node: CraftMapTreeNode,
   isCollapsed: (node: CraftMapTreeNode) => boolean,
@@ -28963,28 +30848,32 @@ function layoutCraftMap(
   root: CraftMapTreeNode,
   isCollapsed: (node: CraftMapTreeNode) => boolean,
 ): CraftMapLayout {
-  const leafCount = countCraftMapLeaves(root, isCollapsed);
   const maxDepth = getCraftMapDepth(root, isCollapsed);
-  const leafSpacing = 190;
+  const nodeGap = 36;
   const sidePadding = 130;
   const top = 86;
   const levelSpacing = 162;
-  const width = Math.max(760, Math.max(1, leafCount - 1) * leafSpacing + sidePadding * 2);
+  let width = 760;
   const height = Math.max(360, top + maxDepth * levelSpacing + 130);
   const nodes: PositionedCraftMapNode[] = [];
   const connectors: CraftMapConnector[] = [];
-  let leafIndex = 0;
+  let nextLeafLeft = sidePadding;
 
   const place = (node: CraftMapTreeNode): PositionedCraftMapNode => {
     const childNodes = isCollapsed(node) ? [] : node.children.map(place);
+    const nodeWidth = getCraftMapNodeWidth(node);
     const x =
       childNodes.length > 0
         ? childNodes.reduce((sum, child) => sum + child.x, 0) / childNodes.length
-        : sidePadding + leafIndex++ * leafSpacing;
+        : nextLeafLeft + nodeWidth / 2;
+    if (childNodes.length === 0) {
+      nextLeafLeft += nodeWidth + nodeGap;
+    }
     const positionedNode = {
       ...node,
       x,
       y: top + node.depth * levelSpacing,
+      width: nodeWidth,
     };
 
     nodes.push(positionedNode);
@@ -29000,6 +30889,14 @@ function layoutCraftMap(
   };
 
   place(root);
+  const contentLeft = Math.min(...nodes.map((node) => node.x - node.width / 2));
+  const contentRight = Math.max(...nodes.map((node) => node.x + node.width / 2));
+  const contentWidth = contentRight - contentLeft;
+  width = Math.max(760, contentWidth + sidePadding * 2);
+  const horizontalOffset = (width - contentWidth) / 2 - contentLeft;
+  nodes.forEach((node) => {
+    node.x += horizontalOffset;
+  });
   if (nodes.length === 1) {
     nodes[0].x = width / 2;
     nodes[0].y = height / 2;
@@ -29011,6 +30908,16 @@ function layoutCraftMap(
     nodes,
     connectors,
   };
+}
+
+function getCraftMapNodeWidth(node: CraftMapTreeNode): number {
+  const nameWidth = 92 + node.item.name.length * 5.4;
+  const routeWidth = 108 + node.acquisition.label.length * 4.2;
+  return clampNumber(
+    Math.ceil(Math.max(CRAFT_MAP_NODE_MIN_WIDTH, nameWidth, routeWidth)),
+    CRAFT_MAP_NODE_MIN_WIDTH,
+    CRAFT_MAP_NODE_MAX_WIDTH,
+  );
 }
 
 function getCraftMapVisibleBounds(nodes: PositionedCraftMapNode[]) {
@@ -29025,10 +30932,9 @@ function getCraftMapVisibleBounds(nodes: PositionedCraftMapNode[]) {
     };
   }
 
-  const halfWidth = CRAFT_MAP_NODE_WIDTH / 2;
   const halfHeight = CRAFT_MAP_NODE_HEIGHT / 2;
-  const left = Math.min(...nodes.map((node) => node.x - halfWidth));
-  const right = Math.max(...nodes.map((node) => node.x + halfWidth));
+  const left = Math.min(...nodes.map((node) => node.x - node.width / 2));
+  const right = Math.max(...nodes.map((node) => node.x + node.width / 2));
   const top = Math.min(...nodes.map((node) => node.y - halfHeight));
   const bottom = Math.max(...nodes.map((node) => node.y + halfHeight + CRAFT_MAP_NODE_VERTICAL_EXTRA));
 
@@ -29044,6 +30950,30 @@ function getCraftMapVisibleBounds(nodes: PositionedCraftMapNode[]) {
 
 function centerCraftMapPan(layout: CraftMapLayout, viewport: CraftMapViewportSize) {
   const bounds = getCraftMapVisibleBounds(layout.nodes);
+  const nextPan = {
+    x: viewport.width / 2 - (bounds.left + bounds.width / 2),
+    y: viewport.height / 2 - (bounds.top + bounds.height / 2),
+  };
+
+  return clampCraftMapPan(nextPan, layout, viewport);
+}
+
+function focusCraftMapBranchPan(
+  layout: CraftMapLayout,
+  nodeKey: string,
+  viewport: CraftMapViewportSize,
+) {
+  const parent = layout.nodes.find((node) => node.key === nodeKey);
+  if (!parent) {
+    return centerCraftMapPan(layout, viewport);
+  }
+
+  const childKeys = new Set(parent.children.map((child) => child.key));
+  const branchNodes = [
+    parent,
+    ...layout.nodes.filter((node) => childKeys.has(node.key)),
+  ];
+  const bounds = getCraftMapVisibleBounds(branchNodes);
   const nextPan = {
     x: viewport.width / 2 - (bounds.left + bounds.width / 2),
     y: viewport.height / 2 - (bounds.top + bounds.height / 2),
@@ -29072,8 +31002,8 @@ function clampCraftMapPan(
 }
 
 function buildRecipeConnector(connector: CraftMapConnector): string {
-  const startY = connector.parent.y + 58;
-  const endY = connector.children[0].y - 58;
+  const startY = connector.parent.y + CRAFT_MAP_NODE_HEIGHT / 2;
+  const endY = connector.children[0].y - CRAFT_MAP_NODE_HEIGHT / 2;
   const busY = startY + Math.max(28, (endY - startY) * 0.42);
   const minX = Math.min(...connector.children.map((child) => child.x));
   const maxX = Math.max(...connector.children.map((child) => child.x));
@@ -29109,7 +31039,7 @@ function NodeInfoWindow({
 }) {
   const infoWidth = 300;
   const estimatedInfoHeight = 190;
-  const nodeHalfWidth = 77;
+  const nodeHalfWidth = node.width / 2;
   const gap = 12;
   const visibleLeft = viewport.width > 0 ? Math.max(0, -pan.x) : 0;
   const visibleTop = viewport.height > 0 ? Math.max(0, -pan.y) : 0;

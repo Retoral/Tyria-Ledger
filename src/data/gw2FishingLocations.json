@@ -1,0 +1,4125 @@
+{
+  "source": "https://wiki.guildwars2.com/wiki/List_of_fish",
+  "fish": [
+    {
+      "name": "Globefish",
+      "rarity": "Basic",
+      "location": "Seitung Province",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 50,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/01/Globefish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Globefish"
+    },
+    {
+      "name": "Mullet",
+      "rarity": "Basic",
+      "location": "Seitung Province",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 50,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/a/a4/Mullet.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Mullet"
+    },
+    {
+      "name": "Porgy",
+      "rarity": "Basic",
+      "location": "Seitung Province",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 50,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/9f/Porgy.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Porgy"
+    },
+    {
+      "name": "Bluefin Trevally",
+      "rarity": "Fine",
+      "location": "Seitung Province",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 50,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/c0/Bluefin_Trevally.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Bluefin_Trevally"
+    },
+    {
+      "name": "Corvina",
+      "rarity": "Fine",
+      "location": "Seitung Province",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 50,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/2b/Corvina.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Corvina"
+    },
+    {
+      "name": "Chestnut Sea Bream",
+      "rarity": "Fine",
+      "location": "Seitung Province",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 50,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/5a/Chestnut_Sea_Bream.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Chestnut_Sea_Bream"
+    },
+    {
+      "name": "Cherry Salmon",
+      "rarity": "Masterwork",
+      "location": "Seitung Province",
+      "holes": [
+        "Shore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 150,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/5c/Cherry_Salmon.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Cherry_Salmon"
+    },
+    {
+      "name": "Crimson Snapper",
+      "rarity": "Masterwork",
+      "location": "Seitung Province",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 200,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/22/Crimson_Snapper.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Crimson_Snapper"
+    },
+    {
+      "name": "Green Sawfish",
+      "rarity": "Masterwork",
+      "location": "Seitung Province",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 200,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/00/Green_Sawfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Green_Sawfish"
+    },
+    {
+      "name": "Cutlass Fish",
+      "rarity": "Rare",
+      "location": "Seitung Province",
+      "holes": [
+        "Shore Fish",
+        "Rare Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 150,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/b6/Cutlass_Fish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Cutlass_Fish"
+    },
+    {
+      "name": "Honeycomb Grouper",
+      "rarity": "Rare",
+      "location": "Seitung Province",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 200,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/72/Honeycomb_Grouper.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Honeycomb_Grouper"
+    },
+    {
+      "name": "Tripletail",
+      "rarity": "Rare",
+      "location": "Seitung Province",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 200,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/12/Tripletail.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Tripletail"
+    },
+    {
+      "name": "Stingray",
+      "rarity": "Exotic",
+      "location": "Seitung Province",
+      "holes": [
+        "Shore Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 150,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/3/3a/Stingray.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Stingray"
+    },
+    {
+      "name": "Humphead Wrasse",
+      "rarity": "Exotic",
+      "location": "Seitung Province",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 200,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/f/fe/Humphead_Wrasse.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Humphead_Wrasse"
+    },
+    {
+      "name": "Dragonet",
+      "rarity": "Exotic",
+      "location": "Seitung Province",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 200,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/9a/Dragonet.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Dragonet"
+    },
+    {
+      "name": "Spotted Stingray",
+      "rarity": "Ascended",
+      "location": "Seitung Province",
+      "holes": [
+        "Shore Fish"
+      ],
+      "bait": "Shrimpling",
+      "time": "Daytime",
+      "fishingPower": 150,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/59/Spotted_Stingray.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Spotted_Stingray"
+    },
+    {
+      "name": "Skipjack Tuna",
+      "rarity": "Ascended",
+      "location": "Seitung Province",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Sardine",
+      "time": "Any",
+      "fishingPower": 200,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/e5/Skipjack_Tuna.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Skipjack_Tuna"
+    },
+    {
+      "name": "Mega Prawn",
+      "rarity": "Ascended",
+      "location": "Seitung Province",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Sardine",
+      "time": "Nighttime",
+      "fishingPower": 200,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/9f/Mega_Prawn.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Mega_Prawn"
+    },
+    {
+      "name": "Fugu Fish",
+      "rarity": "Legendary",
+      "location": "Seitung Province",
+      "holes": [
+        "Shore Fish"
+      ],
+      "bait": "Shrimpling",
+      "time": "Nighttime",
+      "fishingPower": 150,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/8/8b/Fugu_Fish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Fugu_Fish"
+    },
+    {
+      "name": "Sailfish",
+      "rarity": "Legendary",
+      "location": "Seitung Province",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Sardine",
+      "time": "Any",
+      "fishingPower": 200,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/56/Sailfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Sailfish"
+    },
+    {
+      "name": "Sunfish",
+      "rarity": "Legendary",
+      "location": "Seitung Province",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Shrimpling",
+      "time": "Daytime",
+      "fishingPower": 200,
+      "collection": "Seitung Province Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/56/Sunfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Sunfish"
+    },
+    {
+      "name": "Shinota Blackfin",
+      "rarity": "Basic",
+      "location": "Seitung Province",
+      "holes": [
+        "Shinota Blackfins"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "",
+      "icon": "https://wiki.guildwars2.com/images/2/24/Shinota_Blackfin.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Shinota_Blackfin"
+    },
+    {
+      "name": "Daijun Blackfin",
+      "rarity": "Basic",
+      "location": "Seitung Province",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Haiju Minnow",
+      "time": "Any",
+      "fishingPower": 50,
+      "collection": "",
+      "icon": "https://wiki.guildwars2.com/images/2/24/Shinota_Blackfin.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Daijun_Blackfin"
+    },
+    {
+      "name": "Flying Fish",
+      "rarity": "Basic",
+      "location": "New Kaineng City",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 150,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/bc/Flying_Fish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Flying_Fish"
+    },
+    {
+      "name": "Pollock",
+      "rarity": "Basic",
+      "location": "New Kaineng City",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 150,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/25/Pollock.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Pollock"
+    },
+    {
+      "name": "Sea Perch",
+      "rarity": "Basic",
+      "location": "New Kaineng City",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 150,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/ee/Sea_Perch.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Sea_Perch"
+    },
+    {
+      "name": "Blowfish",
+      "rarity": "Fine",
+      "location": "New Kaineng City",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 150,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/c2/Blowfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Blowfish"
+    },
+    {
+      "name": "Emperor Fish",
+      "rarity": "Fine",
+      "location": "New Kaineng City",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 150,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/06/Emperor_Fish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Emperor_Fish"
+    },
+    {
+      "name": "Weever",
+      "rarity": "Fine",
+      "location": "New Kaineng City",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 150,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/e2/Weever.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Weever"
+    },
+    {
+      "name": "Emerald Snapper",
+      "rarity": "Masterwork",
+      "location": "New Kaineng City",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 200,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/f/f1/Emerald_Snapper.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Emerald_Snapper"
+    },
+    {
+      "name": "Kahawai",
+      "rarity": "Masterwork",
+      "location": "New Kaineng City",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 200,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/3/37/Kahawai.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Kahawai"
+    },
+    {
+      "name": "Striped Barracuda",
+      "rarity": "Masterwork",
+      "location": "New Kaineng City",
+      "holes": [
+        "Channel Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 250,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/1f/Striped_Barracuda.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Striped_Barracuda"
+    },
+    {
+      "name": "Amberjack",
+      "rarity": "Rare",
+      "location": "New Kaineng City",
+      "holes": [
+        "Coastal Fish",
+        "Rare Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 200,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/97/Amberjack.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Amberjack"
+    },
+    {
+      "name": "Pufferfish",
+      "rarity": "Rare",
+      "location": "New Kaineng City",
+      "holes": [
+        "Coastal Fish",
+        "Rare Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 200,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/ba/Pufferfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Pufferfish"
+    },
+    {
+      "name": "Dragonfish",
+      "rarity": "Rare",
+      "location": "New Kaineng City",
+      "holes": [
+        "Channel Fish",
+        "Rare Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 250,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/3/39/Dragonfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Dragonfish"
+    },
+    {
+      "name": "Blue Dorado",
+      "rarity": "Exotic",
+      "location": "New Kaineng City",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 200,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/ea/Blue_Dorado.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Blue_Dorado"
+    },
+    {
+      "name": "Sturgeon",
+      "rarity": "Exotic",
+      "location": "New Kaineng City",
+      "holes": [
+        "Channel Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 250,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/4/42/Sturgeon.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Sturgeon"
+    },
+    {
+      "name": "Taimen",
+      "rarity": "Exotic",
+      "location": "New Kaineng City",
+      "holes": [
+        "Channel Fish"
+      ],
+      "bait": "Any",
+      "time": "Dusk/Dawn",
+      "fishingPower": 250,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/90/Taimen.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Taimen"
+    },
+    {
+      "name": "Giant Trevally",
+      "rarity": "Ascended",
+      "location": "New Kaineng City",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Sardine",
+      "time": "Any",
+      "fishingPower": 200,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/3/3b/Giant_Trevally.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Giant_Trevally"
+    },
+    {
+      "name": "Tarpon",
+      "rarity": "Ascended",
+      "location": "New Kaineng City",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Shrimpling",
+      "time": "Any",
+      "fishingPower": 200,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/ce/Tarpon.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Tarpon"
+    },
+    {
+      "name": "Starry Flounder",
+      "rarity": "Ascended",
+      "location": "New Kaineng City",
+      "holes": [
+        "Channel Fish"
+      ],
+      "bait": "Sardine",
+      "time": "Nighttime",
+      "fishingPower": 250,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/7a/Starry_Flounder.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Starry_Flounder"
+    },
+    {
+      "name": "Bluefin Tuna",
+      "rarity": "Legendary",
+      "location": "New Kaineng City",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Mackerel",
+      "time": "Any",
+      "fishingPower": 200,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/8/8e/Bluefin_Tuna.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Bluefin_Tuna"
+    },
+    {
+      "name": "Swordfish",
+      "rarity": "Legendary",
+      "location": "New Kaineng City",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Mackerel",
+      "time": "Daytime",
+      "fishingPower": 200,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/f/f7/Swordfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Swordfish"
+    },
+    {
+      "name": "Oarfish",
+      "rarity": "Legendary",
+      "location": "New Kaineng City",
+      "holes": [
+        "Channel Fish"
+      ],
+      "bait": "Shrimpling",
+      "time": "Any",
+      "fishingPower": 250,
+      "collection": "Kaineng Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/6b/Oarfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Oarfish"
+    },
+    {
+      "name": "Freshwater Eel",
+      "rarity": "Basic",
+      "location": "The Echovald Wilds",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 200,
+      "collection": "Echovald Wilds Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/e3/Freshwater_Eel.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Freshwater_Eel"
+    },
+    {
+      "name": "Stone Loach",
+      "rarity": "Basic",
+      "location": "The Echovald Wilds",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 200,
+      "collection": "Echovald Wilds Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/9a/Stone_Loach.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Stone_Loach"
+    },
+    {
+      "name": "Black Carp",
+      "rarity": "Fine",
+      "location": "The Echovald Wilds",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 200,
+      "collection": "Echovald Wilds Fisher",
+      "icon": "https://wiki.guildwars2.com/images/4/4f/Black_Carp.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Black_Carp"
+    },
+    {
+      "name": "Knifefish",
+      "rarity": "Fine",
+      "location": "The Echovald Wilds",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 200,
+      "collection": "Echovald Wilds Fisher",
+      "icon": "https://wiki.guildwars2.com/images/f/fc/Knifefish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Knifefish"
+    },
+    {
+      "name": "Bullhead Catfish",
+      "rarity": "Masterwork",
+      "location": "The Echovald Wilds",
+      "holes": [
+        "Lake Fish",
+        "Deep Fishing Hole"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 250,
+      "collection": "Echovald Wilds Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/ed/Bullhead_Catfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Bullhead_Catfish"
+    },
+    {
+      "name": "Snakehead",
+      "rarity": "Masterwork",
+      "location": "The Echovald Wilds",
+      "holes": [
+        "Grotto Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 300,
+      "collection": "Echovald Wilds Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/e9/Snakehead.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Snakehead"
+    },
+    {
+      "name": "Cherry Barb",
+      "rarity": "Rare",
+      "location": "The Echovald Wilds",
+      "holes": [
+        "Lake Fish",
+        "Deep Fishing Hole",
+        "Rare Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 250,
+      "collection": "Echovald Wilds Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/63/Cherry_Barb.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Cherry_Barb"
+    },
+    {
+      "name": "Petrifish",
+      "rarity": "Rare",
+      "location": "The Echovald Wilds",
+      "holes": [
+        "Grotto Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 300,
+      "collection": "Echovald Wilds Fisher",
+      "icon": "https://wiki.guildwars2.com/images/4/4d/Petrifish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Petrifish"
+    },
+    {
+      "name": "Amber Trout",
+      "rarity": "Exotic",
+      "location": "The Echovald Wilds",
+      "holes": [
+        "Lake Fish",
+        "Deep Fishing Hole"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 250,
+      "collection": "Echovald Wilds Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/0b/Amber_Trout.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Amber_Trout"
+    },
+    {
+      "name": "Albino Gourami",
+      "rarity": "Exotic",
+      "location": "The Echovald Wilds",
+      "holes": [
+        "Grotto Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 300,
+      "collection": "Echovald Wilds Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/0a/Albino_Gourami.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Albino_Gourami"
+    },
+    {
+      "name": "Royal Featherback",
+      "rarity": "Ascended",
+      "location": "The Echovald Wilds",
+      "holes": [
+        "Lake Fish",
+        "Deep Fishing Hole"
+      ],
+      "bait": "Freshwater Minnow",
+      "time": "Nighttime",
+      "fishingPower": 250,
+      "collection": "Echovald Wilds Fisher",
+      "icon": "https://wiki.guildwars2.com/images/a/a6/Royal_Featherback.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Royal_Featherback"
+    },
+    {
+      "name": "Albino Axolotl",
+      "rarity": "Ascended",
+      "location": "The Echovald Wilds",
+      "holes": [
+        "Grotto Fish"
+      ],
+      "bait": "Glow Worm",
+      "time": "Nighttime",
+      "fishingPower": 300,
+      "collection": "Echovald Wilds Fisher",
+      "icon": "https://wiki.guildwars2.com/images/8/85/Albino_Axolotl.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Albino_Axolotl"
+    },
+    {
+      "name": "Melandru's Lurker",
+      "rarity": "Legendary",
+      "location": "The Echovald Wilds",
+      "holes": [
+        "Lake Fish",
+        "Deep Fishing Hole"
+      ],
+      "bait": "Freshwater Minnow",
+      "time": "Daytime",
+      "fishingPower": 250,
+      "collection": "Echovald Wilds Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/14/Melandru%27s_Lurker.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Melandru's_Lurker"
+    },
+    {
+      "name": "Dark Sleeper",
+      "rarity": "Legendary",
+      "location": "The Echovald Wilds",
+      "holes": [
+        "Grotto Fish"
+      ],
+      "bait": "Glow Worm",
+      "time": "Daytime",
+      "fishingPower": 300,
+      "collection": "Echovald Wilds Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/c1/Dark_Sleeper.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Dark_Sleeper"
+    },
+    {
+      "name": "Boxfish",
+      "rarity": "Basic",
+      "location": "Dragon's End",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 250,
+      "collection": "Dragon's End Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/b5/Boxfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Boxfish"
+    },
+    {
+      "name": "Rohu",
+      "rarity": "Basic",
+      "location": "Dragon's End",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 250,
+      "collection": "Dragon's End Fisher",
+      "icon": "https://wiki.guildwars2.com/images/d/d6/Rohu.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Rohu"
+    },
+    {
+      "name": "Canthan Carp",
+      "rarity": "Fine",
+      "location": "Dragon's End",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 250,
+      "collection": "Dragon's End Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/bb/Canthan_Carp.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Canthan_Carp"
+    },
+    {
+      "name": "Gourami",
+      "rarity": "Fine",
+      "location": "Dragon's End",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 250,
+      "collection": "Dragon's End Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/5c/Gourami.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Gourami"
+    },
+    {
+      "name": "Jade Lamprey",
+      "rarity": "Masterwork",
+      "location": "Dragon's End",
+      "holes": [
+        "Quarry Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 300,
+      "collection": "Dragon's End Fisher",
+      "icon": "https://wiki.guildwars2.com/images/d/d1/Jade_Lamprey.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Jade_Lamprey"
+    },
+    {
+      "name": "Toadfish",
+      "rarity": "Masterwork",
+      "location": "Dragon's End",
+      "holes": [
+        "Cavern Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 350,
+      "collection": "Dragon's End Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/5f/Toadfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Toadfish"
+    },
+    {
+      "name": "Spotted Pufferfish",
+      "rarity": "Rare",
+      "location": "Dragon's End",
+      "holes": [
+        "Quarry Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 300,
+      "collection": "Dragon's End Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/c1/Spotted_Pufferfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Spotted_Pufferfish"
+    },
+    {
+      "name": "Sheatfish",
+      "rarity": "Rare",
+      "location": "Dragon's End",
+      "holes": [
+        "Cavern Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 350,
+      "collection": "Dragon's End Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/ef/Sheatfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Sheatfish"
+    },
+    {
+      "name": "Giant Gourami",
+      "rarity": "Exotic",
+      "location": "Dragon's End",
+      "holes": [
+        "Quarry Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 300,
+      "collection": "Dragon's End Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/51/Giant_Gourami.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Giant_Gourami"
+    },
+    {
+      "name": "Unicorn Fish",
+      "rarity": "Exotic",
+      "location": "Dragon's End",
+      "holes": [
+        "Cavern Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 350,
+      "collection": "Dragon's End Fisher",
+      "icon": "https://wiki.guildwars2.com/images/f/f8/Unicorn_Fish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Unicorn_Fish"
+    },
+    {
+      "name": "Jade Sea Turtle",
+      "rarity": "Ascended",
+      "location": "Dragon's End",
+      "holes": [
+        "Quarry Fish"
+      ],
+      "bait": "Nightcrawler",
+      "time": "Daytime",
+      "fishingPower": 300,
+      "collection": "Dragon's End Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/6d/Jade_Sea_Turtle.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Jade_Sea_Turtle"
+    },
+    {
+      "name": "Axolotl",
+      "rarity": "Ascended",
+      "location": "Dragon's End",
+      "holes": [
+        "Cavern Fish"
+      ],
+      "bait": "Nightcrawler",
+      "time": "Nighttime",
+      "fishingPower": 350,
+      "collection": "Dragon's End Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/91/Axolotl.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Axolotl"
+    },
+    {
+      "name": "Cuttlefish",
+      "rarity": "Legendary",
+      "location": "Dragon's End",
+      "holes": [
+        "Quarry Fish"
+      ],
+      "bait": "Shrimpling",
+      "time": "Nighttime",
+      "fishingPower": 300,
+      "collection": "Dragon's End Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/65/Cuttlefish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Cuttlefish"
+    },
+    {
+      "name": "Chambered Nautilus",
+      "rarity": "Legendary",
+      "location": "Dragon's End",
+      "holes": [
+        "Cavern Fish"
+      ],
+      "bait": "Shrimpling",
+      "time": "Any",
+      "fishingPower": 350,
+      "collection": "Dragon's End Fisher",
+      "icon": "https://wiki.guildwars2.com/images/d/df/Chambered_Nautilus.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Chambered_Nautilus"
+    },
+    {
+      "name": "Bitterling",
+      "rarity": "Basic",
+      "location": "Ascalon",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 400,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/22/Bitterling.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Bitterling"
+    },
+    {
+      "name": "Bream",
+      "rarity": "Basic",
+      "location": "Ascalon",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 400,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/8/82/Bream.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Bream"
+    },
+    {
+      "name": "Cutthroat Trout",
+      "rarity": "Basic",
+      "location": "Ascalon",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Fish Egg",
+      "time": "Any",
+      "fishingPower": 400,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/3/31/Cutthroat_Trout.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Cutthroat_Trout"
+    },
+    {
+      "name": "Bluegill",
+      "rarity": "Fine",
+      "location": "Ascalon",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 400,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/a/a2/Bluegill.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Bluegill"
+    },
+    {
+      "name": "Brook Trout",
+      "rarity": "Fine",
+      "location": "Ascalon",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Fish Egg",
+      "time": "Dusk/Dawn",
+      "fishingPower": 400,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/b6/Brook_Trout.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Brook_Trout"
+    },
+    {
+      "name": "Smallmouth Bass",
+      "rarity": "Fine",
+      "location": "Ascalon",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 400,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/a/a5/Smallmouth_Bass.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Smallmouth_Bass"
+    },
+    {
+      "name": "Rock Bass",
+      "rarity": "Masterwork",
+      "location": "Ascalon",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 450,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/96/Rock_Bass.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Rock_Bass"
+    },
+    {
+      "name": "Catfish",
+      "rarity": "Masterwork",
+      "location": "Ascalon",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 450,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/99/Catfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Catfish"
+    },
+    {
+      "name": "Black Crappie",
+      "rarity": "Masterwork",
+      "location": "Ascalon",
+      "holes": [
+        "Noxious Water Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 500,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/79/Black_Crappie.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Black_Crappie"
+    },
+    {
+      "name": "Largemouth Bass",
+      "rarity": "Rare",
+      "location": "Ascalon",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 450,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/11/Largemouth_Bass.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Largemouth_Bass"
+    },
+    {
+      "name": "Rainbow Trout",
+      "rarity": "Rare",
+      "location": "Ascalon",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Fish Egg",
+      "time": "Daytime",
+      "fishingPower": 450,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/14/Rainbow_Trout.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Rainbow_Trout"
+    },
+    {
+      "name": "Yellow Perch",
+      "rarity": "Rare",
+      "location": "Ascalon",
+      "holes": [
+        "Noxious Water Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 500,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/6a/Yellow_Perch.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Yellow_Perch"
+    },
+    {
+      "name": "Golden Trout",
+      "rarity": "Exotic",
+      "location": "Ascalon",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Fish Egg",
+      "time": "Dusk/Dawn",
+      "fishingPower": 450,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/6b/Golden_Trout.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Golden_Trout"
+    },
+    {
+      "name": "Ripsaw Catfish",
+      "rarity": "Exotic",
+      "location": "Ascalon",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 450,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/a/aa/Ripsaw_Catfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Ripsaw_Catfish"
+    },
+    {
+      "name": "Warmouth",
+      "rarity": "Exotic",
+      "location": "Ascalon",
+      "holes": [
+        "Noxious Water Fish"
+      ],
+      "bait": "Lightning Bug",
+      "time": "Any",
+      "fishingPower": 500,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/98/Warmouth.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Warmouth"
+    },
+    {
+      "name": "Gar",
+      "rarity": "Ascended",
+      "location": "Ascalon",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Freshwater Minnow",
+      "time": "Daytime",
+      "fishingPower": 450,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/c6/Gar.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Gar"
+    },
+    {
+      "name": "Giant Catfish",
+      "rarity": "Ascended",
+      "location": "Ascalon",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Freshwater Minnow",
+      "time": "Nighttime",
+      "fishingPower": 450,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/0a/Giant_Catfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Giant_Catfish"
+    },
+    {
+      "name": "Aquatic Frog",
+      "rarity": "Ascended",
+      "location": "Ascalon",
+      "holes": [
+        "Noxious Water Fish"
+      ],
+      "bait": "Lightning Bug",
+      "time": "Any",
+      "fishingPower": 500,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/e1/Aquatic_Frog.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Aquatic_Frog"
+    },
+    {
+      "name": "Muskellunge",
+      "rarity": "Legendary",
+      "location": "Ascalon",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Freshwater Minnow",
+      "time": "Dusk/Dawn",
+      "fishingPower": 450,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/15/Muskellunge.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Muskellunge"
+    },
+    {
+      "name": "Old Whiskers",
+      "rarity": "Legendary",
+      "location": "Ascalon",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Freshwater Minnow",
+      "time": "Nighttime",
+      "fishingPower": 450,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/29/Old_Whiskers.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Old_Whiskers"
+    },
+    {
+      "name": "Branded Eel",
+      "rarity": "Legendary",
+      "location": "Ascalon",
+      "holes": [
+        "Noxious Water Fish"
+      ],
+      "bait": "Lightning Bug",
+      "time": "Nighttime",
+      "fishingPower": 500,
+      "collection": "Ascalonian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/70/Branded_Eel.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Branded_Eel"
+    },
+    {
+      "name": "Krytan Crawfish",
+      "rarity": "Basic",
+      "location": "Kryta",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 300,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/56/Krytan_Crawfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Krytan_Crawfish"
+    },
+    {
+      "name": "Speckled Perch",
+      "rarity": "Basic",
+      "location": "Kryta",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 300,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/be/Speckled_Perch.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Speckled_Perch"
+    },
+    {
+      "name": "Spotted Flounder",
+      "rarity": "Basic",
+      "location": "Kryta",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 300,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/20/Spotted_Flounder.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Spotted_Flounder"
+    },
+    {
+      "name": "Delavan Guppy",
+      "rarity": "Fine",
+      "location": "Kryta",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 300,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/4/4a/Delavan_Guppy.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Delavan_Guppy"
+    },
+    {
+      "name": "Round Goby",
+      "rarity": "Fine",
+      "location": "Kryta",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 300,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/ee/Round_Goby.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Round_Goby"
+    },
+    {
+      "name": "Sailfin Molly",
+      "rarity": "Fine",
+      "location": "Kryta",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 300,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/7b/Sailfin_Molly.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Sailfin_Molly"
+    },
+    {
+      "name": "Steelhead Trout",
+      "rarity": "Masterwork",
+      "location": "Kryta",
+      "holes": [
+        "River Fish"
+      ],
+      "bait": "Fish Egg",
+      "time": "Any",
+      "fishingPower": 350,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/f/f7/Steelhead_Trout.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Steelhead_Trout"
+    },
+    {
+      "name": "Striped Bass",
+      "rarity": "Masterwork",
+      "location": "Kryta",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 400,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/95/Striped_Bass.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Striped_Bass"
+    },
+    {
+      "name": "Swampblight Lamprey",
+      "rarity": "Masterwork",
+      "location": "Kryta",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 450,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/e6/Swampblight_Lamprey.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Swampblight_Lamprey"
+    },
+    {
+      "name": "Croaker",
+      "rarity": "Rare",
+      "location": "Kryta",
+      "holes": [
+        "River Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 350,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/19/Croaker.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Croaker"
+    },
+    {
+      "name": "Black Bass",
+      "rarity": "Rare",
+      "location": "Kryta",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 400,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/cf/Black_Bass.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Black_Bass"
+    },
+    {
+      "name": "Silver Moony",
+      "rarity": "Rare",
+      "location": "Kryta",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 450,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/95/Silver_Moony.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Silver_Moony"
+    },
+    {
+      "name": "Divinity Angelfin",
+      "rarity": "Exotic",
+      "location": "Kryta",
+      "holes": [
+        "River Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 350,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/b5/Divinity_Angelfin.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Divinity_Angelfin"
+    },
+    {
+      "name": "Quagmire Eel",
+      "rarity": "Exotic",
+      "location": "Kryta",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 400,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/15/Quagmire_Eel.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Quagmire_Eel"
+    },
+    {
+      "name": "Krytan Puffer",
+      "rarity": "Exotic",
+      "location": "Kryta",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 450,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/79/Krytan_Puffer.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Krytan_Puffer"
+    },
+    {
+      "name": "Queenfish",
+      "rarity": "Ascended",
+      "location": "Kryta",
+      "holes": [
+        "River Fish"
+      ],
+      "bait": "Freshwater Minnow",
+      "time": "Any",
+      "fishingPower": 350,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/d/d6/Queenfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Queenfish"
+    },
+    {
+      "name": "Royal Pike",
+      "rarity": "Ascended",
+      "location": "Kryta",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Freshwater Minnow",
+      "time": "Daytime",
+      "fishingPower": 400,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/cc/Royal_Pike.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Royal_Pike"
+    },
+    {
+      "name": "Holy Mackerel",
+      "rarity": "Ascended",
+      "location": "Kryta",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Shrimpling",
+      "time": "Daytime",
+      "fishingPower": 450,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/d/da/Holy_Mackerel.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Holy_Mackerel"
+    },
+    {
+      "name": "Mud Skate",
+      "rarity": "Legendary",
+      "location": "Kryta",
+      "holes": [
+        "River Fish"
+      ],
+      "bait": "Freshwater Minnow",
+      "time": "Nighttime",
+      "fishingPower": 350,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/19/Mud_Skate.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Mud_Skate"
+    },
+    {
+      "name": "Slaughterfish",
+      "rarity": "Legendary",
+      "location": "Kryta",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Freshwater Minnow",
+      "time": "Nighttime",
+      "fishingPower": 400,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/01/Slaughterfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Slaughterfish"
+    },
+    {
+      "name": "Black Lionfish",
+      "rarity": "Legendary",
+      "location": "Kryta",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Shrimpling",
+      "time": "Any",
+      "fishingPower": 450,
+      "collection": "Krytan Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/15/Black_Lionfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Black_Lionfish"
+    },
+    {
+      "name": "Brackish Goby",
+      "rarity": "Basic",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 450,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/1d/Brackish_Goby.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Brackish_Goby"
+    },
+    {
+      "name": "Piranha",
+      "rarity": "Basic",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 450,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/4/43/Piranha.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Piranha"
+    },
+    {
+      "name": "Snook",
+      "rarity": "Basic",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 450,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/55/Snook.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Snook"
+    },
+    {
+      "name": "Oscar",
+      "rarity": "Fine",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 450,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/68/Oscar.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Oscar"
+    },
+    {
+      "name": "Silver Drum",
+      "rarity": "Fine",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 450,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/4/4e/Silver_Drum.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Silver_Drum"
+    },
+    {
+      "name": "Surubim",
+      "rarity": "Fine",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 450,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/12/Surubim.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Surubim"
+    },
+    {
+      "name": "Bicuda",
+      "rarity": "Masterwork",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Freshwater Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 500,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/07/Bicuda.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Bicuda"
+    },
+    {
+      "name": "Payara",
+      "rarity": "Masterwork",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Freshwater Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 500,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/ec/Payara.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Payara"
+    },
+    {
+      "name": "Maguuma Trout",
+      "rarity": "Masterwork",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Saltwater Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 550,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/51/Maguuma_Trout.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Maguuma_Trout"
+    },
+    {
+      "name": "Pacu",
+      "rarity": "Rare",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Freshwater Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 500,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/4/4b/Pacu.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Pacu"
+    },
+    {
+      "name": "Peacock Bass",
+      "rarity": "Rare",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Freshwater Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 500,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/d/d7/Peacock_Bass.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Peacock_Bass"
+    },
+    {
+      "name": "Wolffish",
+      "rarity": "Rare",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Saltwater Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/02/Wolffish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Wolffish"
+    },
+    {
+      "name": "Arowana",
+      "rarity": "Exotic",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Freshwater Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 500,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/29/Arowana.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Arowana"
+    },
+    {
+      "name": "Sardinata",
+      "rarity": "Exotic",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Freshwater Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 500,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/c6/Sardinata.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Sardinata"
+    },
+    {
+      "name": "Maguuma Jack",
+      "rarity": "Exotic",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Saltwater Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/8/8a/Maguuma_Jack.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Maguuma_Jack"
+    },
+    {
+      "name": "Golden Dorado",
+      "rarity": "Ascended",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Freshwater Fish"
+      ],
+      "bait": "Sparkfly Larva",
+      "time": "Daytime",
+      "fishingPower": 500,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/d/d7/Golden_Dorado.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Golden_Dorado"
+    },
+    {
+      "name": "Jundia",
+      "rarity": "Ascended",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Freshwater Fish"
+      ],
+      "bait": "Sparkfly Larva",
+      "time": "Any",
+      "fishingPower": 500,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/5d/Jundia.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Jundia"
+    },
+    {
+      "name": "Rainbow Glowfish",
+      "rarity": "Ascended",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Saltwater Fish"
+      ],
+      "bait": "Sardine",
+      "time": "Nighttime",
+      "fishingPower": 550,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/c0/Rainbow_Glowfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Rainbow_Glowfish"
+    },
+    {
+      "name": "Arapaima",
+      "rarity": "Legendary",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Freshwater Fish"
+      ],
+      "bait": "Sparkfly Larva",
+      "time": "Daytime",
+      "fishingPower": 500,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/06/Arapaima.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Arapaima"
+    },
+    {
+      "name": "Goliath Grouper",
+      "rarity": "Legendary",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Saltwater Fish"
+      ],
+      "bait": "Sardine",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/bd/Goliath_Grouper.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Goliath_Grouper"
+    },
+    {
+      "name": "Royal Starfish",
+      "rarity": "Legendary",
+      "location": "Maguuma Jungle",
+      "holes": [
+        "Saltwater Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 550,
+      "collection": "Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/e1/Royal_Starfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Royal_Starfish"
+    },
+    {
+      "name": "Alewife",
+      "rarity": "Basic",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 350,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/28/Alewife.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Alewife"
+    },
+    {
+      "name": "Icefish",
+      "rarity": "Basic",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 350,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/ca/Icefish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Icefish"
+    },
+    {
+      "name": "Snow Crab",
+      "rarity": "Basic",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 350,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/61/Snow_Crab.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Snow_Crab"
+    },
+    {
+      "name": "Alpine Char",
+      "rarity": "Fine",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 350,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/54/Alpine_Char.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Alpine_Char"
+    },
+    {
+      "name": "Grayling",
+      "rarity": "Fine",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 350,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/11/Grayling.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Grayling"
+    },
+    {
+      "name": "Walleye",
+      "rarity": "Fine",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 350,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/05/Walleye.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Walleye"
+    },
+    {
+      "name": "White Bass",
+      "rarity": "Masterwork",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 400,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/27/White_Bass.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/White_Bass"
+    },
+    {
+      "name": "Northern Pike",
+      "rarity": "Masterwork",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 400,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/0b/Northern_Pike.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Northern_Pike"
+    },
+    {
+      "name": "Boreal Cod",
+      "rarity": "Masterwork",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Boreal Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 450,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/cd/Boreal_Cod.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Boreal_Cod"
+    },
+    {
+      "name": "Sockeye",
+      "rarity": "Rare",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 400,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/28/Sockeye.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Sockeye"
+    },
+    {
+      "name": "King Salmon",
+      "rarity": "Rare",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Lake Fish",
+        "Rare Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 400,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/f/f8/King_Salmon.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/King_Salmon"
+    },
+    {
+      "name": "Icy Lumpfish",
+      "rarity": "Rare",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Boreal Fish",
+        "Rare Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 450,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/5a/Icy_Lumpfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Icy_Lumpfish"
+    },
+    {
+      "name": "Chain Pickerel",
+      "rarity": "Exotic",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 400,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/6c/Chain_Pickerel.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Chain_Pickerel"
+    },
+    {
+      "name": "Beacon's Perch",
+      "rarity": "Exotic",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Boreal Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 450,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/b6/Beacon%27s_Perch.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Beacon's_Perch"
+    },
+    {
+      "name": "Mystic Remora",
+      "rarity": "Exotic",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Boreal Fish"
+      ],
+      "bait": "Any",
+      "time": "Dusk/Dawn",
+      "fishingPower": 450,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/ec/Mystic_Remora.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Mystic_Remora"
+    },
+    {
+      "name": "Cerulean Salamander",
+      "rarity": "Ascended",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Ramshorn Snail",
+      "time": "Nighttime",
+      "fishingPower": 400,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/a/ae/Cerulean_Salamander.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Cerulean_Salamander"
+    },
+    {
+      "name": "Lornar's Bass",
+      "rarity": "Ascended",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Ramshorn Snail",
+      "time": "Daytime",
+      "fishingPower": 400,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/14/Lornar%27s_Bass.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Lornar's_Bass"
+    },
+    {
+      "name": "Snowflake Eel",
+      "rarity": "Ascended",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Boreal Fish"
+      ],
+      "bait": "Ramshorn Snail",
+      "time": "Nighttime",
+      "fishingPower": 450,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/4/4d/Snowflake_Eel.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Snowflake_Eel"
+    },
+    {
+      "name": "Glacial Snakehead",
+      "rarity": "Legendary",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Lake Fish"
+      ],
+      "bait": "Shrimpling",
+      "time": "Daytime",
+      "fishingPower": 400,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/2f/Glacial_Snakehead.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Glacial_Snakehead"
+    },
+    {
+      "name": "Alabaster Oscar",
+      "rarity": "Legendary",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Boreal Fish"
+      ],
+      "bait": "Ramshorn Snail",
+      "time": "Daytime",
+      "fishingPower": 450,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/7c/Alabaster_Oscar.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Alabaster_Oscar"
+    },
+    {
+      "name": "Halibut",
+      "rarity": "Legendary",
+      "location": "Shiverpeak Mountains",
+      "holes": [
+        "Boreal Fish"
+      ],
+      "bait": "Shrimpling",
+      "time": "Any",
+      "fishingPower": 450,
+      "collection": "Shiverpeaks Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/02/Halibut.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Halibut"
+    },
+    {
+      "name": "Dusky Grouper",
+      "rarity": "Basic",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Dusk/Dawn",
+      "fishingPower": 600,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/a/a3/Dusky_Grouper.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Dusky_Grouper"
+    },
+    {
+      "name": "Ghostfish",
+      "rarity": "Basic",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 600,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/72/Ghostfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Ghostfish"
+    },
+    {
+      "name": "Murkwater Darter",
+      "rarity": "Basic",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 600,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/e6/Murkwater_Darter.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Murkwater_Darter"
+    },
+    {
+      "name": "Albino Blindfish",
+      "rarity": "Fine",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 600,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/57/Albino_Blindfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Albino_Blindfish"
+    },
+    {
+      "name": "Dead Alewife",
+      "rarity": "Fine",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 600,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/8/80/Dead_Alewife.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Dead_Alewife"
+    },
+    {
+      "name": "Monkfish",
+      "rarity": "Fine",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 600,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/1b/Monkfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Monkfish"
+    },
+    {
+      "name": "Viperfish (Orr)",
+      "rarity": "Masterwork",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 700,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/8/8c/Viperfish_%28Orr%29.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Viperfish_(Orr)"
+    },
+    {
+      "name": "Hagfish",
+      "rarity": "Masterwork",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 700,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/60/Hagfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Hagfish"
+    },
+    {
+      "name": "Dhuum Fish",
+      "rarity": "Masterwork",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Shore Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 650,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/4/49/Dhuum_Fish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Dhuum_Fish"
+    },
+    {
+      "name": "Abyssal Squid",
+      "rarity": "Rare",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 700,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/6d/Abyssal_Squid.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Abyssal_Squid"
+    },
+    {
+      "name": "Spectral Jellyfish",
+      "rarity": "Rare",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 700,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/60/Spectral_Jellyfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Spectral_Jellyfish"
+    },
+    {
+      "name": "Frilled Shark",
+      "rarity": "Rare",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Shore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 650,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/a/af/Frilled_Shark.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Frilled_Shark"
+    },
+    {
+      "name": "Stargazer",
+      "rarity": "Exotic",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 700,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/2b/Stargazer.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Stargazer"
+    },
+    {
+      "name": "Orrian Anglerfish",
+      "rarity": "Exotic",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 700,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/4/46/Orrian_Anglerfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Orrian_Anglerfish"
+    },
+    {
+      "name": "Man-of-War",
+      "rarity": "Exotic",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Shore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 650,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/0c/Man-of-War.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Man-of-War"
+    },
+    {
+      "name": "Blobfish",
+      "rarity": "Ascended",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Leech",
+      "time": "Any",
+      "fishingPower": 700,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/7f/Blobfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Blobfish"
+    },
+    {
+      "name": "Giant Octopus",
+      "rarity": "Ascended",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Sardine",
+      "time": "Dusk/Dawn",
+      "fishingPower": 700,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/67/Giant_Octopus.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Giant_Octopus"
+    },
+    {
+      "name": "Risen Sea Bass",
+      "rarity": "Ascended",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Shore Fish"
+      ],
+      "bait": "Leech",
+      "time": "Any",
+      "fishingPower": 650,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/4/4d/Risen_Sea_Bass.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Risen_Sea_Bass"
+    },
+    {
+      "name": "Benthic Behemoth",
+      "rarity": "Legendary",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Leech",
+      "time": "Any",
+      "fishingPower": 700,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/e2/Benthic_Behemoth.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Benthic_Behemoth"
+    },
+    {
+      "name": "Shipwreck Moray",
+      "rarity": "Legendary",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Sardine",
+      "time": "Nighttime",
+      "fishingPower": 700,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/8/88/Shipwreck_Moray.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Shipwreck_Moray"
+    },
+    {
+      "name": "Unholy Mackerel",
+      "rarity": "Legendary",
+      "location": "Ruins of Orr",
+      "holes": [
+        "Shore Fish"
+      ],
+      "bait": "Leech",
+      "time": "Nighttime",
+      "fishingPower": 650,
+      "collection": "Orrian Fisher",
+      "icon": "https://wiki.guildwars2.com/images/8/88/Unholy_Mackerel.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Unholy_Mackerel"
+    },
+    {
+      "name": "Elonian Bass",
+      "rarity": "Basic",
+      "location": "Crystal Desert",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 500,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/66/Elonian_Bass.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Elonian_Bass"
+    },
+    {
+      "name": "Mahseer",
+      "rarity": "Basic",
+      "location": "Crystal Desert",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 500,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/29/Mahseer.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Mahseer"
+    },
+    {
+      "name": "Tilapia",
+      "rarity": "Basic",
+      "location": "Crystal Desert",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 500,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/73/Tilapia.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Tilapia"
+    },
+    {
+      "name": "Elon Tetra",
+      "rarity": "Fine",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/3/3b/Elon_Tetra.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Elon_Tetra"
+    },
+    {
+      "name": "Lungfish",
+      "rarity": "Fine",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/16/Lungfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Lungfish"
+    },
+    {
+      "name": "Zander",
+      "rarity": "Fine",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/f/f2/Zander.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Zander"
+    },
+    {
+      "name": "Barramundi",
+      "rarity": "Masterwork",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/c5/Barramundi.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Barramundi"
+    },
+    {
+      "name": "Red-Eyed Piranha",
+      "rarity": "Masterwork",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/20/Red-Eyed_Piranha.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Red-Eyed_Piranha"
+    },
+    {
+      "name": "Sand Carp",
+      "rarity": "Masterwork",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/b3/Sand_Carp.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Sand_Carp"
+    },
+    {
+      "name": "Giant Barb",
+      "rarity": "Rare",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/22/Giant_Barb.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Giant_Barb"
+    },
+    {
+      "name": "Mudskipper",
+      "rarity": "Rare",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/e3/Mudskipper.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Mudskipper"
+    },
+    {
+      "name": "Paddlefish",
+      "rarity": "Rare",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/1d/Paddlefish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Paddlefish"
+    },
+    {
+      "name": "Gilded Loach",
+      "rarity": "Exotic",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/8/85/Gilded_Loach.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Gilded_Loach"
+    },
+    {
+      "name": "Golden Mahseer",
+      "rarity": "Exotic",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/1c/Golden_Mahseer.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Golden_Mahseer"
+    },
+    {
+      "name": "Silver Bichir",
+      "rarity": "Exotic",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/7c/Silver_Bichir.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Silver_Bichir"
+    },
+    {
+      "name": "Marbled Lungfish",
+      "rarity": "Ascended",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish"
+      ],
+      "bait": "Scorpion",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/5a/Marbled_Lungfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Marbled_Lungfish"
+    },
+    {
+      "name": "Striped Catfish",
+      "rarity": "Ascended",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish"
+      ],
+      "bait": "Scorpion",
+      "time": "Nighttime",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/61/Striped_Catfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Striped_Catfish"
+    },
+    {
+      "name": "Tigerfish",
+      "rarity": "Ascended",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish"
+      ],
+      "bait": "Mackerel",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/18/Tigerfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Tigerfish"
+    },
+    {
+      "name": "Giant Paddlefish",
+      "rarity": "Legendary",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/4/41/Giant_Paddlefish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Giant_Paddlefish"
+    },
+    {
+      "name": "Kaluga",
+      "rarity": "Legendary",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish"
+      ],
+      "bait": "Mackerel",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/9c/Kaluga.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Kaluga"
+    },
+    {
+      "name": "Vundu",
+      "rarity": "Legendary",
+      "location": "Crystal Desert",
+      "holes": [
+        "Desert Fish"
+      ],
+      "bait": "Scorpion",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/60/Vundu.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Vundu"
+    },
+    {
+      "name": "Sea Trout",
+      "rarity": "Basic",
+      "location": "Desert Isles",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Isles Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/50/Sea_Trout.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Sea_Trout"
+    },
+    {
+      "name": "Sheepshead",
+      "rarity": "Basic",
+      "location": "Desert Isles",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Isles Fisher",
+      "icon": "https://wiki.guildwars2.com/images/d/d0/Sheepshead.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Sheepshead"
+    },
+    {
+      "name": "Cobia",
+      "rarity": "Fine",
+      "location": "Desert Isles",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Isles Fisher",
+      "icon": "https://wiki.guildwars2.com/images/3/37/Cobia.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Cobia"
+    },
+    {
+      "name": "Parrotfish",
+      "rarity": "Fine",
+      "location": "Desert Isles",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 550,
+      "collection": "Desert Isles Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/7e/Parrotfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Parrotfish"
+    },
+    {
+      "name": "Diamond Trevally",
+      "rarity": "Masterwork",
+      "location": "Desert Isles",
+      "holes": [
+        "Shore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 600,
+      "collection": "Desert Isles Fisher",
+      "icon": "https://wiki.guildwars2.com/images/4/4d/Diamond_Trevally.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Diamond_Trevally"
+    },
+    {
+      "name": "Roosterfish",
+      "rarity": "Masterwork",
+      "location": "Desert Isles",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 650,
+      "collection": "Desert Isles Fisher",
+      "icon": "https://wiki.guildwars2.com/images/a/aa/Roosterfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Roosterfish"
+    },
+    {
+      "name": "Yellowtail Snapper",
+      "rarity": "Rare",
+      "location": "Desert Isles",
+      "holes": [
+        "Shore Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 600,
+      "collection": "Desert Isles Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/19/Yellowtail_Snapper.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Yellowtail_Snapper"
+    },
+    {
+      "name": "Opah",
+      "rarity": "Rare",
+      "location": "Desert Isles",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 650,
+      "collection": "Desert Isles Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/98/Opah.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Opah"
+    },
+    {
+      "name": "Pompano",
+      "rarity": "Exotic",
+      "location": "Desert Isles",
+      "holes": [
+        "Shore Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 600,
+      "collection": "Desert Isles Fisher",
+      "icon": "https://wiki.guildwars2.com/images/a/a6/Pompano.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Pompano"
+    },
+    {
+      "name": "Wahoo",
+      "rarity": "Exotic",
+      "location": "Desert Isles",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Any",
+      "time": "Dusk/Dawn",
+      "fishingPower": 650,
+      "collection": "Desert Isles Fisher",
+      "icon": "https://wiki.guildwars2.com/images/d/d8/Wahoo.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Wahoo"
+    },
+    {
+      "name": "King Crab",
+      "rarity": "Ascended",
+      "location": "Desert Isles",
+      "holes": [
+        "Shore Fish"
+      ],
+      "bait": "Mackerel",
+      "time": "Nighttime",
+      "fishingPower": 600,
+      "collection": "Desert Isles Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/b1/King_Crab.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/King_Crab"
+    },
+    {
+      "name": "Blue Marlin",
+      "rarity": "Ascended",
+      "location": "Desert Isles",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Mackerel",
+      "time": "Daytime",
+      "fishingPower": 650,
+      "collection": "Desert Isles Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/64/Blue_Marlin.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Blue_Marlin"
+    },
+    {
+      "name": "Beluga",
+      "rarity": "Legendary",
+      "location": "Desert Isles",
+      "holes": [
+        "Shore Fish"
+      ],
+      "bait": "Fish Egg",
+      "time": "Daytime",
+      "fishingPower": 600,
+      "collection": "Desert Isles Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/5b/Beluga.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Beluga"
+    },
+    {
+      "name": "Dandan",
+      "rarity": "Legendary",
+      "location": "Desert Isles",
+      "holes": [
+        "Offshore Fish"
+      ],
+      "bait": "Fish Egg",
+      "time": "Nighttime",
+      "fishingPower": 650,
+      "collection": "Desert Isles Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/74/Dandan.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Dandan"
+    },
+    {
+      "name": "Volcanic Blackfish",
+      "rarity": "Basic",
+      "location": "Ring of Fire",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 700,
+      "collection": "Ring of Fire Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/52/Volcanic_Blackfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Volcanic_Blackfish"
+    },
+    {
+      "name": "Flayfin",
+      "rarity": "Fine",
+      "location": "Ring of Fire",
+      "holes": [
+        "Volcanic Fish",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 750,
+      "collection": "Ring of Fire Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/12/Flayfin.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Flayfin"
+    },
+    {
+      "name": "Garnet Ram",
+      "rarity": "Masterwork",
+      "location": "Ring of Fire",
+      "holes": [
+        "Volcanic Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 750,
+      "collection": "Ring of Fire Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/9b/Garnet_Ram.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Garnet_Ram"
+    },
+    {
+      "name": "Fire Eel",
+      "rarity": "Rare",
+      "location": "Ring of Fire",
+      "holes": [
+        "Volcanic Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 750,
+      "collection": "Ring of Fire Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/1d/Fire_Eel.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Fire_Eel"
+    },
+    {
+      "name": "Glowing Coalfish",
+      "rarity": "Exotic",
+      "location": "Ring of Fire",
+      "holes": [
+        "Volcanic Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 750,
+      "collection": "Ring of Fire Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/e8/Glowing_Coalfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Glowing_Coalfish"
+    },
+    {
+      "name": "Magma Ray",
+      "rarity": "Ascended",
+      "location": "Ring of Fire",
+      "holes": [
+        "Volcanic Fish"
+      ],
+      "bait": "Lava Beetle",
+      "time": "Daytime",
+      "fishingPower": 750,
+      "collection": "Ring of Fire Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/5a/Magma_Ray.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Magma_Ray"
+    },
+    {
+      "name": "Stone Guiyu",
+      "rarity": "Legendary",
+      "location": "Ring of Fire",
+      "holes": [
+        "Volcanic Fish"
+      ],
+      "bait": "Lava Beetle",
+      "time": "Any",
+      "fishingPower": 750,
+      "collection": "Ring of Fire Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/eb/Stone_Guiyu.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Stone_Guiyu"
+    },
+    {
+      "name": "Firemouth",
+      "rarity": "Basic",
+      "location": "Ring of Fire",
+      "holes": [
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 650,
+      "collection": "Ring of Fire Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/7f/Firemouth.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Firemouth"
+    },
+    {
+      "name": "Igneous Rockfish",
+      "rarity": "Fine",
+      "location": "Ring of Fire",
+      "holes": [
+        "Coastal Fish",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 700,
+      "collection": "Ring of Fire Fisher",
+      "icon": "https://wiki.guildwars2.com/images/4/44/Igneous_Rockfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Igneous_Rockfish"
+    },
+    {
+      "name": "Redtail Catfish",
+      "rarity": "Masterwork",
+      "location": "Ring of Fire",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 700,
+      "collection": "Ring of Fire Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/ea/Redtail_Catfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Redtail_Catfish"
+    },
+    {
+      "name": "Geyser Batfin",
+      "rarity": "Rare",
+      "location": "Ring of Fire",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 700,
+      "collection": "Ring of Fire Fisher",
+      "icon": "https://wiki.guildwars2.com/images/f/fd/Geyser_Batfin.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Geyser_Batfin"
+    },
+    {
+      "name": "Flamefin Betta",
+      "rarity": "Exotic",
+      "location": "Ring of Fire",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 700,
+      "collection": "Ring of Fire Fisher",
+      "icon": "https://wiki.guildwars2.com/images/d/dc/Flamefin_Betta.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Flamefin_Betta"
+    },
+    {
+      "name": "Scorpion Fish",
+      "rarity": "Ascended",
+      "location": "Ring of Fire",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Lava Beetle",
+      "time": "Nighttime",
+      "fishingPower": 700,
+      "collection": "Ring of Fire Fisher",
+      "icon": "https://wiki.guildwars2.com/images/3/32/Scorpion_Fish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Scorpion_Fish"
+    },
+    {
+      "name": "Dunkleosteus",
+      "rarity": "Legendary",
+      "location": "Ring of Fire",
+      "holes": [
+        "Coastal Fish"
+      ],
+      "bait": "Lava Beetle",
+      "time": "Any",
+      "fishingPower": 700,
+      "collection": "Ring of Fire Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/e5/Dunkleosteus.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Dunkleosteus"
+    },
+    {
+      "name": "Goldfish",
+      "rarity": "Junk",
+      "location": "World",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "World Class Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/02/Goldfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Goldfish"
+    },
+    {
+      "name": "Silverfish",
+      "rarity": "Junk",
+      "location": "World",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "World Class Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/b9/Silverfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Silverfish"
+    },
+    {
+      "name": "Armored Scalefish",
+      "rarity": "Rare",
+      "location": "World",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "World Class Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/ee/Armored_Scalefish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Armored_Scalefish"
+    },
+    {
+      "name": "Red Herring",
+      "rarity": "Junk",
+      "location": "World",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "World Class Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/5f/Red_Herring.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Red_Herring"
+    },
+    {
+      "name": "Bloodfish",
+      "rarity": "Rare",
+      "location": "World",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "World Class Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/b0/Bloodfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Bloodfish"
+    },
+    {
+      "name": "Fangfish",
+      "rarity": "Rare",
+      "location": "World",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "World Class Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/c8/Fangfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Fangfish"
+    },
+    {
+      "name": "Bonefish",
+      "rarity": "Rare",
+      "location": "World",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "World Class Fisher",
+      "icon": "https://wiki.guildwars2.com/images/f/f4/Bonefish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Bonefish"
+    },
+    {
+      "name": "Totemfish",
+      "rarity": "Rare",
+      "location": "World",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "World Class Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/04/Totemfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Totemfish"
+    },
+    {
+      "name": "Clawfish",
+      "rarity": "Rare",
+      "location": "World",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "World Class Fisher",
+      "icon": "https://wiki.guildwars2.com/images/d/dd/Clawfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Clawfish"
+    },
+    {
+      "name": "Venomfish",
+      "rarity": "Rare",
+      "location": "World",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "World Class Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/c8/Venomfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Venomfish"
+    },
+    {
+      "name": "Dustfish",
+      "rarity": "Rare",
+      "location": "World",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "World Class Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/19/Dustfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Dustfish"
+    },
+    {
+      "name": "Twilight Striker",
+      "rarity": "Exotic",
+      "location": "World",
+      "holes": [
+        "Any"
+      ],
+      "bait": "Any",
+      "time": "Dusk/Dawn",
+      "fishingPower": 0,
+      "collection": "World Class Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/0d/Twilight_Striker.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Twilight_Striker"
+    },
+    {
+      "name": "Sunscale Striker",
+      "rarity": "Exotic",
+      "location": "World",
+      "holes": [
+        "Any"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 0,
+      "collection": "World Class Fisher",
+      "icon": "https://wiki.guildwars2.com/images/8/8f/Sunscale_Striker.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Sunscale_Striker"
+    },
+    {
+      "name": "Moonfin Striker",
+      "rarity": "Exotic",
+      "location": "World",
+      "holes": [
+        "Any"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 0,
+      "collection": "World Class Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/ed/Moonfin_Striker.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Moonfin_Striker"
+    },
+    {
+      "name": "Seahorse",
+      "rarity": "Rare",
+      "location": "Saltwater",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Saltwater Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/6e/Seahorse.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Seahorse"
+    },
+    {
+      "name": "Redfin Barb",
+      "rarity": "Rare",
+      "location": "Saltwater",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Saltwater Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/b2/Redfin_Barb.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Redfin_Barb"
+    },
+    {
+      "name": "Leafy Sea Dragon",
+      "rarity": "Rare",
+      "location": "Saltwater",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Saltwater Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/01/Leafy_Sea_Dragon.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Leafy_Sea_Dragon"
+    },
+    {
+      "name": "Googly-Eyed Squid",
+      "rarity": "Rare",
+      "location": "Saltwater",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Saltwater Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/22/Googly-Eyed_Squid.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Googly-Eyed_Squid"
+    },
+    {
+      "name": "Mantis Shrimp",
+      "rarity": "Rare",
+      "location": "Saltwater",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Saltwater Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/0c/Mantis_Shrimp.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Mantis_Shrimp"
+    },
+    {
+      "name": "Shimmering Squid",
+      "rarity": "Rare",
+      "location": "Saltwater",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Saltwater Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/ea/Shimmering_Squid.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Shimmering_Squid"
+    },
+    {
+      "name": "Electric Eel",
+      "rarity": "Rare",
+      "location": "Saltwater",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Saltwater Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/00/Electric_Eel.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Electric_Eel"
+    },
+    {
+      "name": "Vampire Squid",
+      "rarity": "Rare",
+      "location": "Saltwater",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Saltwater Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/16/Vampire_Squid.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Vampire_Squid"
+    },
+    {
+      "name": "Rockfish",
+      "rarity": "Rare",
+      "location": "Saltwater",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Saltwater Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/90/Rockfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Rockfish"
+    },
+    {
+      "name": "Flapjack Octopus",
+      "rarity": "Rare",
+      "location": "Saltwater",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Saltwater Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/ea/Flapjack_Octopus.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Flapjack_Octopus"
+    },
+    {
+      "name": "Horseshoe Crab",
+      "rarity": "Exotic",
+      "location": "Saltwater",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Saltwater Fisher",
+      "icon": "https://wiki.guildwars2.com/images/c/c4/Horseshoe_Crab.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Horseshoe_Crab"
+    },
+    {
+      "name": "Aurelian Herring",
+      "rarity": "Exotic",
+      "location": "Saltwater",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Saltwater Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/96/Aurelian_Herring.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Aurelian_Herring"
+    },
+    {
+      "name": "Sea Robin",
+      "rarity": "Exotic",
+      "location": "Saltwater",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Saltwater Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/95/Sea_Robin.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Sea_Robin"
+    },
+    {
+      "name": "Red Gurnard",
+      "rarity": "Exotic",
+      "location": "Saltwater",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Saltwater Fisher",
+      "icon": "https://wiki.guildwars2.com/images/3/3b/Red_Gurnard.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Red_Gurnard"
+    },
+    {
+      "name": "Fractured Fish",
+      "rarity": "Basic",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Any",
+        "Open Water"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/01/Globefish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Fractured_Fish"
+    },
+    {
+      "name": "Queen's Flipper",
+      "rarity": "Fine",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Fractured Lake Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/4/4a/Delavan_Guppy.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Queen's_Flipper"
+    },
+    {
+      "name": "Primal Maguuma Trout",
+      "rarity": "Masterwork",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Fractured Freshwater Fish",
+        "Nayosian Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/51/Maguuma_Trout.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Primal_Maguuma_Trout"
+    },
+    {
+      "name": "Codmander",
+      "rarity": "Rare",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Fractured Freshwater Fish",
+        "Nayosian Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/1d/Paddlefish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Codmander"
+    },
+    {
+      "name": "Jokopu",
+      "rarity": "Exotic",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Fractured Desert Fish",
+        "Nayosian Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/7c/Silver_Bichir.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Jokopu"
+    },
+    {
+      "name": "Empress Fish",
+      "rarity": "Ascended",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Fractured Channel Fish"
+      ],
+      "bait": "Mackerel",
+      "time": "Daytime",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/91/Axolotl.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Empress_Fish"
+    },
+    {
+      "name": "Three-Eyed Carp",
+      "rarity": "Legendary",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Fractured Channel Fish",
+        "Nayosian Fish"
+      ],
+      "bait": "Glow Worm",
+      "time": "Nighttime",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/6b/Oarfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Three-Eyed_Carp"
+    },
+    {
+      "name": "Bastion Fish",
+      "rarity": "Basic",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Any",
+        "Open Water",
+        "Nayosian Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/7f/Firemouth.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Bastion_Fish"
+    },
+    {
+      "name": "Natural Fish",
+      "rarity": "Fine",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Astral Fish",
+        "Spire Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/12/Flayfin.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Natural_Fish"
+    },
+    {
+      "name": "Knowledge Fish",
+      "rarity": "Masterwork",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Astral Fish",
+        "Nayosian Fish"
+      ],
+      "bait": "Any",
+      "time": "Daytime",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/9/9b/Garnet_Ram.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Knowledge_Fish"
+    },
+    {
+      "name": "Strength Fish",
+      "rarity": "Rare",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Astral Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/1d/Fire_Eel.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Strength_Fish"
+    },
+    {
+      "name": "Balance Fish",
+      "rarity": "Exotic",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Any",
+        "Open Water",
+        "Spire Fish",
+        "Nayosian Fish"
+      ],
+      "bait": "Any",
+      "time": "Dawn/Dusk",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/d/dc/Flamefin_Betta.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Balance_Fish"
+    },
+    {
+      "name": "Obscure Fish",
+      "rarity": "Ascended",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Astral Fish"
+      ],
+      "bait": "Lightning Bug",
+      "time": "Daytime",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/61/Striped_Catfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Obscure_Fish"
+    },
+    {
+      "name": "Celestial Fish",
+      "rarity": "Legendary",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Spire Fish",
+        "Nayosian Fish"
+      ],
+      "bait": "Fish Egg",
+      "time": "Nighttime",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/e/e5/Dunkleosteus.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Celestial_Fish"
+    },
+    {
+      "name": "Daydream",
+      "rarity": "Basic",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Any",
+        "Open Water",
+        "Nayosian Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/72/Ghostfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Daydream"
+    },
+    {
+      "name": "Phantom Pollock",
+      "rarity": "Fine",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Any",
+        "Open Water",
+        "Nayosian Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/8/80/Dead_Alewife.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Phantom_Pollock"
+    },
+    {
+      "name": "Buried Angst",
+      "rarity": "Masterwork",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Any",
+        "Open Water",
+        "Dream Fish",
+        "Nayosian Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/60/Hagfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Buried_Angst"
+    },
+    {
+      "name": "Blightbob",
+      "rarity": "Rare",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Any",
+        "Open Water",
+        "Nayosian Fish"
+      ],
+      "bait": "Any",
+      "time": "Any, Nighttime",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/6d/Abyssal_Squid.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Blightbob"
+    },
+    {
+      "name": "Frenzied Cephalopod",
+      "rarity": "Exotic",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Any",
+        "Open Water",
+        "Dream Fish",
+        "Nayosian Fish"
+      ],
+      "bait": "Any",
+      "time": "Any, Daytime",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/0c/Man-of-War.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Frenzied_Cephalopod"
+    },
+    {
+      "name": "Glutfish",
+      "rarity": "Ascended",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Any",
+        "Open Water",
+        "Nayosian Fish"
+      ],
+      "bait": "Any",
+      "time": "Any, Daytime",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/7/7f/Blobfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Glutfish"
+    },
+    {
+      "name": "Maddened Mackerel",
+      "rarity": "Legendary",
+      "location": "Horn of Maguuma",
+      "holes": [
+        "Any",
+        "Open Water",
+        "Dream Fish"
+      ],
+      "bait": "Any",
+      "time": "Nighttime",
+      "fishingPower": 0,
+      "collection": "Horn of Maguuma Fisher",
+      "icon": "https://wiki.guildwars2.com/images/8/88/Unholy_Mackerel.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Maddened_Mackerel"
+    },
+    {
+      "name": "Lowland Grunt",
+      "rarity": "Fine",
+      "location": "Janthir",
+      "holes": [
+        "Freshwater Fish",
+        "Brackish Janthir Fish"
+      ],
+      "bait": "Any",
+      "time": "Any, Daytime",
+      "fishingPower": 0,
+      "collection": "Janthir Fisher",
+      "icon": "https://wiki.guildwars2.com/images/f/f4/Lowland_Grunt.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Lowland_Grunt"
+    },
+    {
+      "name": "Shaderock Salamander",
+      "rarity": "Rare",
+      "location": "Janthir",
+      "holes": [
+        "Saltwater Fish",
+        "Brackish Janthir Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Janthir Fisher",
+      "icon": "https://wiki.guildwars2.com/images/d/db/Shaderock_Salamander.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Shaderock_Salamander"
+    },
+    {
+      "name": "Mohawk Bream",
+      "rarity": "Rare",
+      "location": "Janthir",
+      "holes": [
+        "Any"
+      ],
+      "bait": "Any",
+      "time": "Any, Daytime",
+      "fishingPower": 0,
+      "collection": "Janthir Fisher",
+      "icon": "https://wiki.guildwars2.com/images/b/b0/Mohawk_Bream.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Mohawk_Bream"
+    },
+    {
+      "name": "Spectacled Lumper",
+      "rarity": "Rare",
+      "location": "Janthir",
+      "holes": [
+        "Any"
+      ],
+      "bait": "Any",
+      "time": "Any, Nighttime",
+      "fishingPower": 0,
+      "collection": "Janthir Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/61/Spectacled_Lumper.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Spectacled_Lumper"
+    },
+    {
+      "name": "Violet Screamer",
+      "rarity": "Exotic",
+      "location": "Janthir",
+      "holes": [
+        "Any"
+      ],
+      "bait": "Any",
+      "time": "Any, Nighttime",
+      "fishingPower": 0,
+      "collection": "Janthir Fisher",
+      "icon": "https://wiki.guildwars2.com/images/5/52/Violet_Screamer.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Violet_Screamer"
+    },
+    {
+      "name": "Viperfish (Janthir)",
+      "rarity": "Exotic",
+      "location": "Janthir",
+      "holes": [
+        "Any"
+      ],
+      "bait": "Any",
+      "time": "Any, Nighttime",
+      "fishingPower": 0,
+      "collection": "Janthir Fisher",
+      "icon": "https://wiki.guildwars2.com/images/0/04/Viperfish_%28Janthir%29.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Viperfish_(Janthir)"
+    },
+    {
+      "name": "Juvenile Frogfish",
+      "rarity": "Fine",
+      "location": "Janthir",
+      "holes": [
+        "Freshwater Fish",
+        "Brackish Janthir Fish"
+      ],
+      "bait": "Any",
+      "time": "Any, Nighttime",
+      "fishingPower": 0,
+      "collection": "Janthir Fisher",
+      "icon": "https://wiki.guildwars2.com/images/3/32/Juvenile_Frogfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Juvenile_Frogfish"
+    },
+    {
+      "name": "Flowerhead",
+      "rarity": "Rare",
+      "location": "Janthir",
+      "holes": [
+        "Any"
+      ],
+      "bait": "Any",
+      "time": "Any, Daytime",
+      "fishingPower": 0,
+      "collection": "Janthir Fisher",
+      "icon": "https://wiki.guildwars2.com/images/6/66/Flowerhead.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Flowerhead"
+    },
+    {
+      "name": "Queen Parrotfish",
+      "rarity": "Rare",
+      "location": "Janthir",
+      "holes": [
+        "Saltwater Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Janthir Fisher",
+      "icon": "https://wiki.guildwars2.com/images/f/fd/Queen_Parrotfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Queen_Parrotfish"
+    },
+    {
+      "name": "Indigo Drakefish",
+      "rarity": "Exotic",
+      "location": "Janthir",
+      "holes": [
+        "Any"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Janthir Fisher",
+      "icon": "https://wiki.guildwars2.com/images/3/3b/Indigo_Drakefish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Indigo_Drakefish"
+    },
+    {
+      "name": "Longhorn Boxfish",
+      "rarity": "Exotic",
+      "location": "Janthir",
+      "holes": [
+        "Saltwater Fish",
+        "Brackish Janthir Fish"
+      ],
+      "bait": "Any",
+      "time": "Any",
+      "fishingPower": 0,
+      "collection": "Janthir Fisher",
+      "icon": "https://wiki.guildwars2.com/images/2/2e/Longhorn_Boxfish.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Longhorn_Boxfish"
+    },
+    {
+      "name": "Mouse-Eared Octopus",
+      "rarity": "Exotic",
+      "location": "Janthir",
+      "holes": [
+        "Saltwater Fish"
+      ],
+      "bait": "Any",
+      "time": "Any, Nighttime",
+      "fishingPower": 0,
+      "collection": "Janthir Fisher",
+      "icon": "https://wiki.guildwars2.com/images/1/11/Mouse-Eared_Octopus.png",
+      "wikiUrl": "https://wiki.guildwars2.com/wiki/Mouse-Eared_Octopus"
+    }
+  ]
+}

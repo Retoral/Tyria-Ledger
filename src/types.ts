@@ -98,6 +98,18 @@ export interface Gw2Currency {
   icon?: string;
 }
 
+export interface Gw2ItemStatAttribute {
+  attribute: string;
+  multiplier: number;
+  value: number;
+}
+
+export interface Gw2ItemStat {
+  id: number;
+  name: string;
+  attributes: Gw2ItemStatAttribute[];
+}
+
 export interface MarketItem extends Gw2Item {
   price: CommercePrice;
   netSellPrice: Coin;
@@ -585,6 +597,11 @@ export interface AccountWalletEntry {
   value: number;
 }
 
+export interface AccountMasteryProgress {
+  id: number;
+  level: number;
+}
+
 export interface AccountSnapshot {
   tokenInfo: TokenInfo;
   materials: AccountMaterial[];
@@ -595,6 +612,7 @@ export interface AccountSnapshot {
   coins: Coin;
   recipes: number[];
   achievements: AccountAchievement[];
+  masteries: AccountMasteryProgress[];
   holdings: Map<number, number>;
 }
 

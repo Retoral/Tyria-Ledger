@@ -25,6 +25,10 @@ export interface BuildGoalEquipmentSlot {
   rarity?: string;
   itemType?: string;
   attributeNames: string[];
+  attributes: Array<{
+    name: string;
+    value?: number;
+  }>;
 }
 
 export interface BuildGoal {
@@ -165,6 +169,12 @@ export function readBuildGoals(): BuildGoal[] {
         .map((slot) => ({
           ...slot,
           attributeNames: Array.isArray(slot.attributeNames) ? slot.attributeNames : [],
+          attributes: Array.isArray(slot.attributes)
+            ? slot.attributes.filter(
+                (attribute): attribute is { name: string; value?: number } =>
+                  Boolean(attribute && typeof attribute.name === "string"),
+              )
+            : (Array.isArray(slot.attributeNames) ? slot.attributeNames : []).map((name) => ({ name })),
         }))
         .filter((slot) => slot.slot !== "__empty__" && (slot.itemId || slot.itemName || slot.stat || slot.slot !== "Equipment")),
     }));

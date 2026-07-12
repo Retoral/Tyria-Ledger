@@ -7,6 +7,7 @@ import type {
   AccountCharacter,
   AccountItemStack,
   AccountMaterial,
+  AccountMasteryProgress,
   AccountSnapshot,
   AccountTransaction,
   AccountWalletEntry,
@@ -24,6 +25,7 @@ import type {
   Gw2Achievement,
   Gw2Currency,
   Gw2Item,
+  Gw2ItemStat,
   Gw2Map,
   Gw2Recipe,
   Gw2World,
@@ -124,6 +126,7 @@ interface CachedAccountSnapshotPayload {
   coins: Coin;
   recipes: number[];
   achievements: AccountAchievement[];
+  masteries?: AccountMasteryProgress[];
   holdings: Array<[number, number]>;
 }
 
@@ -162,6 +165,9 @@ const priceCache = new Map<number, CommercePrice>();
 const unresolvableItemIds = new Set<number>();
 const unpricedItemIds = new Set<number>();
 let recipeCache: Gw2Recipe[] | null = null;
+let recipeOutputIndexCache: Map<number, Gw2Recipe[]> | null = null;
+const itemStatCache = new Map<number, Gw2ItemStat>();
+let itemStatCacheHydrated = false;
 let mysticForgeRecipeCache: Gw2Recipe[] | null = null;
 const mysticForgeRecipeItemCache = new Map<number, Gw2Recipe[]>();
 const wikiRecipeUsageItemCache = new Map<number, Gw2Recipe[]>();
@@ -1542,6 +1548,22 @@ function isGw2Item(value: unknown): value is Gw2Item {
   );
 }
 
+function isGw2ItemStat(value: unknown): value is Gw2ItemStat {
+  return Boolean(
+    isRecord(value) &&
+      typeof value.id === "number" &&
+      typeof value.name === "string" &&
+      isArrayOf(value.attributes, (attribute): attribute is Gw2ItemStat["attributes"][number] =>
+        Boolean(
+          isRecord(attribute) &&
+            typeof attribute.attribute === "string" &&
+            typeof attribute.multiplier === "number" &&
+            typeof attribute.value === "number",
+        ),
+      ),
+  );
+}
+
 async function loadCachedItemDetails(ids: number[]): Promise<Gw2Item[]> {
   if (!window.gw2Desktop?.loadItemCache || ids.length === 0) {
     return [];
@@ -2080,7 +2102,7 @@ export async function loadMetaBattleBuildDetail(summary: MetaBattleBuildSummary)
 }
 
 async function loadMetaBattleBuildDetailUncached(summary: MetaBattleBuildSummary): Promise<MetaBattleBuildDetail> {
-  const cacheKey = getNamedCacheKey("metabattle:build-detail:v4", summary.pageTitle);
+  const cacheKey = getNamedCacheKey("metabattle:build-detail:v5", summary.pageTitle);
   const cached = await loadSqlCache(cacheKey, SQL_CACHE_TTL.metabattleBuilds, isMetaBattleBuildDetail);
   if (cached && cached.skillGroups.length > 0) {
     const wikiSkills = cached.wikiSkills?.length
@@ -3086,6 +3108,7 @@ const METABATTLE_EQUIPMENT_SLOT_LABELS = [
   "Focus",
   "Torch",
   "Sword",
+  "Axe",
   "Staff",
   "Rifle",
   "Mace",
@@ -5567,6 +5590,59 @@ export async function loadRecipesForOutput(
   return allRecipes.map((recipe) => buildRecipeGuide(recipe, holdings));
 }
 
+export async function loadItemStats(ids: number[]): Promise<Gw2ItemStat[]> {
+  const uniqueIds = Array.from(new Set(ids)).filter((id) => Number.isInteger(id) && id > 0);
+  if (uniqueIds.length === 0) {
+    return [];
+  }
+
+  if (!itemStatCacheHydrated) {
+    const cached = await loadSqlCache(
+      "official:itemstats:resolved",
+      SQL_CACHE_TTL.staticCatalog,
+      (value): value is Gw2ItemStat[] => isArrayOf(value, isGw2ItemStat),
+    );
+    cached?.forEach((stat) => itemStatCache.set(stat.id, stat));
+    itemStatCacheHydrated = true;
+  }
+
+  const missingIds = uniqueIds.filter((id) => !itemStatCache.has(id));
+  if (missingIds.length) {
+    const batches = await mapWithConcurrency(
+      chunk(missingIds, CHUNK_SIZE),
+      4,
+      (idChunk) => fetchJson<Gw2ItemStat[]>(`${GW2_API}/itemstats?ids=${idChunk.join(",")}`),
+    );
+    batches.flat().forEach((stat) => itemStatCache.set(stat.id, stat));
+    void saveSqlCache("official:itemstats:resolved", Array.from(itemStatCache.values()));
+  }
+
+  return uniqueIds.map((id) => itemStatCache.get(id)).filter((stat): stat is Gw2ItemStat => Boolean(stat));
+}
+
+export function getCachedRecipeGuidesForOutput(
+  itemId: number,
+  holdings = new Map<number, number>(),
+): RecipeGuide[] {
+  if (itemId <= 0 || !recipeCache) {
+    return [];
+  }
+
+  if (!recipeOutputIndexCache) {
+    recipeOutputIndexCache = new Map<number, Gw2Recipe[]>();
+    for (const recipe of recipeCache) {
+      if (!recipe.output_item_id) {
+        continue;
+      }
+      const rows = recipeOutputIndexCache.get(recipe.output_item_id) ?? [];
+      rows.push(recipe);
+      recipeOutputIndexCache.set(recipe.output_item_id, rows);
+    }
+  }
+
+  return (recipeOutputIndexCache.get(itemId) ?? []).map((recipe) => buildRecipeGuide(recipe, holdings));
+}
+
 export async function loadRecipesUsingItem(
   itemId: number,
   holdings = new Map<number, number>(),
@@ -5671,6 +5747,7 @@ function mergeRecipesIntoCache(recipes: Gw2Recipe[]) {
   }
 
   recipeCache = Array.from(recipesById.values());
+  recipeOutputIndexCache = null;
   void saveCachedRecipes(recipeCache);
 }
 
@@ -7622,7 +7699,7 @@ export async function loadAccountSnapshot(
   const cacheKey = `account:snapshot:${tokenInfo.id}`;
 
   try {
-    const [materials, bank, inventory, characters, wallet, recipes, achievements] = await Promise.all([
+    const [materials, bank, inventory, characters, wallet, recipes, achievements, masteries] = await Promise.all([
       fetchAccountJson<AccountMaterial[]>(trimmedKey, "/account/materials", [], { required: true }),
       fetchAccountJson<AccountItemStack[]>(trimmedKey, "/account/bank", [], { required: true }),
       fetchAccountJson<AccountItemStack[]>(trimmedKey, "/account/inventory", [], { required: true }),
@@ -7630,6 +7707,7 @@ export async function loadAccountSnapshot(
       fetchAccountJson<AccountWalletEntry[]>(trimmedKey, "/account/wallet", [], { required: true }),
       fetchAccountJson<number[]>(trimmedKey, "/account/recipes", [], { required: true }),
       fetchAccountJson<AccountAchievement[]>(trimmedKey, "/account/achievements", [], { required: true }),
+      fetchAccountJson<AccountMasteryProgress[]>(trimmedKey, "/account/masteries", [], { required: true }),
     ]);
 
     const characterHoldings = characters.map(countCharacterStacks);
@@ -7650,6 +7728,7 @@ export async function loadAccountSnapshot(
       coins: wallet.find((entry) => entry.id === 1)?.value ?? 0,
       recipes,
       achievements,
+      masteries,
       holdings,
     };
     void saveSqlCache(cacheKey, serializeAccountSnapshot(snapshot));
@@ -7706,6 +7785,7 @@ async function loadAllRecipes(onProgress?: ProgressCallback): Promise<Gw2Recipe[
   const cachedRecipes = await loadCachedRecipes();
   if (cachedRecipes) {
     recipeCache = cachedRecipes;
+    recipeOutputIndexCache = null;
     return recipeCache;
   }
 
@@ -7727,6 +7807,7 @@ async function loadAllRecipes(onProgress?: ProgressCallback): Promise<Gw2Recipe[
   );
 
   recipeCache = recipeBatches.flat();
+  recipeOutputIndexCache = null;
   void saveCachedRecipes(recipeCache);
   return recipeCache;
 }
@@ -8411,6 +8492,9 @@ function isAccountSnapshotPayload(value: unknown): value is CachedAccountSnapsho
       typeof value.coins === "number" &&
       isArrayOf(value.recipes, (id): id is number => typeof id === "number") &&
       Array.isArray(value.achievements) &&
+      (value.masteries === undefined ||
+        isArrayOf(value.masteries, (mastery): mastery is AccountMasteryProgress =>
+          isRecord(mastery) && typeof mastery.id === "number" && typeof mastery.level === "number")) &&
       Array.isArray(value.holdings) &&
       value.holdings.every(
         (entry) =>
@@ -8433,6 +8517,7 @@ function serializeAccountSnapshot(snapshot: AccountSnapshot): CachedAccountSnaps
     coins: snapshot.coins,
     recipes: snapshot.recipes,
     achievements: snapshot.achievements,
+    masteries: snapshot.masteries,
     holdings: Array.from(snapshot.holdings.entries()),
   };
 }
@@ -8441,6 +8526,7 @@ function hydrateAccountSnapshot(payload: CachedAccountSnapshotPayload, tokenInfo
   return {
     ...payload,
     tokenInfo,
+    masteries: payload.masteries ?? [],
     holdings: new Map(payload.holdings),
   };
 }
@@ -8829,6 +8915,7 @@ export async function analyzeAccount(
     ensureCommercePrices(onProgress),
   ]).then(([account, officialRecipes, wikiMysticRecipes, allItems]) => [account, officialRecipes, wikiMysticRecipes, allItems] as const);
   const recipes = dedupeRecipes([...officialRecipes, ...wikiMysticRecipes]);
+  mergeRecipesIntoCache(wikiMysticRecipes);
   const ingredientIds = Array.from(
     new Set(recipes.flatMap((recipe) => recipe.ingredients.map((item) => item.item_id))),
   );
@@ -9152,6 +9239,10 @@ export function formatCoin(value: number): string {
 
 export function getStoredItem(itemId: number): Gw2Item | undefined {
   return itemCache.get(itemId);
+}
+
+export function getStoredItems(): Gw2Item[] {
+  return Array.from(itemCache.values());
 }
 
 export function getStoredItemByName(itemName: string): Gw2Item | undefined {
